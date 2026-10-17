@@ -124,6 +124,7 @@ final class KeychainSecretScanTests: XCTestCase {
                 .replacingOccurrences(of: "=", with: "")
         }
         let scans = try ([providerKey, password] + tokens).map(SecretScan.init)
+        let allScans = try SecretScan(combining: scans)
         let roots = [repository, root, config, data, data.appendingPathComponent("logs"), temporary]
         // Both devices and the provider share one unique real Keychain map.
         let itemService = "ch.lkmc.monkeyspaw.tests.device-scan." + UUID().uuidString
@@ -178,9 +179,7 @@ final class KeychainSecretScanTests: XCTestCase {
             XCTAssertTrue(other.account.state.enabled)
             try assertDevice(other.secrets, account: otherSecret, token: tokens[1], server: server, user: user)
             log.write(.debug, "Device secret scan checkpoint: \(step).")
-            for scan in scans {
-                XCTAssertTrue(try scan.matches(in: roots).isEmpty, "Unexpected secret copy after \(step)")
-            }
+            XCTAssertTrue(try allScans.matches(in: roots).isEmpty, "Unexpected secret copy after \(step)")
         }
 
         // Staging/dismissal is local; acceptance consumes the invite and password.
@@ -330,11 +329,7 @@ final class KeychainSecretScanTests: XCTestCase {
         try FileManager.default.createDirectory(at: hidden, withIntermediateDirectories: true)
         let sentinel = "scan-\(UUID().uuidString)-\"\\/%+"
         let scan = try SecretScan(sentinel)
-        let credential = try JSONSerialization.data(withJSONObject: ["key": sentinel])
-        let nested = try JSONSerialization.data(withJSONObject: ["secret": String(decoding: credential, as: UTF8.self)])
-        let encodings = [Data(sentinel.utf8), Data(Data(sentinel.utf8).base64EncodedString().utf8),
-            Data(sentinel.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!.utf8), credential, nested,
-            Data(repeating: 0, count: 65_532) + Data(sentinel.utf8) + Data([255, 0])]
+        let encodings = try scanEncodings(sentinel)
         var expected = Set<URL>()
         for (index, bytes) in encodings.enumerated() {
             let file = hidden.appendingPathComponent("copy-\(index)")
@@ -345,6 +340,75 @@ final class KeychainSecretScanTests: XCTestCase {
         XCTAssertEqual(scan.copyCount(in: encodings[0] + encodings[4]), 2)
         for file in expected { try FileManager.default.removeItem(at: file) }
         XCTAssertTrue(try scan.matches(in: [root]).isEmpty)
+    }
+
+    func testCombinedScannerFindsEveryEncodingAndRejectsHiddenLeaks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("mp-combined-scan-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = root.appendingPathComponent(".first/nested")
+        let second = root.appendingPathComponent(".second")
+        for directory in [first, second] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let sentinels = ["scan-\(UUID().uuidString)-\"\\/%+", "longer-scan-\(UUID().uuidString)-\"\\/%+"]
+        let scans = try sentinels.map(SecretScan.init)
+        let combined = try SecretScan(combining: scans)
+        var expected = Set<URL>()
+        for (index, sentinel) in sentinels.enumerated() {
+            let directory = index == 0 ? first : second
+            var individual = Set<URL>()
+            for (encoding, bytes) in try scanEncodings(sentinel).enumerated() {
+                let file = directory.appendingPathComponent("copy-\(index)-\(encoding)")
+                // Every representation crosses a read boundary, including nested JSON.
+                try (Data(repeating: 0, count: 65_500) + bytes).write(to: file)
+                individual.insert(file.standardizedFileURL)
+            }
+            XCTAssertTrue(try scans[index].matches(in: [directory]) == individual, "Single scan calibration failed at index \(index)")
+            expected.formUnion(individual)
+        }
+        XCTAssertTrue(try combined.matches(in: [first, second]) == expected, "Disjoint roots lost a sentinel")
+        XCTAssertTrue(try combined.matches(in: [root, first, second]) == expected, "Overlapping roots lost a sentinel")
+        for file in expected { try FileManager.default.removeItem(at: file) }
+        XCTAssertTrue(try combined.matches(in: [root]).isEmpty, "Removed calibration copies remained")
+
+        let vault = first.appendingPathComponent("secrets-unencrypted.json").standardizedFileURL
+        let saved = Data(sentinels[0].utf8)
+        try saved.write(to: vault)
+        XCTAssertTrue(try combined.matches(in: [root]) == [vault])
+        for (index, scan) in scans.enumerated() {
+            XCTAssertEqual(scan.copyCount(in: try Data(contentsOf: vault)), index == 0 ? 1 : 0)
+        }
+        let leak = second.appendingPathComponent("leak").standardizedFileURL
+        let retired = Data(Data(sentinels[1].utf8).base64EncodedString().utf8)
+        try (Data(repeating: 0, count: 65_532) + retired).write(to: leak)
+        let leakedPaths = try combined.matches(in: [root, first, second])
+        XCTAssertTrue(leakedPaths == [vault, leak], "Non-first sentinel escaped the combined scan")
+        XCTAssertFalse(leakedPaths == [vault], "Wrong-file leak satisfied the fallback allowance")
+        try FileManager.default.removeItem(at: leak)
+        try (saved + Data([0]) + retired).write(to: vault)
+        XCTAssertTrue(try combined.matches(in: [root]) == [vault])
+        let bytes = try Data(contentsOf: vault)
+        XCTAssertEqual(scans[0].copyCount(in: bytes), 1)
+        XCTAssertEqual(scans[1].copyCount(in: bytes), 1)
+        XCTAssertFalse(scans[1].copyCount(in: bytes) == 0, "Retired fallback copy satisfied the zero-copy allowance")
+        XCTAssertThrowsError(try combined.matches(in: [vault]))
+        try FileManager.default.removeItem(at: vault)
+        XCTAssertTrue(try combined.matches(in: [root]).isEmpty)
+        XCTAssertThrowsError(try SecretScan(combining: []))
+        XCTAssertThrowsError(try combined.matches(in: [first, root.appendingPathComponent("missing")]))
+        let unreadable = root.appendingPathComponent("unreadable")
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: unreadable.path) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+        XCTAssertThrowsError(try combined.matches(in: [unreadable]))
+    }
+
+    private func scanEncodings(_ sentinel: String) throws -> [Data] {
+        let credential = try JSONSerialization.data(withJSONObject: ["key": sentinel])
+        let nested = try JSONSerialization.data(withJSONObject: ["secret": String(decoding: credential, as: UTF8.self)])
+        return [Data(sentinel.utf8), Data(Data(sentinel.utf8).base64EncodedString().utf8),
+            Data(sentinel.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!.utf8),
+            credential, nested, Data(repeating: 0, count: 65_532) + Data(sentinel.utf8) + Data([255, 0])]
     }
 
     private struct Graph {

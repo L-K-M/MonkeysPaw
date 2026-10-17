@@ -31,6 +31,11 @@ struct SecretScan {
         patterns = variants.map { Data($0.utf8) }
     }
 
+    init(combining scans: [SecretScan]) throws {
+        guard !scans.isEmpty else { throw Failure.unreadableTree }
+        patterns = Array(Set(scans.flatMap(\.patterns)))
+    }
+
     func copyCount(in bytes: Data) -> Int {
         var starts = Set<Int>()
         for pattern in patterns {
