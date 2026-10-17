@@ -9,6 +9,7 @@ final class LinuxAccountSettingsPage {
     let widget: GTK.Widget
     private let makeModel: () -> AccountModel?
     private let invite: LinuxInviteView
+    private let groups: LinuxGroupManagementView
     private var model: AccountModel?
     private var observer: UUID?
     private var isShown = false
@@ -43,9 +44,11 @@ final class LinuxAccountSettingsPage {
     private var keepLocal: GTK.Widget!
     private var include: GTK.Widget!
 
-    init(makeModel: @escaping () -> AccountModel?, makeInvite: @escaping () -> InviteModel? = { nil }) {
+    init(makeModel: @escaping () -> AccountModel?, makeInvite: @escaping () -> InviteModel? = { nil },
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         self.makeModel = makeModel
         invite = LinuxInviteView(makeModel: makeInvite)
+        groups = LinuxGroupManagementView(makeModel: makeGroups)
         let page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
         for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
                      gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(page, 12) }
@@ -84,6 +87,7 @@ final class LinuxAccountSettingsPage {
         let heldActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         gtk_box_append(mp_box(heldSection), heldActions)
         gtk_box_append(mp_box(page), invite.widget)
+        gtk_box_append(mp_box(page), groups.widget)
 
         signIn = button("sign-in", title: LinuxAccountSettingsStrings.signIn, in: actions) { [weak self] model in
             guard let self else { return }
@@ -107,6 +111,7 @@ final class LinuxAccountSettingsPage {
             mp_entry_set_text(self.password, "")
             self.model?.clearPasswordInput()
         }
+        groups.onBusyChange = { [weak self] in self?.render() }
         render()
     }
 
@@ -129,6 +134,7 @@ final class LinuxAccountSettingsPage {
             guard let self, self.isShown, !self.isDestroyed else { return }
             self.render()
         }
+        groups.show()
         render()
         invite.show(account: model)
     }
@@ -137,6 +143,7 @@ final class LinuxAccountSettingsPage {
     func retire(_ reason: Retirement) {
         guard !isDestroyed else { return }
         invite.retire(reason)
+        groups.retire(reason)
         isShown = false
         if let observer { model?.removeObserver(observer) }
         observer = nil
@@ -155,12 +162,13 @@ final class LinuxAccountSettingsPage {
     }
 
     private var canOperate: Bool {
-        isShown && !isDestroyed && pendingIntent == nil && model?.state.isBusy == false
+        isShown && !isDestroyed && pendingIntent == nil && model?.state.isBusy == false && !groups.isBusy
     }
 
     private func render() {
         guard !isDestroyed else { return }
         let state = model?.state
+        groups.updateAccount(state, pendingIntent: pendingIntent)
         let canOperate = canOperate
         if !canOperate { releaseFormFocus() }
         gtk_widget_set_sensitive(form, canOperate ? 1 : 0)
@@ -183,7 +191,8 @@ final class LinuxAccountSettingsPage {
             LinuxAccountSettingsStrings.connection($0, enabled: state?.enabled == true)
         } ?? (state == nil ? LinuxAccountSettingsStrings.unavailable : LinuxAccountSettingsStrings.signedOut))
         setMessage(storage, state?.secretStorageMessage)
-        setMessage(progress, state?.operation.map(LinuxAccountSettingsStrings.progress))
+        setMessage(progress, state?.operation.map(LinuxAccountSettingsStrings.progress)
+            ?? (groups.isBusy ? LinuxGroupManagementStrings.busyAccount : nil))
         setMessage(error, state?.error?.message)
         setMessage(cleanup, state.flatMap { LinuxAccountSettingsStrings.cleanup($0.cleanup) })
         let conflicts = state?.reservedFolders ?? []

@@ -74,6 +74,47 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
         try assertNoPersistedInvite()
     }
 
+    func testProductionAccountKeepsGroupsVisibleAndRequiresExplicitInviteAcceptance() throws {
+        try open(link())
+        let invite = try XCTUnwrap(environment.inviteModel)
+        let groups = try XCTUnwrap(environment.groupManagementModel)
+        let inviteSection = try settingsWidget("settings-invite", in: window)
+        let groupsSection = try settingsWidget("settings-groups", in: window)
+        let groupRefresh = try settingsWidget("settings-groups-refresh", in: window)
+        let groupCreate = try settingsWidget("settings-groups-create", in: window)
+        let copyInvite = try settingsWidget("settings-groups-copy-invite", in: window)
+        XCTAssertTrue(GTKTestSupport.spin {
+            gtk_widget_get_mapped(inviteSection) != 0 && gtk_widget_get_mapped(groupsSection) != 0
+                && gtk_widget_is_sensitive(groupRefresh) != 0
+        })
+        XCTAssertEqual(gtk_widget_is_sensitive(groupCreate), 0)
+        XCTAssertEqual(gtk_widget_is_sensitive(copyInvite), 0)
+        XCTAssertTrue(invite.state.canAccept)
+        XCTAssertTrue(http.requests.isEmpty, "Showing both Account sections must not redeem an invite")
+
+        http.holdRegistration = true
+        try input("username", "person")
+        try input("password", "coexistence-" + UUID().uuidString)
+        try click("register")
+        XCTAssertTrue(GTKTestSupport.spin { self.http.isHeld })
+        XCTAssertEqual(http.requests.filter { $0.url.path.hasSuffix("/register") }.count, 1)
+        XCTAssertTrue(http.requests.filter { $0.url.path.hasSuffix("/groups/join") }.isEmpty)
+        XCTAssertNotEqual(gtk_widget_get_mapped(groupsSection), 0)
+        XCTAssertEqual(gtk_widget_is_sensitive(copyInvite), 0)
+        http.release()
+        XCTAssertTrue(GTKTestSupport.spin { invite.state.accepted && !invite.state.isBusy })
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.accountModel?.state.enabled == true && groups.state.canCreate
+                && gtk_widget_is_sensitive(groupCreate) != 0
+        })
+        XCTAssertNotEqual(gtk_widget_get_mapped(inviteSection), 0)
+        XCTAssertNotEqual(gtk_widget_get_mapped(groupsSection), 0)
+        XCTAssertEqual(gtk_widget_is_sensitive(copyInvite), 0)
+        XCTAssertEqual(http.requests.filter { $0.url.path.hasSuffix("/register") }.count, 1)
+        XCTAssertTrue(http.requests.filter { $0.url.path.hasSuffix("/groups/join") }.isEmpty)
+        try assertNoPersistedInvite()
+    }
+
     func testExistingAccountJoinShowsBindingAndNeverRegistersAutomatically() throws {
         try signIn()
         let before = http.requests.count
