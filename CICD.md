@@ -161,14 +161,24 @@ Check the ghcr tags too, since image promotion precedes GitHub publishing.
 without `--push` still commits and tags, so integration tests use disposable
 repositories rather than an implementation checkout.
 
-Local builds use `scripts/build.sh [mac|deb|flatpak|android ...] [--no-open]`, with outputs in
-`dist/`. The default skips targets this host cannot build; explicitly named
-targets fail when requirements are missing. The default builds deb then Flatpak
-once when both are feasible. `flatpak` requires x86_64 Linux, the deb toolchain,
+Local builds use `scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--no-open]`,
+with file outputs in `dist/`. The default skips targets this host cannot build;
+explicitly named targets fail when requirements are missing. The default builds
+deb then Flatpak once when both are feasible. `flatpak` requires x86_64 Linux, the deb toolchain,
 Flatpak/flatpak-builder and user-installed GNOME Platform/SDK 50; it reuses only
 this run's exact deb, regardless of target order. To repack an already tested
 deb, run `scripts/build-flatpak.sh <deb> [expected-app-version]`; absent an
 expected version, its control metadata supplies the version.
+
+`server-image` requires Docker, git and a reachable Linux Docker engine on
+Linux or macOS. It builds `server/Dockerfile` for the engine's default platform
+as `monkeyspaw-server:<committed-version>` in Docker's image store and prints
+that reference in the Summary. Its `VERSION`, `REVISION` and `CREATED` build
+args use the committed version, HEAD SHA and HEAD's `%cI` commit timestamp,
+matching the release image contract. Missing Docker, a failing `docker info`,
+or a non-Linux engine skips the default target and fails a named target.
+Image publication and multiarch assembly remain in the release workflow.
+
 `scripts/build.sh app [flags]` retains the app-only `lkm-build` path. Download each platform's checksum file
 with its archives and verify it before installing.
 
