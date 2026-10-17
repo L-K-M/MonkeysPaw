@@ -142,7 +142,8 @@ class LibraryService(
 
     private fun checkAssistantAccess(acceptance: AssistantAcceptance) {
         val expected = acceptance.candidate.context.access
-        val actual = assistantAccess.current(acceptance.candidate.context.editor?.relativePath)
+        val source = acceptance.candidate.context.editor
+        val actual = assistantAccess.current(source?.relativePath, source?.let { PromptIdentity.at(it.relativePath, it.loadedID) })
         if (actual == AssistantAccessState.UNAVAILABLE || expected.mutationAccess != acceptance.candidate.mutationAccess ||
             acceptance.destination == AssistantSaveDestination.IMPROVE && actual.mutationAccess != AssistantMutationAccess.CURRENT_SCOPE ||
             actual.mutationAccess == AssistantMutationAccess.PRIVATE_COPY && acceptance.destination != AssistantSaveDestination.PRIVATE_COPY) {

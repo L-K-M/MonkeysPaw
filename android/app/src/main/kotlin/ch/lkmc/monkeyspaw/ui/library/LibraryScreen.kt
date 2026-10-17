@@ -98,7 +98,7 @@ internal fun LibraryScreen(
         }
         items(state.rows, key = { it.selection.relativePath }) { row ->
             PromptRow(row, selected = state.selectedPrompt?.selection == row.selection,
-                favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && !row.isReadOnly,
+                favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && row.canFavorite,
                 onSelect = { onSelect(row.selection); onOpen(row.selection) }, onToggleFavorite = { onToggleFavorite(row.selection) })
         }
         item { Spacer(Modifier.height(12.dp)) }
@@ -109,6 +109,8 @@ private fun sectionKey(filter: LibraryFilter): String = when (filter) {
     LibraryFilter.All -> "all"
     LibraryFilter.Favourites -> "favourites"
     LibraryFilter.Recent -> "recent"
+    LibraryFilter.Conflicts -> "conflicts"
+    is LibraryFilter.Group -> "group:" + filter.id.rawValue
     is LibraryFilter.Folder -> "folder:" + filter.path
     is LibraryFilter.Tag -> "tag:" + filter.key
 }
@@ -118,6 +120,8 @@ private fun sectionTitle(section: LibrarySection): String = when (section.filter
     LibraryFilter.All -> stringResource(R.string.library_all)
     LibraryFilter.Favourites -> stringResource(R.string.library_favourites)
     LibraryFilter.Recent -> stringResource(R.string.library_recent)
+    LibraryFilter.Conflicts -> stringResource(R.string.library_conflicts)
+    is LibraryFilter.Group -> stringResource(R.string.library_group_role, section.title, section.group?.role?.wireValue.orEmpty())
     is LibraryFilter.Folder, is LibraryFilter.Tag -> section.title
 }
 
@@ -130,6 +134,8 @@ private fun PromptRow(row: LibraryRow, selected: Boolean, favoriteEnabled: Boole
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(row.title, style = MaterialTheme.typography.titleMedium)
             Text(row.selection.relativePath, style = MaterialTheme.typography.bodySmall)
+            row.group?.let { Text(stringResource(R.string.library_group_role, it.name, it.role.wireValue)) }
+            if (row.syncOrigin != null) Text(stringResource(R.string.library_private_copy), style = MaterialTheme.typography.labelLarge)
             row.description?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             if (row.tags.isNotEmpty()) Text(row.tags.joinToString(" ") { "#$it" }, style = MaterialTheme.typography.bodySmall)
             if (row.isReadOnly) Text(stringResource(R.string.library_read_only), style = MaterialTheme.typography.labelLarge)
@@ -138,7 +144,8 @@ private fun PromptRow(row: LibraryRow, selected: Boolean, favoriteEnabled: Boole
             Row {
                 Checkbox(checked = row.favorite, onCheckedChange = { onToggleFavorite() }, enabled = favoriteEnabled,
                     modifier = Modifier.semantics { contentDescription = favoriteDescription })
-                Text(stringResource(R.string.library_favourite), modifier = Modifier.padding(top = 12.dp))
+                Text(stringResource(if (row.group != null) R.string.library_private_favourite else R.string.library_favourite),
+                    modifier = Modifier.padding(top = 12.dp))
             }
         }
     }

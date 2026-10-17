@@ -16,6 +16,7 @@ internal data class LibraryState(
     val snapshot: LibrarySnapshot,
     val refreshing: Boolean = false,
     val error: Exception? = null,
+    val access: GroupAccessSnapshot? = null,
 )
 
 internal data class LibrarySearchSnapshot(val state: LibraryState, val matches: List<LocalSearchResult>)
@@ -33,8 +34,10 @@ internal class LibraryRepository(
     private var refreshFlight: CompletableDeferred<LibraryState>? = null
     private var rootPrepared = false
     private var indexLoaded = false
-    private val mutableState = MutableStateFlow(LibraryState(LibrarySnapshot(0, emptyList())))
+    private val mutableState = MutableStateFlow(LibraryState(LibrarySnapshot(0, emptyList()), access = library.accessSnapshot))
     val state: StateFlow<LibraryState> = mutableState.asStateFlow()
+    // Immutable cached policy is safe to sample before an intent waits for the IO worker.
+    val accessSnapshot: GroupAccessSnapshot get() = library.accessSnapshot
 
     /** Search the warm index even when disk is unavailable, without clearing a rescan failure. */
     suspend fun search(query: String): LibrarySearchSnapshot = withContext(io) {
@@ -68,10 +71,10 @@ internal class LibraryRepository(
                 prepareRoot()
                 val snapshot = library.index.rebuild()
                 indexLoaded = true
-                LibraryState(snapshot).also { mutableState.value = it }
+                LibraryState(snapshot, access = library.accessSnapshot).also { mutableState.value = it }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                mutableState.value.copy(refreshing = false, error = sanitized(error))
+                mutableState.value.copy(refreshing = false, error = sanitized(error), access = library.accessSnapshot)
                     .also { mutableState.value = it }
             } finally {
                 mutableState.value = mutableState.value.copy(refreshing = false)
@@ -92,12 +95,12 @@ internal class LibraryRepository(
                     indexLoaded = true
                 }
                 val result = work(library, editing)
-                mutableState.value = LibraryState(library.index.snapshot())
+                mutableState.value = LibraryState(library.index.snapshot(), access = library.accessSnapshot)
                 result
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 val failure = sanitized(error)
-                mutableState.value = LibraryState(library.index.snapshot(), error = failure)
+                mutableState.value = LibraryState(library.index.snapshot(), error = failure, access = library.accessSnapshot)
                 throw failure
             }
         }
@@ -105,7 +108,7 @@ internal class LibraryRepository(
 
     /** Access-only publications use the committed index and never become a source-save event. */
     suspend fun publishProjection() = withContext(io) {
-        mutex.withLock { mutableState.value = mutableState.value.copy(snapshot = library.index.snapshot()) }
+        mutex.withLock { mutableState.value = mutableState.value.copy(snapshot = library.index.snapshot(), access = library.accessSnapshot) }
     }
 
     private suspend fun prepareRoot() {

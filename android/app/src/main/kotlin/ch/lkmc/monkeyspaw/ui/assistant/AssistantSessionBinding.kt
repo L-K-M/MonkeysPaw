@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.ui.assistant
 
 import ch.lkmc.monkeyspaw.core.services.AssistantContext
 import ch.lkmc.monkeyspaw.core.services.AssistantSession
+import ch.lkmc.monkeyspaw.core.services.PromptIdentity
 import ch.lkmc.monkeyspaw.di.AssistantGraph
 import ch.lkmc.monkeyspaw.di.AssistantProviderChanges
 import ch.lkmc.monkeyspaw.ui.editor.EditorViewModel
@@ -18,7 +19,8 @@ internal class AssistantSessionBinding(
     fun context(): AssistantContext {
         val snapshot = editor.assistantSnapshot
         return AssistantContext(graph.id, graph.service.selectedProfile, snapshot,
-            graph.access.current(snapshot?.relativePath), providers.generation.value)
+            graph.access.current(snapshot?.relativePath, snapshot?.let { PromptIdentity.at(it.relativePath, it.loadedID) }),
+            providers.generation.value, editor.assistantAccessGeneration)
     }
 
     val session = AssistantSession(graph.service, scope, ::context, graph.clock)

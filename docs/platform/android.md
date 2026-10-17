@@ -848,9 +848,11 @@ Inspect separate front-matter/body diff panes, line numbers, placeholder
 warnings and horizontal scrolling on a narrow phone. Reject preserves every
 file. Accept saves exactly the preview, retaining existing identity/unknown
 metadata and creating one prior revision. Saved provenance/history warnings
-must not invite another write. Production group-role checks remain blocked
-until M10's live access authority replaces `AssistantAccess.LOCAL`; injected
-group-role tests do not prove that integration.
+must not invite another write. The app uses committed local group access for
+assistant context and checked publication, including path/identity and access
+generation checks. JVM integration covers role changes, exact viewer private
+copies, queued acceptance and cancellation. Repeat these group-role flows on
+the device; JVM results do not establish native rendering or sync behavior.
 
 In all six rows, verify explicit feedback retry, elapsed/Cancel, Back/gesture,
 rotation, background/resume, TalkBack and large text. Cancel or switch profile

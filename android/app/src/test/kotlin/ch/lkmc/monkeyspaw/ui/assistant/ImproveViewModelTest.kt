@@ -415,6 +415,7 @@ internal class ImproveViewModelTest : TemporaryFiles() {
             h.configure(); h.editor.edit(h.original + "\nUnsaved"); runCurrent()
             h.ready(withReview = true)
             h.model.accept()
+            runCurrent()
             val guard = assertNotNull(h.editor.state.value.pendingDecision)
             h.editor.resolveDecision(guard.id, choice); runCurrent()
             assertFalse(Files.exists(h.promptRoot.resolve("Candidate.md")))
