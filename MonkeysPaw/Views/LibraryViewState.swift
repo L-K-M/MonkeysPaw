@@ -310,7 +310,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     func setFilter(_ filter: String) {
-        guard isActive else { return }
+        guard isActive, !model.filter.utf8.elementsEqual(filter.utf8) else { return }
         cancelScopeDrop()
         favoriteOutcome = nil
         model.setFilter(filter)
