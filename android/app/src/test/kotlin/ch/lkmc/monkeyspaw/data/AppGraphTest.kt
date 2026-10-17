@@ -31,6 +31,7 @@ internal class AppGraphTest {
         val methods = AppModule::class.java.declaredMethods
         for (type in listOf(LibraryService::class.java, EditingService::class.java, LibraryRepository::class.java,
             AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, SecretStore::class.java,
+            AndroidStateStore::class.java, AndroidSyncStartup::class.java, AndroidSyncRepository::class.java,
             CoroutineScope::class.java, AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
             AndroidClock::class.java, Clock::class.java, Clipboard::class.java,
             HttpTransport::class.java, MonotonicClock::class.java, AssistantService::class.java,
@@ -68,8 +69,10 @@ internal class AppGraphTest {
         val module = source("di/AppModule.kt")
         assertTrue(module.contains("AndroidPromptStore(File(context.filesDir, \"library\"))"))
         assertTrue(module.contains("AndroidStateStore(File(context.filesDir, \"state\"), settings = settings)"))
-        assertTrue(AppModule::class.java.declaredMethods.single { it.returnType == StateStore::class.java }
+        assertTrue(AppModule::class.java.declaredMethods.single { it.returnType == AndroidStateStore::class.java }
             .parameterTypes.contains(AndroidSettingsStore::class.java))
+        assertEquals(listOf(AndroidStateStore::class.java), AppModule::class.java.declaredMethods
+            .single { it.returnType == StateStore::class.java }.parameterTypes.toList())
         assertTrue(module.contains("File(context.filesDir, \"datastore/settings.json\")"))
         assertTrue(module.contains("File(context.filesDir, \"datastore/secrets.json\")"))
     }

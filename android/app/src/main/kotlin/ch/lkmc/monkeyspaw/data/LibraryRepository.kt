@@ -26,6 +26,7 @@ internal class LibraryRepository(
     private val editing: EditingService,
     private val prompts: AndroidPromptStore,
     private val io: CoroutineDispatcher,
+    private val beforeRead: suspend () -> Unit = {},
 ) {
     private val mutex = Mutex()
     private val refreshLock = Any()
@@ -56,6 +57,9 @@ internal class LibraryRepository(
             synchronized(refreshLock) { refreshFlight = null }
         }
     }
+
+    /** A commit must not join a scan that captured the library before that commit. */
+    suspend fun refreshAfterCommit(): LibraryState = scan()
 
     private suspend fun scan(): LibraryState = withContext(io) {
         mutex.withLock {
@@ -99,7 +103,13 @@ internal class LibraryRepository(
         }
     }
 
-    private fun prepareRoot() {
+    /** Access-only publications use the committed index and never become a source-save event. */
+    suspend fun publishProjection() = withContext(io) {
+        mutex.withLock { mutableState.value = mutableState.value.copy(snapshot = library.index.snapshot()) }
+    }
+
+    private suspend fun prepareRoot() {
+        beforeRead()
         if (!rootPrepared) {
             prompts.prepareRoot()
             rootPrepared = true
