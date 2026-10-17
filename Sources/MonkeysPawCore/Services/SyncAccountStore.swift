@@ -79,9 +79,23 @@ public final class SyncAccountStore: @unchecked Sendable {
                                     path: "sync/binding.json", version: Limits.syncBindingVersion)
     }
 
+    /// Composition's synchronous onboarding predicate uses validated cached
+    /// metadata without constructing an Account model or resolving a secret.
+    public var hasConfiguredAccount: Bool { connection.snapshot.value?.account != nil }
+
+    /// Repeat uses validated cached identity without reading a credential or disk.
+    public func repeatBinding(libraryRoot: String) throws -> RepeatBinding {
+        guard readOnlyError == nil else { throw RepeatFailure.invalidBinding }
+        let account = cachedAccount
+        return try RepeatBinding(root: libraryRoot, serverURL: account?.identity.serverURL.absoluteString,
+                                 userID: account?.identity.userID)
+    }
+
     /// Cached diagnostics may be stale until load; readOnlyError blocks use for
     /// sync decisions. Each snapshot is locked, not a cross-document transaction.
     var cachedAccount: SyncAccount? { connection.snapshot.value?.account }
+    /// Non-secret onboarding predicate; a locked credential still has a server.
+    public var hasConfiguredServer: Bool { cachedAccount != nil }
     var cachedBindings: [SyncLibraryBinding] { ownership.snapshot.value?.libraries ?? [] }
     var readOnlyError: SyncError? { connection.snapshot.error ?? ownership.snapshot.error }
 
@@ -158,6 +172,15 @@ public final class SyncAccountStore: @unchecked Sendable {
         // holds after sign-out or corrupt metadata. Account reads/edits and
         // ownership edits require both records to be healthy.
         return try ownership.load()?.libraries.first { $0.root == root }
+    }
+
+    /// Journal replay validates ownership before reestablishing uncertain durability.
+    func recoverBinding(for root: SyncLibraryRoot,
+                        validating validate: (SyncLibraryBinding?) throws -> Void) throws {
+        defer { notify() }
+        _ = try ownership.recover { document in
+            try validate(document?.libraries.first { $0.root == root })
+        }
     }
 
     func updateBinding(for root: SyncLibraryRoot,

@@ -48,7 +48,7 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
     public var description: String { "<repeat service>" }
     public var customMirror: Mirror { Mirror(self, children: [:]) }
 
-    private let binding: RepeatBinding
+    private var binding: RepeatBinding
     private let store: LastDeliveryStore
     private let library: LibraryService
     private let index: PromptIndex
@@ -294,6 +294,14 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
         do { try forgetValues() }
         catch { lock.withLock { active = true }; throw error }
         publish(.unavailable(.inactive))
+    }
+
+    /// UI-thread composition calls only after account work drains. Keep the
+    /// same picker/fill recorder while ending every old recording ticket.
+    public func rebind(to binding: RepeatBinding) throws {
+        try retire()
+        lock.withLock { self.binding = binding; active = true }
+        publish(.nothingToRepeat)
     }
 
     private func readSnapshot(_ ticket: RepeatRecording) throws -> Snapshot? {

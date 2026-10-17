@@ -37,7 +37,7 @@ struct KDEHotkeyChoiceStore {
 
         var info = stat()
         guard fstat(descriptor, &info) == 0 else { return .unreadable }
-        guard info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+        guard info.st_mode & mode_t(Glibc.S_IFMT) == mode_t(Glibc.S_IFREG),
               info.st_uid == geteuid(), info.st_mode & 0o077 == 0,
               info.st_size <= Limits.shortcutChoiceFileMaxBytes else { return .corrupt }
 

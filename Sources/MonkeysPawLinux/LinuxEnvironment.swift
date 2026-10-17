@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import Glibc
 import MonkeysPawCore
 
 /// The Linux composition root: only this type assembles platform drivers.
@@ -9,6 +10,8 @@ final class LinuxEnvironment {
         case switched
         case deliveryInFlight
         case editorBusy
+        case syncDraining
+        case syncRecoveryRequired
         case outsideSandboxHome
         case invalidTarget(FileStoreError)
         case libraryUnavailable(FileStoreError)
@@ -21,7 +24,8 @@ final class LinuxEnvironment {
             case .deliveryInFlight: return .deliveryInFlight
             // Core has one busy outcome. Settings overrides this refusal's
             // copy locally without widening the shared folder port.
-            case .editorBusy: return .deliveryInFlight
+            case .editorBusy, .syncDraining: return .deliveryInFlight
+            case .syncRecoveryRequired: return .libraryUnavailable(.ioFailure)
             case .outsideSandboxHome: return .invalidTarget(.outsideSandboxHome)
             case .invalidTarget(let error): return .invalidTarget(.rejectedByStore(error))
             case .libraryUnavailable(let error): return .libraryUnavailable(error)
@@ -110,10 +114,12 @@ final class LinuxEnvironment {
         let initializationError: FileStoreError?
         var started = false
         var warningLogged = false
+        var rootUnavailable = false
         var assistant: AssistantModel?
         var makeAssistant: (() -> AssistantModel)?
         var assistantObserver: UUID?
         private var assistantSession: PromptEditingSession?
+        var sync: SyncGraph?
 
         init(directory: URL, files: FileStore, library: LibraryService,
              index: PromptIndex, watcher: LibraryWatcher?, picker: PickerModel, browser: LibraryBrowserModel,
@@ -168,6 +174,68 @@ final class LinuxEnvironment {
         }
     }
 
+    // M6 sync lifetime is separate from window bindings and delivery settings.
+    private final class SyncGraph {
+        let service: SyncService
+        let accounts: SyncAccountStore
+        let accountService: SyncAccountService
+        let access: GroupAccessService
+        let scheduler: LinuxSyncScheduler
+        var account: AccountModel?
+        var status: SyncStatusModel?
+        var invite: InviteModel?
+        var groups: GroupManagementModel?
+        var conflict: ConflictModel?
+        var observer: UUID?
+        var startupRequested = false
+        var started = false
+        var retired = false
+        var drained = false
+
+        var needsDrain: Bool {
+            account?.state.isBusy == true || invite?.state.isBusy == true
+                || groups?.state.isBusy == true || conflict?.state.isBusy == true
+                || accounts.hasConfiguredServer || service.report.enabled
+        }
+
+        init(service: SyncService, accounts: SyncAccountStore, accountService: SyncAccountService,
+             access: GroupAccessService, scheduler: LinuxSyncScheduler) {
+            self.service = service
+            self.accounts = accounts
+            self.accountService = accountService
+            self.access = access
+            self.scheduler = scheduler
+        }
+
+        func retireModels() {
+            retired = true
+            scheduler.retire()
+            account?.retire()
+            status?.retire()
+            invite?.retire()
+            groups?.retire()
+            conflict?.retire()
+            if let observer { service.removeObserver(observer); self.observer = nil }
+        }
+
+        func drain() async -> Bool {
+            _ = service.stop()
+            await account?.drain()
+            await invite?.drain()
+            await groups?.drain()
+            await conflict?.drain()
+            // An admitted login/join may have restarted sync during its drain.
+            _ = service.stop()
+            await service.drain()
+            if service.retire() == .recoveryRequired {
+                do { try await service.recoverJournal() }
+                catch { return false }
+            }
+            await service.drain()
+            return service.retire() == .stopped
+        }
+    }
+
     private enum ActionOrigin { case shortcut, manual }
     private enum TrayEntry: Int32 {
         case picker = 1, library, settings, setup, quit
@@ -211,6 +279,22 @@ final class LinuxEnvironment {
     var importModel: ImportModel { libraryGraph.importModel }
     var libraryImportState: LinuxLibraryImportState { libraryGraph.imports }
     var assistantModel: AssistantModel? { libraryGraph.assistant }
+    // Native Y21/Y24/Y26/Y28/Y33 views consume these shared models.
+    var accountModel: AccountModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.account }
+    var syncStatusModel: SyncStatusModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.status }
+    var inviteModel: InviteModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.invite }
+    var groupManagementModel: GroupManagementModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.groups }
+    var conflictModel: ConflictModel? { prepareSyncModels(in: libraryGraph); return libraryGraph.sync?.conflict }
+    var syncService: SyncService? { libraryGraph.sync?.service }
+    var syncCompositionIssue: SyncBlockingIssue? {
+        guard let sync = libraryGraph.sync else { return .recoveryRequired }
+        return sync.access.snapshot.isBlocked ? .invalidState : nil
+    }
+    private(set) var syncReplacementIssue: LibrarySwitchResult?
+    private var syncReplacementTask: Task<Void, Never>?
+    private let suppliedSyncTransport: HTTPTransporting?
+    private let suppliedSyncTimer: Scheduler?
+    private let syncDataFlush: (Int32) -> Int32
 
     private lazy var defaultLibraryDirectory = paths.documentsDirectory
         .appendingPathComponent("MonkeysPaw", isDirectory: true)
@@ -292,12 +376,14 @@ final class LinuxEnvironment {
         isLibraryEmpty: { [weak self] in
             guard let self, !self.isShutDown else { throw FileStoreError.ioFailure }
             return try self.libraryGraph.library.entries().isEmpty
-        }, hasConfiguredSyncServer: { false }, seedIfEmpty: { [weak self] in
+        }, hasConfiguredSyncServer: { [weak self] in
+            self?.currentLibraryGraph?.sync?.accounts.hasConfiguredServer == true
+        }, seedIfEmpty: { [weak self] in
             guard let self, !self.isShutDown else { throw FileStoreError.ioFailure }
             return try SeedService(library: self.libraryGraph.library).seedIfEmpty()
         })
     private lazy var dataFiles: FileStore = {
-        do { return try RootedFileStore(root: paths.dataDirectory) }
+        do { return try RootedFileStore(root: paths.dataDirectory, syncDescriptor: syncDataFlush) }
         catch {
             log.write(.warning, "App data unavailable; remembered values and usage cannot be saved")
             return UnavailableFileStore()
@@ -377,6 +463,8 @@ final class LinuxEnvironment {
          importSourceFactory: @escaping () -> LinuxImportSourceReader = { LinuxImportSourceReader() },
          backgroundWork: BackgroundWork? = nil,
          assistantTransport: HTTPTransporting? = nil,
+         syncTransport: HTTPTransporting? = nil,
+         syncDataFlush: @escaping (Int32) -> Int32 = Glibc.fsync,
          clipboard: Clipboard? = nil,
          updateVersion: String? = LinuxEnvironment.packagedVersion,
          releasePage: ReleasePageOpening? = nil,
@@ -393,6 +481,9 @@ final class LinuxEnvironment {
         self.importSourceFactory = importSourceFactory
         self.backgroundWork = backgroundWork ?? LinuxBackgroundWork()
         suppliedAssistantTransport = assistantTransport
+        suppliedSyncTransport = syncTransport
+        suppliedSyncTimer = scheduler
+        self.syncDataFlush = syncDataFlush
         suppliedClipboard = clipboard
         self.updateVersion = updateVersion
         suppliedReleasePage = releasePage
@@ -448,6 +539,7 @@ final class LinuxEnvironment {
         guard !isShutDown else { return }
         if !isRunningTests, updateVersion != nil { updateService.startAutomaticChecks() }
         startLibrary()
+        startSync(in: libraryGraph)
         _ = onboardingModel
         startStatusNotifierItem()
         traceFirstRun("startup.gate")
@@ -667,7 +759,12 @@ final class LinuxEnvironment {
                         return model
                     },
                     chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() },
-                    librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
+                    librarySwitchMessage: { [weak self] in self?.librarySwitchMessage },
+                    makeAccount: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              self.libraryGraph.sync?.retired == false else { return nil }
+                        return self.accountModel
+                    })
             }
             self.currentSettingsWindow?.show()
         }
@@ -698,10 +795,12 @@ final class LinuxEnvironment {
     private func presentLibraryWindow() {
         if currentLibraryWindow == nil {
             let graph = libraryGraph
+            // Browsing alone must not start account-model loading work.
             currentLibraryWindow = LinuxLibraryWindow(application: application,
                 browser: libraryBrowserModel, editor: editorModel,
                 imports: .init(state: libraryImportState, chooser: importChooser),
-                assistant: { [weak graph] in graph?.assistant }, openFolder: { [weak self] in
+                assistant: { [weak graph] in graph?.assistant },
+                conflict: { [weak graph] in graph?.sync?.conflict }, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })
@@ -715,10 +814,14 @@ final class LinuxEnvironment {
     /// save or selection must finish before the quit decision can be approved.
     func requestQuit(_ approved: @escaping () -> Void) {
         guard !isShutDown, !quitPending else { return }
+        guard syncReplacementTask == nil else {
+            mp_notify(application, LinuxStrings.quit, LinuxStrings.syncFinishingBeforeQuit)
+            return
+        }
         guard let graph = currentLibraryGraph else { approved(); return }
         let state = graph.editor.state
         guard editorHasUnsavedWork(state) else {
-            approved()
+            approveQuit(afterDraining: graph, approved: approved)
             return
         }
         quitPending = true
@@ -727,7 +830,35 @@ final class LinuxEnvironment {
             guard let self, let graph, self.currentLibraryGraph === graph else { return }
             self.quitPending = false
             guard !self.isShutDown else { return }
-            if result == .allowed { approved() }
+            if result == .allowed { self.approveQuit(afterDraining: graph, approved: approved) }
+        }
+    }
+
+    private func approveQuit(afterDraining graph: LibraryGraph, approved: @escaping () -> Void) {
+        guard let sync = graph.sync else { approved(); return }
+        currentSettingsWindow?.suspendAccount()
+        if !sync.needsDrain, sync.service.retire() == .stopped {
+            sync.retireModels()
+            sync.drained = true
+            approved()
+            return
+        }
+        quitPending = true
+        sync.retireModels()
+        graph.stop()
+        syncReplacementTask = Task.detached { [self, sync] in
+            await withCheckedContinuation { completion in backgroundWork.run { completion.resume() } }
+            let drained = await sync.drain()
+            mainThread.run { [weak self] in
+                guard let self, !self.isShutDown else { return }
+                self.quitPending = false
+                self.syncReplacementTask = nil
+                if drained { approved() }
+                else {
+                    self.syncReplacementIssue = .syncRecoveryRequired
+                    self.panel.showStatus("Local sync recovery must finish before quitting.")
+                }
+            }
         }
     }
 
@@ -738,6 +869,8 @@ final class LinuxEnvironment {
     }
 
     private var librarySwitchMessage: String? {
+        if syncReplacementTask != nil { return "Finishing sync work before changing the library." }
+        if syncReplacementIssue == .syncRecoveryRequired { return "Local sync recovery must finish before changing the library." }
         guard let graph = currentLibraryGraph else { return nil }
         if editorHasUnsavedWork(graph.editor.state) { return LinuxEditorStrings.librarySwitchRefused }
         // An empty override hides a past busy refusal once the work resolves.
@@ -837,7 +970,9 @@ final class LinuxEnvironment {
         // linked into a synced directory still loads; a chosen root must not be a symlink.
         let isDefault = directory.standardizedFileURL.path.utf8
             .elementsEqual(defaultLibraryDirectory.standardizedFileURL.path.utf8)
-        let files = isDefault ? try RootedFileStore(root: directory) : try RootedFileStore(libraryRoot: directory)
+        let trash = paths.dataDirectory.deletingLastPathComponent().appendingPathComponent("Trash")
+        let files = isDefault ? try RootedFileStore(root: directory, trashRoot: trash)
+            : try RootedFileStore(libraryRoot: directory, trashRoot: trash)
         if isDefault {
             try files.createRoot()
         } else {
@@ -853,6 +988,8 @@ final class LinuxEnvironment {
                                   initializationError: FileStoreError? = nil) -> LibraryGraph {
         let library = LibraryService(library: files, data: dataFiles,
             clock: clock, entropy: SystemEntropy(), keyedStores: [values, usage])
+        // Install the journal and committed group policy before ordinary reads.
+        let sync = makeSyncGraph(directory: directory, files: files, library: library)
         let index = PromptIndex(service: library, usage: usage, clock: clock)
         let callbacks = LibraryCallbacks(main: mainThread)
         let repeatService = (try? RepeatBinding(root: directory.path)).map { binding in
@@ -896,6 +1033,8 @@ final class LinuxEnvironment {
             importModel: importModel, imports: imports, callbacks: callbacks,
             repeatService: repeatService, repeatModel: repeatModel,
             initializationError: initializationError)
+        graph.sync = sync
+        observeSync(in: graph)
         let service = assistantService
         let main = mainThread
         graph.makeAssistant = { [weak graph] in
@@ -903,7 +1042,7 @@ final class LinuxEnvironment {
                 AssistantContext(libraryID: graph?.id ?? UUID(), profile: service.selectedProfile,
                     editor: graph?.editor.assistantSnapshot,
                     access: graph?.callbacks.isActive == true && graph?.picker.libraryAvailable == true
-                        ? .privatePrompt : .unavailable)
+                        ? graph?.editor.assistantAccess ?? .unavailable : .unavailable)
             })
         }
         graph.refreshAssistant()
@@ -925,14 +1064,120 @@ final class LinuxEnvironment {
         return graph
     }
 
+    private func makeSyncGraph(directory: URL, files: FileStore, library: LibraryService) -> SyncGraph? {
+        guard let libraryOperations = files as? SyncFileOperations,
+              let dataOperations = dataFiles as? SyncFileOperations else { return nil }
+        (files as? RootedFileStore)?.bindSyncRoot()
+        (dataFiles as? RootedFileStore)?.bindSyncRoot()
+        let states = SyncStateStore(files: dataFiles, operations: dataOperations)
+        let accounts = SyncAccountStore(files: dataFiles, operations: dataOperations)
+        let timer = LinuxSyncScheduler(worker: backgroundWork, timer: suppliedSyncTimer)
+        do {
+            let access = try GroupAccessService(library: library, states: states, accounts: accounts,
+                libraryRoot: directory.path)
+            let service = try SyncService(library: library, libraryOperations: libraryOperations,
+                dataFiles: dataFiles, dataOperations: dataOperations, states: states, accounts: accounts,
+                scheduler: timer, mainThread: mainThread, clock: clock, entropy: SystemEntropy())
+            let account = try SyncAccountService(sync: service, accounts: accounts, secrets: secretStore,
+                transport: suppliedSyncTransport ?? assistantTransport, libraryRoot: directory.path)
+            return SyncGraph(service: service, accounts: accounts, accountService: account, access: access, scheduler: timer)
+        } catch {
+            timer.retire()
+            log.write(.warning, "Sync unavailable; local recovery is required")
+            return nil
+        }
+    }
+
+    private func prepareSyncModels(in graph: LibraryGraph) {
+        guard let sync = graph.sync, !sync.retired, sync.account == nil else { return }
+        sync.account = AccountModel(account: sync.accountService, mainThread: mainThread)
+        sync.status = SyncStatusModel(sync: sync.service, mainThread: mainThread)
+        sync.invite = InviteModel(service: SyncInviteService(account: sync.accountService, clipboard: clipboard), mainThread: mainThread)
+        sync.groups = GroupManagementModel(service: SyncGroupService(account: sync.accountService, clipboard: clipboard), mainThread: mainThread)
+        sync.conflict = ConflictModel(service: ConflictResolutionService(sync: sync.service), mainThread: mainThread)
+        _ = sync.account?.addObserver { [weak self, weak graph, weak sync] state in
+            guard let self, let graph, let sync, !sync.retired, self.currentLibraryGraph === graph else { return }
+            if sync.startupRequested, !state.isBusy {
+                sync.startupRequested = false
+                sync.account?.startup()
+            }
+            self.onboardingModel.refresh()
+        }
+    }
+
+    private func startSync(in graph: LibraryGraph) {
+        guard let sync = graph.sync, !sync.started, !sync.retired else { return }
+        sync.started = true
+        // A healthy local-only primary has no account work to start. Opening
+        // Account still loads its models, and explicit login starts this engine.
+        guard sync.accounts.hasConfiguredServer || sync.access.snapshot.isBlocked else { return }
+        prepareSyncModels(in: graph)
+        // Account's initial loading publication must complete before startup.
+        if sync.account?.state.isBusy == true { sync.startupRequested = true }
+        else { sync.account?.startup() }
+    }
+
+    private func observeSync(in graph: LibraryGraph) {
+        guard let sync = graph.sync else { return }
+        sync.observer = sync.service.observe { [weak self, weak graph] report in
+            guard let self, let graph, graph.callbacks.isActive, self.currentLibraryGraph === graph else { return }
+            if graph.index.lastSyncRefreshFailure != nil || report.blockingIssue != nil {
+                self.checkSyncRoot(in: graph)
+            }
+            self.restoreLibraryAvailability(in: graph)
+            if report.phase == .idle, graph.sync?.conflict?.state.isBusy == false { graph.sync?.conflict?.refresh() }
+        }
+    }
+
+    private func restoreLibraryAvailability(in graph: LibraryGraph) {
+        guard graph.sync?.service.report.blockingIssue == nil, graph.index.lastSyncRefreshFailure == nil,
+              graph.sync?.access.snapshot.isBlocked == false,
+              graph.initializationError == nil, !graph.rootUnavailable else { return }
+        graph.picker.libraryAvailable = true
+        graph.imports.setLibraryAvailable(true)
+        currentLibraryWindow?.setLibraryAvailable(true)
+        // Finish a replacement whose initial reads were blocked by sync.
+        currentLibraryStatusModel?.libraryReplaced(available: true)
+    }
+
+    private func checkSyncRoot(in graph: LibraryGraph) {
+        backgroundWork.run { [weak self, weak graph] in
+            guard let graph else { return }
+            do { try (graph.files as? RootedFileStore)?.requireRoot() }
+            catch {
+                _ = graph.sync?.service.rootHealthChanged(.unavailable)
+                graph.callbacks.run { [weak self, weak graph] in
+                    guard let graph else { return }
+                    self?.degradeLibrary(graph, error as? FileStoreError)
+                }
+                return
+            }
+            guard graph.index.lastSyncRefreshFailure != nil else { return }
+            do {
+                try graph.index.rebuild(origin: .sync)
+                graph.callbacks.run { [weak self, weak graph] in
+                    guard let graph else { return }
+                    self?.restoreLibraryAvailability(in: graph)
+                }
+            } catch {
+                graph.callbacks.run { [weak self, weak graph] in
+                    guard let graph else { return }
+                    self?.warnAboutLibrary(graph)
+                }
+            }
+        }
+    }
+
     /// UI-thread composition intent for later General/onboarding controls.
     /// Nil selects the default. Drafts belong to the retired picker.
     func switchLibrary(to directory: URL?) -> LibrarySwitchResult {
         guard !isShutDown else { return .libraryUnavailable(.ioFailure) }
+        guard syncReplacementTask == nil else { return .syncDraining }
         let target = directory ?? defaultLibraryDirectory
         // Refuse unsupported chooser/portal paths before touching the active graph.
         guard paths.supportsLibrary(at: target) else { return .outsideSandboxHome }
         let old = libraryGraph
+        let resumeSync = old.sync?.started == true || old.sync?.account?.state.enabled == true
         if editorHasUnsavedWork(old.editor.state) { return .editorBusy }
         guard old.picker.state != .delivering, old.picker.fillModel?.state != .delivering else { return .deliveryInFlight }
         old.picker.dismiss()
@@ -941,6 +1186,17 @@ final class LinuxEnvironment {
         let files: RootedFileStore
         do { files = try prepareLibraryFiles(at: target) }
         catch { return .invalidTarget(error as? FileStoreError ?? .ioFailure) }
+
+        // Preserve the synchronous General port for idle, unstarted graphs.
+        // An active account graph drains off UI, then repeats this same intent.
+        if let sync = old.sync, !sync.drained {
+            if sync.needsDrain || sync.service.retire() != .stopped {
+                beginSyncReplacement(old, directory: directory)
+                return .syncDraining
+            }
+            sync.retireModels()
+            sync.drained = true
+        }
 
         // A failed tombstone keeps the binding and graph, with repeat disabled
         // until a durable retry. No late record may write into the replacement.
@@ -963,13 +1219,16 @@ final class LinuxEnvironment {
         // The reused panel was hidden directly above. Revoke old requests held
         // by Setup or focus restoration before retiring their graph.
         delivery.invalidatePendingPresentation()
+        currentSettingsWindow?.suspendAccount()
         old.stop()
         quitPending = false
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
         let graph = libraryGraph
+        if resumeSync { startSync(in: graph) }
+        currentSettingsWindow?.rebindAccount()
         currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
-            assistant: { [weak graph] in graph?.assistant })
+            assistant: { [weak graph] in graph?.assistant }, conflict: { [weak graph] in graph?.sync?.conflict })
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.
@@ -982,6 +1241,42 @@ final class LinuxEnvironment {
         else { settingsModel.clearLibraryFolder() }
         if let error = settingsModel.error { return .persistenceFailed(error) }
         return .switched
+    }
+
+    private func beginSyncReplacement(_ graph: LibraryGraph, directory: URL?) {
+        guard let sync = graph.sync else { return }
+        syncReplacementIssue = nil
+        currentSettingsWindow?.suspendAccount()
+        sync.retireModels()
+        graph.stop()
+        graph.picker.libraryAvailable = false
+        currentLibraryWindow?.setLibraryAvailable(false)
+        syncReplacementTask = Task.detached { [self, graph, sync] in
+            await withCheckedContinuation { completion in
+                backgroundWork.run { completion.resume() }
+            }
+            let drained = await sync.drain()
+            mainThread.run { [weak self, graph] in
+                guard let self else { return }
+                self.syncReplacementTask = nil
+                guard !self.isShutDown, self.currentLibraryGraph === graph else { return }
+                guard drained else {
+                    self.syncReplacementIssue = .syncRecoveryRequired
+                    self.warnAboutLibrary(graph)
+                    self.generalSettingsModel.refresh()
+                    return
+                }
+                sync.drained = true
+                // Target health and editor/delivery admission are checked again.
+                let result = self.switchLibrary(to: directory)
+                self.syncReplacementIssue = result == .switched ? nil : result
+                guard result == .switched else { self.generalSettingsModel.refresh(); return }
+                if self.onboardingModel.state.step == .libraryFolder, result == .switched {
+                    self.onboardingModel.chooseFolder(self.libraryGraph.directory.path)
+                } else if let directory { self.generalSettingsModel.chooseFolder(directory.path) }
+                else { self.generalSettingsModel.chooseFolder(self.defaultLibraryDirectory.path) }
+            }
+        }
     }
 
     @discardableResult
@@ -1006,6 +1301,14 @@ final class LinuxEnvironment {
             }
             return nil
         } catch {
+            if let error = error as? LibraryError, error == .recoveryRequired || error == .syncUnavailable {
+                // A different root's state is blocked until account startup
+                // resets its binding. This is not missing-root evidence.
+                graph.picker.libraryAvailable = false
+                graph.imports.setLibraryAvailable(false)
+                warnAboutLibrary(graph)
+                return nil
+            }
             let failure = error as? FileStoreError ?? .ioFailure
             degradeLibrary(graph, failure)
             return failure
@@ -1034,14 +1337,62 @@ final class LinuxEnvironment {
         }
         do {
             try graph.index.apply(changes)
+            scheduleSync(changes, in: graph)
+        } catch let error as LibraryError where error == .recoveryRequired || error == .syncUnavailable {
+            // Journal completion refreshes the index after releasing its gate.
+            // A blocked ordinary read is not evidence that the root was lost.
+            return
         } catch {
             // Warn after the outcome is known: the warning latches once, and a
             // failed rebuild must log its typed reason rather than a generic one.
             do {
                 try graph.index.rebuild()
+                scheduleSync(changes, in: graph)
                 warnAboutLibrary(graph)
+            } catch let error as LibraryError where error == .recoveryRequired || error == .syncUnavailable {
+                return
             } catch {
                 degradeLibrary(graph, error as? FileStoreError)
+            }
+        }
+    }
+
+    private func scheduleSync(_ changes: LibraryChangeSet, in graph: LibraryGraph) {
+        guard let sync = graph.sync, !sync.retired else { return }
+        let paths = changes.created.union(changes.modified).union(changes.deleted)
+        backgroundWork.run { [weak self, weak graph, weak sync] in
+            guard let graph, let sync else { return }
+            do {
+                try (graph.files as? RootedFileStore)?.requireRoot()
+                let checked = try paths.compactMap { path -> SyncFileChange? in
+                    let stamp: FileStamp?
+                    do { stamp = try graph.files.stamp(at: path.string) }
+                    catch {
+                        // A path can change type without losing the pinned root.
+                        try (graph.files as? RootedFileStore)?.requireRoot()
+                        return nil
+                    }
+                    guard let stamp else {
+                        return SyncFileChange(path: path, stamp: nil, hash: nil)
+                    }
+                    guard let bytes = try? graph.files.read(at: path.string) else {
+                        return SyncFileChange(path: path, stamp: stamp, hash: nil)
+                    }
+                    let hash = bytes.withUnsafeBytes { buffer -> String? in
+                        guard let value = g_compute_checksum_for_data(G_CHECKSUM_SHA256,
+                            buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count)) else { return nil }
+                        defer { g_free(value) }
+                        return String(cString: value)
+                    }
+                    return SyncFileChange(path: path, stamp: stamp, hash: hash)
+                }
+                sync.service.filesChanged(checked)
+            } catch {
+                _ = sync.service.rootHealthChanged(.unavailable)
+                graph.callbacks.run { [weak self, weak graph] in
+                    guard let graph else { return }
+                    self?.degradeLibrary(graph, error as? FileStoreError)
+                }
             }
         }
     }
@@ -1057,6 +1408,10 @@ final class LinuxEnvironment {
     }
 
     private func degradeLibrary(_ graph: LibraryGraph, _ error: FileStoreError? = nil) {
+        graph.rootUnavailable = true
+        if let sync = graph.sync {
+            backgroundWork.run { _ = sync.service.rootHealthChanged(.unavailable) }
+        }
         graph.watcher?.stop()
         graph.picker.libraryAvailable = false
         graph.imports.setLibraryAvailable(false)
@@ -1132,10 +1487,22 @@ final class LinuxEnvironment {
         currentDelivery?.shutdown()
         if let deliverySettingsObserver { settingsModel.removeObserver(deliverySettingsObserver) }
         deliverySettingsObserver = nil
+        if let graph = currentLibraryGraph, let sync = graph.sync {
+            sync.retireModels()
+            if syncReplacementTask == nil {
+                syncReplacementTask = Task.detached { [backgroundWork] in
+                    await withCheckedContinuation { completion in backgroundWork.run { completion.resume() } }
+                    _ = await sync.drain()
+                }
+            }
+        }
         hotkey.shutdown()
         remoteDesktop.shutdown()
         portal.shutdown()
     }
+
+    /// Tests and the quit path can await native/account teardown off UI.
+    func drainSync() async { await syncReplacementTask?.value }
 
     func runSelfTest(done: @escaping (SelfTestReport) -> Void) {
         selfTest.run(done: done)
