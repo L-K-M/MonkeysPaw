@@ -72,10 +72,10 @@ internal class AndroidSyncRepository(
     private fun observe(graph: Graph) {
         observers = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             launch(start = CoroutineStart.UNDISPATCHED) {
-                graph.engine.reports.collect { mutableReports.value = it; work.changed() }
+                graph.engine.reports.collect { mutableReports.value = it; observeWork { work.changed() } }
             }
             launch(start = CoroutineStart.UNDISPATCHED) {
-                graph.engine.scheduling.collect { mutableScheduling.value = it; work.changed() }
+                graph.engine.scheduling.collect { mutableScheduling.value = it; observeWork { work.changed() } }
             }
             launch(start = CoroutineStart.UNDISPATCHED) { graph.account.snapshots.collect { mutableAccounts.value = it } }
             launch(start = CoroutineStart.UNDISPATCHED) {
@@ -86,8 +86,9 @@ internal class AndroidSyncRepository(
             }
             launch(start = CoroutineStart.UNDISPATCHED) {
                 library.sourceChanges.drop(1).collect {
-                    work.saved()
-                    graph.engine.committedMutation(SyncChangeOrigin.USER, graph.engine.scheduling.value.epoch)
+                    if (observeWork { work.saved() }) {
+                        graph.engine.committedMutation(SyncChangeOrigin.USER, graph.engine.scheduling.value.epoch)
+                    }
                 }
             }
             launch(start = CoroutineStart.UNDISPATCHED) {
@@ -102,6 +103,20 @@ internal class AndroidSyncRepository(
                     }
                 }
             }
+        }
+    }
+
+    /** Isolate each event; only a lost OS enqueue may admit an already durable USER mutation. */
+    private suspend fun observeWork(action: suspend () -> Unit): Boolean {
+        return try {
+            action()
+            true
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val context = currentCoroutineContext()
+            context[CoroutineExceptionHandler]?.handleException(context, IllegalStateException("Sync scheduling failed."))
+            error is SyncWorkEnqueueFailure
         }
     }
 

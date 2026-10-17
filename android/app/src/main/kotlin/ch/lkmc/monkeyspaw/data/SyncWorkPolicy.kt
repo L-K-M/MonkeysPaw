@@ -42,6 +42,9 @@ internal interface SyncWorkQueue {
     suspend fun cancel(generation: String)
 }
 
+/** Registration failed after durable publication; diagnostics never retain the OS exception. */
+internal class SyncWorkEnqueueFailure : IllegalStateException("Sync work registration failed.")
+
 internal data class SyncWorkFacts(val scheduling: SyncSchedulingState, val report: SyncReport)
 
 internal interface SyncWorkSession {
@@ -303,14 +306,20 @@ internal class SyncWorkPolicy(
 
     private suspend fun reconcile(state: SyncWorkState, readySave: Boolean = false) {
         if (state.connection == null || state.needsSignIn) return
-        if (periodicGeneration != state.generation) {
-            queue.periodic(state.generation, PERIOD_MILLIS)
-            periodicGeneration = state.generation
+        try {
+            if (periodicGeneration != state.generation) {
+                queue.periodic(state.generation, PERIOD_MILLIS)
+                periodicGeneration = state.generation
+            }
+            if (!state.pending || queued || running != null || foreground.isNotEmpty() && !readySave) return
+            val delay = (state.dueAt - now()).coerceAtLeast(0)
+            queue.once(SyncWorkRequest(state.generation, state.trigger, delay, readySave && delay == 0L && apiLevel >= 31))
+            queued = true
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            throw SyncWorkEnqueueFailure()
         }
-        if (!state.pending || queued || running != null || foreground.isNotEmpty() && !readySave) return
-        val delay = (state.dueAt - now()).coerceAtLeast(0)
-        queue.once(SyncWorkRequest(state.generation, state.trigger, delay, readySave && delay == 0L && apiLevel >= 31))
-        queued = true
     }
 
     private fun retryDue(retries: Int, engineDue: Long): Long {
