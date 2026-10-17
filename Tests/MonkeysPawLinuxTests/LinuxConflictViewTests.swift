@@ -222,6 +222,9 @@ final class LinuxConflictViewTests: XCTestCase {
             && self.environment.conflictModel?.state.preview?.candidateBytes.map { String(decoding: $0, as: UTF8.self).contains("New unsaved edit") } == true })
         try ready()
         XCTAssertTrue(transport.originalPuts.isEmpty)
+        // The compared draft can publish before Keep mine becomes actionable.
+        XCTAssertTrue(GTKTestSupport.spin { (try? self.sensitive("conflict-keep-mine")) == true },
+            "Keep mine did not become ready after comparing the saved draft")
         try click("conflict-keep-mine")
         try resolved(.keepMine)
         XCTAssertEqual(transport.originalPuts.count, 1)
