@@ -5,6 +5,14 @@ and is callable by the release workflow from the same commit. It builds Core
 without GTK on Linux, runs Core/Linux tests and the X11 smoke test, tests Core
 and the hosted app on macOS, proves deb installability on Ubuntu 24.04 and
 universal macOS packaging with Xcode 26.0, and tests the server and its image.
+The bare-runner Flatpak job repacks the deb job's exact tested amd64 artifact
+with GNOME Platform/SDK 50. It installs that bundle, compares the executable
+to the deb, inspects desktop/service/icons/MIME and permissions, and exercises
+cold/resident toggle, repeat, D-Bus Open and launcher fallback. GTK accessibility
+must show the encoded invite's destination and enabled Accept controls; a
+loopback recorder must receive no request before Accept. No invite is accepted
+by this proof, and no bearer or URI is logged. Browser association, real portal
+consent and focus behavior remain owner checks.
 The Android job runs the five-task JVM/lint/debug/R8 gate, then stages and
 verifies the signed release APK/checksum as well as uploading the debug APK.
 Both workflows use `scripts/verify-android-release.py` to require the app ID,
@@ -35,6 +43,14 @@ optionally selects that keychain. Signing env is exported only for non-empty
 secrets, and never on PRs. Certificate provisioning and notarization remain
 outside this workflow.
 
+The release `flatpak` job downloads that release deb and checksum, without
+rebuilding Swift. It verifies the package version, runtime linking and installed
+binary, then emits `monkeyspaw_<full-version>_x86_64.flatpak` and
+`.flatpak.sha256`, retaining prerelease hyphens. Both Flatpak jobs use bare
+Ubuntu runners, bounded bwrap/user-namespace setup, read-only tokens and
+cleanup that restores the original sysctl and removes sandbox state. GNOME 50
+unavailability or ABI failure blocks the run; no runtime fallback is selected.
+
 `android-build` runs after tests and version verification, in parallel with
 Linux packaging. It uses the same pinned wrapper validation, Temurin 17,
 SDK packages and Gradle setup as ordinary CI. JVM tests, debug lint and R8
@@ -56,8 +72,8 @@ Only smoke-tested OCI archives and digests are uploaded as
 `MonkeysPaw-server-image-{amd64,arm64}` workflow artifacts. They stay outside
 the `MonkeysPaw-release-*` asset glob: images are registry objects rather
 than GitHub Release files. The `image-publish` job waits for tests, verify,
-Linux, macOS, Android, artifacts and both native image builds. It logs in to
-ghcr with the job's token via stdin, uses Skopeo to preserve and push the untagged digests,
+Linux, Flatpak, macOS, Android, artifacts and both native image builds. It logs
+in to ghcr with the job's token via stdin, uses Skopeo to preserve and push the untagged digests,
 then uses `docker buildx imagetools create` to promote the multiarch manifest.
 Every published tag is checked for exactly amd64 and arm64 with the expected
 digests. No image tag is pushed before every build and verification gate passes.
@@ -71,15 +87,15 @@ package settings. `update.sh` still builds the repo-owned server image locally.
 
 Each packager uploads a workflow artifact, downloads it, and byte-compares
 every file against its build outputs. Ordinary CI also round-trips its
-release APK/checksum. The assembly job requires exactly seven nonempty
-assets: deb/checksum, dmg/zip/manifest and APK/checksum. It rejects extra
-files, including hidden entries, and requires each checksum manifest to name
-every corresponding payload exactly once before checking all three manifests.
-Flatpak currently has a separate CI artifact; its later release wiring must
-add its pair to these gates explicitly. On a real release, image promotion
-and manifest verification finish before the GitHub publish job runs, so a
+release APK/checksum and Flatpak bundle/checksum. The assembly job requires
+exactly seven desktop assets (deb/checksum, Flatpak/checksum and dmg/zip/manifest)
+plus the two Android assets (APK/checksum), nine nonempty files in total.
+It rejects extra files, including hidden entries, and requires each checksum manifest to name
+every corresponding payload exactly once before checking all four manifests.
+Assembly and both publish jobs require the verified Flatpak output. On a real
+release, image promotion and manifest verification finish before the GitHub publish job runs, so a
 failed image publish keeps the release unpublished. The publish job creates
-a draft with all seven assets, downloads them again from the release, and
+a draft with all nine assets, downloads them again from the release, and
 byte-compares each before publishing. A failed upload or
 comparison leaves the release unpublished. Hyphenated tags are prereleases
 and are explicitly excluded from `latest`.
@@ -127,10 +143,15 @@ Check the ghcr tags too, since image promotion precedes GitHub publishing.
 without `--push` still commits and tags, so integration tests use disposable
 repositories rather than an implementation checkout.
 
-Local builds use `scripts/build.sh [mac|deb|android ...] [--no-open]`, with outputs in
+Local builds use `scripts/build.sh [mac|deb|flatpak|android ...] [--no-open]`, with outputs in
 `dist/`. The default skips targets this host cannot build; explicitly named
-targets fail when requirements are missing. `scripts/build.sh app [flags]`
-retains the app-only `lkm-build` path. Download each platform's checksum file
+targets fail when requirements are missing. The default builds deb then Flatpak
+once when both are feasible. `flatpak` requires x86_64 Linux, the deb toolchain,
+Flatpak/flatpak-builder and user-installed GNOME Platform/SDK 50; it reuses only
+this run's exact deb, regardless of target order. To repack an already tested
+deb, run `scripts/build-flatpak.sh <deb> [expected-app-version]`; absent an
+expected version, its control metadata supplies the version.
+`scripts/build.sh app [flags]` retains the app-only `lkm-build` path. Download each platform's checksum file
 with its archives and verify it before installing.
 
 `scripts/package-android.sh [version]` builds the signed release APK via the
@@ -154,6 +175,6 @@ only `image-publish` gets `packages: write`, with `contents: read`. Neither
 publish job executes checked-out code. The reusable CI concurrency includes its
 caller name so release testing and ordinary CI cannot cancel one another.
 
-Flatpak release publication remains separate M7 work. The existing `ci.yml` image
-job still builds and smoke-tests only; release image publishing lives in
-`release.yml`.
+The `ci.yml` image job builds and smoke-tests only; release image publishing
+lives in `release.yml`. Flathub supplies the GNOME runtime, while GitHub Releases
+distributes the app bundle and checksum; there is no Flathub app publication.

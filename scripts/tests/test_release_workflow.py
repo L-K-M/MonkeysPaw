@@ -92,7 +92,8 @@ class ReleasePolicyTests(unittest.TestCase):
     def test_retained_failure_reports_do_not_join_release_assets_after_a_retry(self):
         names = re.findall(r"^          name: (.+)$", SOURCE, re.MULTILINE)
         selected = {name for name in names if fnmatch.fnmatchcase(name, "MonkeysPaw-release-*")}
-        self.assertEqual(selected, {"MonkeysPaw-release-deb", "MonkeysPaw-release-macos", "MonkeysPaw-release-android"})
+        self.assertEqual(selected, {"MonkeysPaw-release-deb", "MonkeysPaw-release-macos",
+                                    "MonkeysPaw-release-android", "MonkeysPaw-release-flatpak"})
         report_step = JOBS["android-build"].split("      - name: Upload Android reports on failure\n", 1)[1]
         self.assertIn("if: failure()", report_step)
         report = re.search(r"^          name: (.+)$", report_step, re.MULTILINE)[1]
@@ -163,9 +164,11 @@ class ReleaseAssetTests(unittest.TestCase):
         self.dist.mkdir()
         self.version = "0.1.0-beta.1"
         self.deb = "monkeyspaw_0.1.0~beta.1_amd64.deb"
+        self.bundle = f"monkeyspaw_{self.version}_x86_64.flatpak"
         self.apk = f"monkeyspaw-v{self.version}.apk"
         self.groups = {
             f"{self.deb}.sha256": [self.deb],
+            f"{self.bundle}.sha256": [self.bundle],
             f"MonkeysPaw-{self.version}.sha256": [f"MonkeysPaw-{self.version}.zip",
                                                     f"MonkeysPaw-{self.version}.dmg"],
             f"{self.apk}.sha256": [self.apk],
@@ -185,6 +188,7 @@ class ReleaseAssetTests(unittest.TestCase):
         self.env = os.environ | {
             "PATH": f"{gh.parent}:{os.environ['PATH']}", "GH_CALLS": str(self.calls),
             "VERSION": self.version, "RELEASE_TAG": f"v{self.version}", "DEB_FILE": self.deb,
+            "BUNDLE_FILE": self.bundle,
             "APK_FILE": self.apk, "PRERELEASE": "true", "RUNNER_TEMP": str(self.root),
         }
 
@@ -200,7 +204,7 @@ class ReleaseAssetTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse(self.calls.exists(), "An invalid set reached draft creation")
 
-    def test_seven_assets_pass_assembly_and_draft_creation(self):
+    def test_seven_desktop_assets_plus_android_pair_pass_assembly_and_draft_creation(self):
         result = self.run_step("artifacts", "Require every asset and verify checksums")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = self.run_step("publish", "Create draft and attach every asset")
@@ -219,6 +223,16 @@ class ReleaseAssetTests(unittest.TestCase):
         (self.dist / self.apk).unlink()
         (self.dist / f"{self.apk}.sha256").unlink()
         self.assert_blocked()
+
+    def test_pre_flatpak_asset_set_cannot_be_published(self):
+        (self.dist / self.bundle).unlink()
+        (self.dist / f"{self.bundle}.sha256").unlink()
+        self.assert_blocked()
+
+    def test_assembly_and_publication_asset_assertions_are_identical(self):
+        assembly = step_script("artifacts", "Require every asset and verify checksums").strip()
+        publish = step_script("publish", "Create draft and attach every asset").split("\ncat >", 1)[0].strip()
+        self.assertEqual(assembly, publish)
 
     def test_every_missing_or_empty_asset_blocks_publication(self):
         for file in list(self.dist.iterdir()):
@@ -267,7 +281,7 @@ class ReleaseAssetTests(unittest.TestCase):
                     self.assert_blocked()
                     file.write_text(original)
 
-    def test_draft_download_must_match_all_seven_files(self):
+    def test_draft_download_must_match_all_nine_files(self):
         downloaded = self.root / "release-assets"
         downloaded.mkdir()
         for file in self.dist.iterdir():
