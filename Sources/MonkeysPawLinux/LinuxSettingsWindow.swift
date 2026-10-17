@@ -51,14 +51,15 @@ final class LinuxSettingsWindow {
          makeAssistant: @escaping () -> AssistantSettingsModel?,
          chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
          librarySwitchMessage: @escaping () -> String? = { nil },
-         makeAccount: @escaping () -> AccountModel? = { nil }) {
+         makeAccount: @escaping () -> AccountModel? = { nil },
+         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         self.general = general
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
         assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
         self.delivery = LinuxSettingsDeliveryPage(model: delivery, session: session)
         self.updates = LinuxSettingsUpdatePage(model: updates)
-        account = LinuxAccountSettingsPage(makeModel: makeAccount)
+        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeGroups: makeGroups)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
