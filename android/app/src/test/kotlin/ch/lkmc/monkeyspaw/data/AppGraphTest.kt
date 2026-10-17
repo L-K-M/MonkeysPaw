@@ -28,10 +28,11 @@ internal class AppGraphTest {
 
     @Test
     fun `one singleton provider owns every mutable library service and DataStore`() {
-        val methods = AppModule::class.java.declaredMethods
+        val methods = AppModule::class.java.declaredMethods.filterNot { it.isSynthetic }
         for (type in listOf(LibraryService::class.java, EditingService::class.java, LibraryRepository::class.java,
             AndroidPromptStore::class.java, StateStore::class.java, AndroidSettingsStore::class.java, SecretStore::class.java,
             AndroidStateStore::class.java, AndroidSyncStartup::class.java, AndroidSyncRepository::class.java,
+            SyncWorkScheduler::class.java, SyncWorkHooks::class.java,
             CoroutineScope::class.java, AndroidSeedCatalog::class.java, SeedInstaller::class.java, FillService::class.java,
             AndroidClock::class.java, Clock::class.java, Clipboard::class.java,
             HttpTransport::class.java, MonotonicClock::class.java, AssistantService::class.java,
@@ -82,6 +83,18 @@ internal class AppGraphTest {
         assertTrue(provider.contains("@ApplicationContext context: Context"))
         val initialize = provider.indexOf("OkHttp.initialize(context)")
         assertTrue(initialize >= 0 && initialize < provider.indexOf("OkHttpHttpTransport("))
+    }
+
+    @Test fun `all production HTTP clients use the initialized provider including cold workers`() {
+        val kotlin = sources.resolve("kotlin")
+        val files = kotlin.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        val client = Regex("\\bOkHttpClient(?:\\.Builder)?\\s*\\(")
+        val transport = Regex("\\bOkHttpHttpTransport\\s*\\(")
+        assertEquals(listOf("ch/lkmc/monkeyspaw/data/OkHttpHttpTransport.kt"),
+            files.filter { client.containsMatchIn(it.readText()) }.map { it.relativeTo(kotlin).invariantSeparatorsPath })
+        assertEquals(listOf("ch/lkmc/monkeyspaw/di/AppModule.kt"), files.filter {
+            it.name != "OkHttpHttpTransport.kt" && transport.containsMatchIn(it.readText())
+        }.map { it.relativeTo(kotlin).invariantSeparatorsPath })
     }
 
     @Test fun `profile installation is requested only by launcher startup through a data driver`() {

@@ -147,8 +147,9 @@ The installed desktop handler stages `monkeyspaw://join` links for explicit
 Accept. It does not set your MIME default. Read the
 [argv/browser-history exposure](PRIVACY.md#invite-links) before sharing links.
 Desktop Account, invites, sync status, groups and conflict resolution are
-available on main. The dedicated sync guide, deployed-server acceptance and
-native credential/privacy checks remain M6 Y34 work. See
+available on main. Automated device-token privacy fixtures passed native CI.
+The dedicated sync guide and owner checks of installed apps, real keyrings
+and deployed servers remain M6 Y34 work. See
 [hosting](docs/platform/server.md#host-the-sync-server),
 [Linux owner procedures](docs/platform/linux.md#m7-current-desktop-procedures)
 and [local build prerequisites](CICD.md).

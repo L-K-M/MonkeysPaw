@@ -36,10 +36,12 @@ revisions, SQLite journals and backups are plaintext. There is no end-to-end
 encryption. Passwords use bcrypt cost 12; device and invite tokens are hashed.
 
 Desktop Account, invite handling, sync status, groups and conflict resolution
-are available on main. The dedicated desktop sync guide, deployed-server
-acceptance and native credential/privacy checks remain M6 Y34 work.
-Android's sync repository is on main, but its scheduler and connected sync UI
-are not yet integrated. Android sync acceptance remains M10 Z27 work; see the
+are available on main. Automated device-token privacy fixtures passed both
+native CI suites. The desktop sync guide and checks of deployed servers,
+signed installations, real keyrings and physical devices remain M6 Y34 work.
+Android's repository and background scheduling foundations are on main, but
+its connected sync UI is not yet integrated. Android sync acceptance remains
+M10 Z27 work; see the
 [milestone record](docs/plan/15-milestones.md).
 
 ## Credentials

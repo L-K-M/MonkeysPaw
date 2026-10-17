@@ -2,6 +2,9 @@ package ch.lkmc.monkeyspaw.di
 
 import android.content.Context
 import androidx.datastore.core.DataStoreFactory
+import androidx.hilt.work.HiltWorkerFactory
+import androidx.work.WorkerFactory
+import android.os.Build
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.EditingService
 import ch.lkmc.monkeyspaw.core.services.FillService
@@ -38,6 +41,10 @@ internal annotation class IoDispatcher
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 internal annotation class ApplicationScope
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+internal annotation class SyncWorkerFactory
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -138,11 +145,33 @@ internal object AppModule {
     fun syncRepository(startup: AndroidSyncStartup, library: LibraryService, repository: LibraryRepository,
         @ApplicationScope scope: CoroutineScope, @IoDispatcher io: CoroutineDispatcher, clock: Clock,
         entropy: Entropy, monotonic: MonotonicClock, secrets: Lazy<SecretStore>, http: Lazy<HttpTransport>,
-        settings: AndroidSettingsStore): AndroidSyncRepository =
+        settings: AndroidSettingsStore, work: SyncWorkHooks = SyncWorkHooks.None): AndroidSyncRepository =
         AndroidSyncRepository(startup, library, repository, scope, io,
             { local -> SyncEngine(local, scope, io, clock, entropy, monotonic) },
             { engine, local -> SyncAccountService(engine, local.accounts, secrets.get(), http.get(), startup.libraryRoot, io, monotonic,
-                tlsTrust = { server -> settings.read().syncTls?.trustFor(server) ?: SyncTLSTrust.SYSTEM }) }, settings)
+                tlsTrust = { server -> settings.read().syncTls?.trustFor(server) ?: SyncTLSTrust.SYSTEM }) }, settings, work)
+
+    @Provides
+    @Singleton
+    fun syncWorkHooks(scheduler: Lazy<SyncWorkScheduler>): SyncWorkHooks = object : SyncWorkHooks {
+        override suspend fun authenticated(connection: String) { scheduler.get().authenticated(connection) }
+        override suspend fun signedOut() { scheduler.get().signedOut() }
+        override suspend fun authenticationStopped() = scheduler.get().authenticationStopped()
+        override suspend fun saved() { scheduler.get().saved() }
+        override suspend fun changed() { scheduler.get().changed() }
+    }
+
+    @Provides
+    @Singleton
+    fun syncWorkScheduler(@ApplicationContext context: Context, startup: AndroidSyncStartup, state: AndroidStateStore,
+        repository: Lazy<AndroidSyncRepository>, clock: Clock, @IoDispatcher io: CoroutineDispatcher): SyncWorkScheduler =
+        SyncWorkScheduler(SyncWorkPolicy(SyncWorkStateStore(state, state.syncOperations), AndroidSyncWorkQueue(context),
+            AndroidSyncWorkSession(startup, repository), { clock.now().toEpochMilli() }, Build.VERSION.SDK_INT), io)
+
+    @Provides
+    @Singleton
+    @SyncWorkerFactory
+    fun syncWorkerFactory(factory: HiltWorkerFactory): WorkerFactory = factory
 
     @Provides
     @Singleton

@@ -111,6 +111,19 @@ class SyncEngine internal constructor(
         }
     }
 
+    /** Android restores a durable pending deadline before handing timers back to a foreground session. */
+    fun restoreWorkEligibility(failureCount: Int, dueAt: java.time.Instant): Unit = lock.withLock {
+        require(failureCount in 0..8)
+        if (!eligible || active != null || mode != SyncExecutionMode.BACKGROUND) return@withLock
+        retryCount = maxOf(retryCount, failureCount)
+        val remaining = java.time.Duration.between(wallClock.now(), dueAt).toMillis().coerceIn(0, Long.MAX_VALUE / 4 / 1_000_000)
+        if (remaining > 0) {
+            val now = monotonicClock.nowNanos()
+            retryAtNanos = now + maxOf(retryAtNanos?.let { (it - now).coerceAtLeast(0) } ?: 0, remaining * 1_000_000)
+        }
+        publishScheduling()
+    }
+
     fun syncNow(): Unit = lock.withLock {
         if (!eligible) return@withLock
         retry?.cancel()

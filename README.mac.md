@@ -70,6 +70,7 @@ paste-privacy prompts and Keychain approvals need checks on your Mac.
 See [macOS procedures](docs/platform/macos.md#m7-current-desktop-procedures),
 [Assistant setup](docs/platform/assistant.md), [hosting](docs/platform/server.md#host-the-sync-server)
 and [build/release prerequisites](CICD.md). Desktop Account, invites, sync
-status, groups and conflict resolution are available on main. The dedicated
-sync guide, deployed-server acceptance and native credential/privacy checks
+status, groups and conflict resolution are available on main. Automated
+device-token privacy fixtures passed native CI. The sync guide and owner
+checks of deployed servers, signed installations and real Keychain consent
 remain M6 Y34 work.
