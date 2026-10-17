@@ -732,7 +732,19 @@ final class LinuxEnvironment {
             + " recovery=\(libraryStatusModel.needsLibraryFolderStep)")
     }
 
-    func showSettings(page: LinuxSettingsWindow.Page = .current) {
+    private enum SettingsDestination { case page(LinuxSettingsWindow.Page), invite(SecretValue?) }
+
+    func showSettings(page: LinuxSettingsWindow.Page = .current) { showSettings(destination: .page(page)) }
+
+    func showInviteSettings() { showSettings(destination: .invite(nil)) }
+
+    func openInvite(_ input: inout String) {
+        let supplied = SecretValue(input)
+        input = ""
+        showSettings(destination: .invite(supplied))
+    }
+
+    private func showSettings(destination: SettingsDestination) {
         LinuxPickerTrace.record("settings.request", "state=\(LinuxPickerTrace.pickerState(currentLibraryGraph?.picker.state))")
         guard pickerModel.state != .delivering else { return }
         onboardingRequestRevision += 1
@@ -773,13 +785,25 @@ final class LinuxEnvironment {
                               self.libraryGraph.sync?.retired == false else { return nil }
                         return self.accountModel
                     },
+                    makeInvite: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              self.libraryGraph.sync?.retired == false else { return nil }
+                        return self.inviteModel
+                    },
                     makeGroups: { [weak self] in
                         guard let self, !self.isShutDown,
                               self.libraryGraph.sync?.retired == false else { return nil }
                         return self.groupManagementModel
                     })
             }
-            self.currentSettingsWindow?.show(page: page)
+            switch destination {
+            case .page(let page): self.currentSettingsWindow?.show(page: page)
+            case .invite(let supplied):
+                if let supplied {
+                    var input = supplied.withValue { $0 }
+                    self.currentSettingsWindow?.stageInvite(&input)
+                } else { self.currentSettingsWindow?.showInvite() }
+            }
         }
     }
 
@@ -962,7 +986,8 @@ final class LinuxEnvironment {
             currentOnboardingWindow = LinuxOnboardingWindow(application: application,
                 model: onboardingModel, general: GeneralSettingsModel(settings: settingsModel,
                     library: libraryLocation, mainThread: mainThread), chooser: folderChooser,
-                librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
+                librarySwitchMessage: { [weak self] in self?.librarySwitchMessage },
+                openInvite: { [weak self] in self?.showInviteSettings() })
         }
         currentOnboardingWindow?.show()
     }

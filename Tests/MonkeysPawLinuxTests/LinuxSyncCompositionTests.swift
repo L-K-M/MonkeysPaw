@@ -425,8 +425,18 @@ final class LinuxSyncCompositionTests: XCTestCase {
         let oldSync = try XCTUnwrap(environment.syncService)
         let oldAccount = try XCTUnwrap(environment.accountModel)
         let oldGroups = try XCTUnwrap(environment.groupManagementModel)
+        let oldInvite = try XCTUnwrap(environment.inviteModel)
         environment.showSettings()
         XCTAssertTrue(GTKTestSupport.spin { self.findWidget("settings-library-message") != nil })
+        let inviteLink = "monkeyspaw://join?server=https%3A%2F%2Fsync.example.test&token=" + String(repeating: "b", count: 42) + "A"
+        var suppliedInvite = inviteLink
+        environment.openInvite(&suppliedInvite)
+        XCTAssertTrue(suppliedInvite.isEmpty, "Invite activation did not consume its input")
+        XCTAssertTrue(GTKTestSupport.spin {
+            oldInvite.state.canAccept
+                && self.findWidget("settings-invite-join").map { gtk_widget_is_sensitive($0) != 0 } == true
+                && self.findWidget("settings-account-sign-out").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, "The original Account page did not bind its invite")
 
         transport.holdPull = true
         oldSync.syncNow()
@@ -494,6 +504,28 @@ final class LinuxSyncCompositionTests: XCTestCase {
                   let create = self.findWidget("settings-groups-create-name") else { return false }
             return gtk_widget_is_sensitive(signOut) != 0 && gtk_widget_is_sensitive(create) != 0
         }, "Account/group binding: enabled=\(String(describing: environment.accountModel?.state.enabled)), operation=\(String(describing: environment.accountModel?.state.operation)), error=\(String(describing: environment.accountModel?.state.error)); groups enabled=\(String(describing: environment.groupManagementModel?.state.enabled)), operation=\(String(describing: environment.groupManagementModel?.state.operation)), error=\(String(describing: environment.groupManagementModel?.state.error))")
+
+        let recoveredInvite = try XCTUnwrap(environment.inviteModel)
+        XCTAssertTrue(recoveredInvite !== oldInvite, "Recovery retained the retired invite model")
+        XCTAssertTrue(oldInvite.state.destination == nil && !oldInvite.state.canAccept,
+            "Recovery retained the original staged invite")
+        suppliedInvite = inviteLink
+        environment.openInvite(&suppliedInvite)
+        XCTAssertTrue(suppliedInvite.isEmpty, "Recovered invite activation did not consume its input")
+        XCTAssertTrue(GTKTestSupport.spin {
+            recoveredInvite.state.canAccept
+                && self.findWidget("settings-invite-join").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, "The recovered Account page did not bind its fresh invite")
+        var unusedPassword = ""
+        oldInvite.accept(as: .existingAccount, password: &unusedPassword)
+        let oldIntentDrained = LinuxSyncTestFlag()
+        GTK.onMainLoop { oldIntentDrained.set() }
+        XCTAssertTrue(GTKTestSupport.spin { oldIntentDrained.value })
+        XCTAssertTrue(recoveredInvite.state.canAccept && !recoveredInvite.state.accepted,
+            "A retired intent changed the recovered invite consent")
+        XCTAssertTrue(transport.requests.allSatisfy {
+            !$0.url.path.hasSuffix("/groups/join") && !$0.url.path.hasSuffix("/register")
+        }, "Recovery or a retired invite intent attempted redemption")
 
         // Continue past red assertions to prove supported General retry and
         // to release all old/new sync work before native teardown.

@@ -245,6 +245,9 @@ jobs:
           test -x "$payload/usr/bin/monkeyspaw"
           cmp packaging/linux/ch.lkmc.monkeyspaw.desktop \
             "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
+          desktop-file-validate "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
+          grep -Fxq 'Exec=monkeyspaw %u' "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
+          grep -Fxq 'MimeType=x-scheme-handler/monkeyspaw;' "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
           cmp packaging/linux/ch.lkmc.monkeyspaw.service \
             "$payload/usr/share/dbus-1/services/ch.lkmc.monkeyspaw.service"
           cmp packaging/debian/copyright "$payload/usr/share/doc/monkeyspaw/copyright"

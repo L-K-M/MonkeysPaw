@@ -39,7 +39,8 @@ final class LinuxOnboardingWindow {
 
     init(application: UnsafeMutablePointer<GtkApplication>, model: OnboardingModel,
          general: GeneralSettingsModel, chooser: LinuxFolderChoosing,
-         librarySwitchMessage: @escaping () -> String? = { nil }) {
+         librarySwitchMessage: @escaping () -> String? = { nil },
+         openInvite: @escaping () -> Void = {}) {
         self.model = model
         self.general = general
         self.chooser = chooser
@@ -68,6 +69,13 @@ final class LinuxOnboardingWindow {
         tourPage = tourContent()
         completePage = completionPage()
         for page in [folderPage!, seedPage!, tourPage!, completePage!] { gtk_box_append(mp_box(content), page) }
+        let invite = GTK.button(LinuxInviteStrings.title) { [weak self] in
+            guard self?.isVisible == true else { return }
+            openInvite()
+        }
+        gtk_widget_set_name(invite, "onboarding-invite")
+        mp_accessible_label(invite, LinuxInviteStrings.title)
+        gtk_box_append(mp_box(content), invite)
         settingsError = namedLabel("onboarding-settings-error", in: content)
         libraryStatus = namedLabel("onboarding-library-status", in: content)
         closeButton = GTK.button(LinuxStrings.close) { [weak self] in

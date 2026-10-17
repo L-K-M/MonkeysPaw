@@ -7,7 +7,7 @@ import MonkeysPawCore
 final class LinuxSettingsWindow {
     enum Page { case current, account }
     private let window: GTK.Widget
-    private let notebook = gtk_notebook_new()!
+    private let notebook: GTK.Widget
     private let general: GeneralSettingsModel
     private let shortcuts: ShortcutsSettingsModel
     private let rememberedValues: RememberedValuesSettingsModel
@@ -52,6 +52,7 @@ final class LinuxSettingsWindow {
          chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
          librarySwitchMessage: @escaping () -> String? = { nil },
          makeAccount: @escaping () -> AccountModel? = { nil },
+         makeInvite: @escaping () -> InviteModel? = { nil },
          makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
         self.general = general
         self.shortcuts = shortcuts
@@ -59,11 +60,12 @@ final class LinuxSettingsWindow {
         assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
         self.delivery = LinuxSettingsDeliveryPage(model: delivery, session: session)
         self.updates = LinuxSettingsUpdatePage(model: updates)
-        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeGroups: makeGroups)
+        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeInvite: makeInvite, makeGroups: makeGroups)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
         window = gtk_application_window_new(application)!
+        notebook = gtk_notebook_new()!
         GTK.hideOnClose(window)
         gtk_window_set_title(mp_window(window), LinuxStrings.settings)
         gtk_window_set_default_size(mp_window(window), Int32(Limits.panelSize.width), Int32(Limits.panelSize.height))
@@ -139,6 +141,18 @@ final class LinuxSettingsWindow {
         gtk_widget_set_visible(window, 0)
         cancelFolderChoice()
         rememberedValues.cancelForgetAll()
+    }
+
+    func showInvite() {
+        guard !isDestroyed else { return }
+        gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+        show()
+        account.show()
+    }
+
+    func stageInvite(_ input: inout String) {
+        showInvite()
+        account.stageInvite(&input)
     }
 
     // Account follows the replaceable library graph, independently of General.
