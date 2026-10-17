@@ -151,6 +151,81 @@ class RepeatProofComplete(Exception):
     """Stop main after the action proof, before invite setup."""
 
 
+class OwnerQueryTests(unittest.TestCase):
+    no_owner = ("Error: GDBus.Error:org.freedesktop.DBus.Error.NameHasNoOwner: "
+                "Could not get owner of name 'ch.lkmc.monkeyspaw': no such name\n")
+
+    def run_calls(self, operation, replies):
+        remaining = iter(replies)
+        elapsed = 0
+
+        def run(args, **kwargs):
+            destination, method, output, status, error = next(remaining)
+            path = "/org/freedesktop/DBus" if destination == "org.freedesktop.DBus" else "/ch/lkmc/monkeyspaw"
+            self.assertEqual(args[:9], ("gdbus", "call", "--session", "--dest", destination,
+                                       "--object-path", path, "--method", method))
+            self.assertEqual(args[9:], ("quit", "[]", "{}") if method == "org.gtk.Actions.Activate" else (smoke.APP_ID,))
+            self.assertEqual(kwargs, dict(capture_output=True, text=True, timeout=15))
+            return subprocess.CompletedProcess(args, status, output, error)
+
+        def sleep(seconds):
+            nonlocal elapsed
+            elapsed += seconds
+
+        with (patch.object(smoke.subprocess, "run", side_effect=run),
+              patch.object(smoke.time, "monotonic", side_effect=lambda: elapsed),
+              patch.object(smoke.time, "sleep", side_effect=sleep)):
+            operation()
+        self.assertEqual(list(remaining), [])
+
+    def reply(self, method, output="", status=0, error="", destination="org.freedesktop.DBus"):
+        return destination, "org.freedesktop.DBus." + method, output, status, error
+
+    def test_completed_quit_survives_name_release_between_owner_queries(self):
+        self.run_calls(smoke.stop, [self.reply("NameHasOwner", "(true,)"),
+                       self.reply("GetNameOwner", "(':1.42',)"),
+                       (":1.42", "org.gtk.Actions.Activate", "()", 0, ""),
+                       self.reply("NameHasOwner", "(true,)"),
+                       self.reply("GetNameOwner", status=1, error=self.no_owner)])
+
+    def test_real_bus_and_command_failures_still_abort_quit(self):
+        for method in ("NameHasOwner", "GetNameOwner"):
+            for error in ("Error: The connection is closed\n",
+                          "Error: GDBus.Error:org.freedesktop.DBus.Error.AccessDenied: denied\n",
+                          "unrelated failure: " + self.no_owner):
+                with self.subTest(method=method, failure=error.split(":", 1)[0]):
+                    replies = [self.reply("NameHasOwner", "(true,)"), self.reply("GetNameOwner", "(':1.42',)"),
+                               (":1.42", "org.gtk.Actions.Activate", "()", 0, "")]
+                    if method == "GetNameOwner":
+                        replies.append(self.reply("NameHasOwner", "(true,)"))
+                    replies.append(self.reply(method, status=1, error=error))
+                    with self.assertRaisesRegex(RuntimeError, "^Installed application command failed$"):
+                        self.run_calls(smoke.stop, replies)
+
+    def test_singleton_rejects_absent_or_replaced_owner_through_real_queries(self):
+        for replies in ([self.reply("NameHasOwner", "(false,)")],
+                        [self.reply("NameHasOwner", "(true,)"),
+                         self.reply("GetNameOwner", status=1, error=self.no_owner)],
+                        [self.reply("NameHasOwner", "(true,)"), self.reply("GetNameOwner", "(':1.43',)")]):
+            with self.subTest(owner_reply=replies[-1][1]):
+                with self.assertRaisesRegex(RuntimeError, "Activation replaced the primary application"):
+                    self.run_calls(lambda: smoke.singleton("(':1.42',)"), replies)
+
+    def test_no_owner_error_outside_get_name_owner_is_still_a_failure(self):
+        with self.assertRaisesRegex(RuntimeError, "^Installed application command failed$"):
+            self.run_calls(smoke.stop, [self.reply("NameHasOwner", status=1, error=self.no_owner)])
+
+    def test_other_exit_status_with_no_owner_text_is_not_absence(self):
+        with self.assertRaisesRegex(RuntimeError, "^Installed application command failed$"):
+            self.run_calls(smoke.owner, [self.reply("NameHasOwner", "(true,)"),
+                           self.reply("GetNameOwner", status=2, error=self.no_owner)])
+
+    def test_command_timeout_is_not_absence(self):
+        with (patch.object(smoke.subprocess, "run", side_effect=subprocess.TimeoutExpired("gdbus", 15)),
+              self.assertRaises(subprocess.TimeoutExpired)):
+            smoke.owner()
+
+
 class SingletonTests(unittest.TestCase):
     def check(self, snapshots, *, owners=(":1.42",), expected=":1.42"):
         elapsed = 0
@@ -428,6 +503,170 @@ class InviteProofTests(unittest.TestCase):
             self.nodes.append(extra)
             self.assertFalse(self.staged())
             self.nodes.pop()
+
+
+class AccessibilityError(RuntimeError):
+    """GLib.Error's domain/code contract, without requiring GI in script tests."""
+
+    def __init__(self, domain="atspi_error", code=0):
+        super().__init__("Accessible application retired")
+        self.domain = domain
+        self.code = code
+
+
+class AccessibilityPollingTests(unittest.TestCase):
+    def run_proof(self, phase, read, *, persistent=False, missing=None, error=None):
+        state = dict(owner=None, picker=False, result=False, invite=False)
+        elapsed = 0
+        self.snapshots = 0
+        self.reads = 0
+        self.poll_elapsed = None
+        fixture = InviteProofTests()
+        fixture.setUp()
+        destination = "http://127.0.0.1:1234/paw%20base/a+b/cold-open"
+        fixture.nodes[1].name = "Invite server: " + destination + "\nNo account is signed in."
+        if missing == "destination":
+            fixture.nodes[1].name = "Invite server: " + destination.replace("%20", " ") + "\n"
+        elif missing == "frame":
+            fixture.nodes[0] = fixture.node("Settings", role="label")
+        elif missing == "visible-frame":
+            fixture.nodes[0] = fixture.node("Settings", role="frame", visible=False)
+        elif missing == "sensitive-accept":
+            fixture.nodes[-1] = fixture.node("Accept and create account", sensitive=False)
+        result = fixture.node("Nothing to repeat")
+        test = self
+
+        class Retired:
+            @property
+            def name(self):
+                if read == "name":
+                    test.reads += 1
+                    raise error if error is not None else AccessibilityError()
+                return "Settings" if phase == "invite" else "Nothing to repeat"
+
+            def getState(self):
+                test.reads += 1
+                # libatspi get_state_set has no GError; retirement returns DEFUNCT.
+                return SimpleNamespace(contains=lambda value: read != "state" and value == "visible")
+
+            def getRole(self):
+                test.reads += 1
+                raise error if error is not None else AccessibilityError()
+
+        retired = Retired()
+
+        def descendants(_desktop):
+            nonlocal elapsed
+            active = state["invite"] if phase == "invite" else state["result"]
+            if active:
+                self.snapshots += 1
+                if self.poll_elapsed is None:
+                    self.poll_elapsed = elapsed
+                if persistent or self.snapshots == 1:
+                    return [retired] + (fixture.nodes[1:] if phase == "invite" else [])
+            if state["invite"]:
+                return fixture.nodes
+            return [result] if state["result"] else []
+
+        def action(name):
+            state["owner"] = ":1.42"
+            if name == "toggle":
+                state["picker"] = not state["picker"]
+            elif name == "repeat":
+                state["result"] = True
+
+        def stop():
+            state.update(owner=None, result=False, invite=False)
+
+        def bus(destination, method, *_args):
+            self.assertEqual((destination, method), (smoke.APP_ID, "org.freedesktop.Application.Open"))
+            state.update(owner=":1.42", invite=True)
+
+        def singleton(_expected):
+            if state["invite"]:
+                raise RepeatProofComplete
+
+        def windows(title):
+            visible = state["picker"] if title == "Monkey's Paw" else state["result"] if title == "Repeat last" else state["invite"]
+            return [123] if visible else []
+
+        def sleep(seconds):
+            nonlocal elapsed
+            elapsed += seconds
+            self.elapsed = elapsed
+
+        display = SimpleNamespace(intern_atom=lambda name: name, sync=lambda: None, close=lambda: None,
+            create_resource_object=lambda *_: SimpleNamespace(send_event=lambda _event: state.update(result=False)))
+        atspi = SimpleNamespace(**vars(fixture.atspi), Registry=SimpleNamespace(getDesktop=lambda _: object()))
+        glib = SimpleNamespace(Error=AccessibilityError,
+            MainContext=SimpleNamespace(default=lambda: SimpleNamespace(pending=lambda: False)))
+        config = smoke.configparser.ConfigParser(interpolation=None)
+        config["Desktop Entry"] = {"Exec": "flatpak run " + smoke.APP_ID + " %u"}
+        with (patch.dict("sys.modules", {"pyatspi": atspi, "gi.repository": SimpleNamespace(GLib=glib),
+                                        "Xlib.display": SimpleNamespace(Display=lambda: display),
+                                        "Xlib.protocol.event": SimpleNamespace(ClientMessage=lambda **event: event)}),
+              patch.dict(os.environ, DISPLAY=":99", DBUS_SESSION_BUS_ADDRESS="test", XDG_DATA_HOME="/unused"),
+              patch.object(smoke, "command", return_value=""), patch.object(smoke, "action", side_effect=action),
+              patch.object(smoke, "stop", side_effect=stop), patch.object(smoke, "bus", side_effect=bus),
+              patch.object(smoke, "owner", side_effect=lambda: state["owner"]),
+              patch.object(smoke, "singleton", side_effect=singleton),
+              patch.object(smoke, "visible_windows", side_effect=windows),
+              patch.object(smoke, "descendants", side_effect=descendants),
+              patch.object(smoke, "ThreadingHTTPServer", return_value=Mock(server_port=1234)),
+              patch.object(smoke.threading, "Thread"),
+              patch.object(smoke.time, "monotonic", side_effect=lambda: elapsed),
+              patch.object(smoke.time, "sleep", side_effect=sleep),
+              patch.object(smoke.configparser, "ConfigParser", side_effect=(lambda **_: config) if phase == "invite" else RepeatProofComplete)):
+            smoke.main()
+
+    def test_retired_name_in_repeat_poll_reaches_the_next_snapshot(self):
+        with self.assertRaises(RepeatProofComplete):
+            self.run_proof("repeat", "name")
+        self.assertGreaterEqual(self.snapshots, 2)
+        self.assertGreater(self.reads, 0)
+
+    def test_retired_name_or_role_in_invite_poll_reaches_the_next_snapshot(self):
+        for read in ("name", "role"):
+            with self.subTest(read=read):
+                with self.assertRaises(RepeatProofComplete):
+                    self.run_proof("invite", read)
+                self.assertEqual(self.snapshots, 2)
+                self.assertGreater(self.reads, 0)
+
+    def test_defunct_state_already_polls_without_a_throwing_state_read(self):
+        for phase in ("repeat", "invite"):
+            with self.subTest(phase=phase):
+                with self.assertRaises(RepeatProofComplete):
+                    self.run_proof(phase, "state")
+                self.assertGreaterEqual(self.snapshots, 2)
+
+    def test_persistent_retirement_still_times_out_at_the_existing_bound(self):
+        for phase, read in (("repeat", "name"), ("invite", "name"), ("invite", "role")):
+            with self.subTest(phase=phase, read=read):
+                with self.assertRaisesRegex(RuntimeError, "Cold repeat did not show|Installed invite review did not appear"):
+                    self.run_proof(phase, read, persistent=True)
+                self.assertGreaterEqual(self.elapsed - self.poll_elapsed, 15)
+                self.assertLess(self.elapsed - self.poll_elapsed, 15.21)
+
+    def test_retirement_does_not_replace_required_invite_assertions(self):
+        for missing in ("destination", "frame", "visible-frame", "sensitive-accept"):
+            with self.subTest(missing=missing):
+                with self.assertRaisesRegex(RuntimeError, "Installed invite review did not appear"):
+                    self.run_proof("invite", "name", missing=missing)
+                self.assertGreaterEqual(self.snapshots, 2)
+
+    def test_unrelated_accessibility_and_programming_errors_still_abort(self):
+        for error in (AccessibilityError(code=1), AccessibilityError(domain="other-domain"),
+                      RuntimeError("Unrelated read failure")):
+            for phase in ("repeat", "invite"):
+                with self.subTest(error=type(error).__name__, phase=phase):
+                    with self.assertRaises(RuntimeError) as raised:
+                        self.run_proof(phase, "name", error=error)
+                    if isinstance(error, AccessibilityError):
+                        self.assertEqual(str(raised.exception), "Installed accessibility read failed")
+                    else:
+                        self.assertIs(raised.exception, error)
+                    self.assertEqual(self.snapshots, 1)
 
 
 if __name__ == "__main__":

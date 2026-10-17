@@ -65,16 +65,23 @@ internal class SyncApplyJournal(
     fun replay(permit: SyncWorkPermit? = null): SyncApplyOutcome =
         if (permit == null) replayPlan(null) else permit.mutate { replayPlan(permit.binding) }
 
-    private fun replayPlan(binding: SyncLibraryIdentity?): SyncApplyOutcome = lock.withLock {
+    /** Native local startup has a root before it has an authenticated account session. */
+    fun replayLocal(root: SyncLibraryRoot): SyncApplyOutcome = replayPlan(null, root)
+
+    private fun replayPlan(binding: SyncLibraryIdentity?, root: SyncLibraryRoot? = binding?.root): SyncApplyOutcome = lock.withLock {
         val record = try {
             persistence.recover { record ->
                 if (record != null && binding != null && record.nextState.binding != binding) throw SyncError.BindingMismatch
+                if (record != null && root != null && record.nextState.binding.root != root) throw SyncError.BindingMismatch
             }
         } catch (error: Exception) {
             mutations.blockForRecovery()
             throw safe(error)
         }
         if (record == null) {
+            if (root != null && mutations.pendingPermit?.nextState?.binding?.root?.let { it != root } == true) {
+                throw SyncError.BindingMismatch
+            }
             if (binding != null && mutations.pendingPermit?.nextState?.binding?.let { it != binding } == true) {
                 throw SyncError.BindingMismatch
             }
@@ -86,13 +93,13 @@ internal class SyncApplyJournal(
             return@withLock SyncApplyOutcome.Committed
         }
         mutations.resume(record.id, record.nextState)
-        states.recover(record.nextState.binding)
         record.bindingChange?.let { change ->
             val accounts = accounts ?: throw SyncError.InvalidState
             accounts.recoverBinding(change.next.root) { actual ->
                 if (actual != change.expected && actual != change.next) throw LibraryError.RecoveryRequired
             }
         }
+        states.recover(record.nextState.binding)
         run()
     }
 

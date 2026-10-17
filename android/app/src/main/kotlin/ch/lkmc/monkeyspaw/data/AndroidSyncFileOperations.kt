@@ -179,7 +179,7 @@ internal class AndroidSyncFileOperations(
         flushParents(path)
     }
 
-    private fun requireRoot() {
+    @Synchronized private fun requireRoot() {
         val root = files.syncDirectory(null)
         val identity = identity(root)
         if (rootIdentity != null && rootIdentity != identity.stamp) throw StoreError.InvalidRoot

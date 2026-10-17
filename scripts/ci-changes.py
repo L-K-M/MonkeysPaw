@@ -9,36 +9,36 @@ import subprocess
 
 
 JOBS = (
-    "core-linux", "linux-app", "deb", "flatpak", "android", "core-macos", "macos-app",
+    "core-linux", "linux-app", "deb", "flatpak", "android", "android-sync", "core-macos", "macos-app",
     "macos-artifacts", "server", "server-image", "compose-smoke",
 )
 ALL_JOBS = frozenset(JOBS)
-SWIFT_JOBS = ALL_JOBS - {"android"}
+SWIFT_JOBS = ALL_JOBS - {"android", "android-sync"}
 LINUX_JOBS = frozenset({"linux-app", "deb"})
 MACOS_JOBS = frozenset({"macos-app", "macos-artifacts"})
-SERVER_JOBS = frozenset({"server", "server-image", "compose-smoke"})
+SERVER_JOBS = frozenset({"server", "server-image", "compose-smoke", "android-sync"})
 # The parent manifest validates Linux target paths even for Core/server builds;
 # Docker also copies all of Sources/, including the Linux targets.
 LINUX_SOURCE_JOBS = LINUX_JOBS | SERVER_JOBS | {"core-linux"}
 
 FILES = {
-    "Package.swift": SWIFT_JOBS,
-    "Package.resolved": SWIFT_JOBS,
+    "Package.swift": SWIFT_JOBS | {"android-sync"},
+    "Package.resolved": SWIFT_JOBS | {"android-sync"},
     # Android's JVM conformance test reads the frozen Swift table directly.
     "Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift": ALL_JOBS,
     # The Kotlin snapshot checks prompt bytes; core-linux checks generated source bytes too.
     "android/core/src/main/kotlin/ch/lkmc/monkeyspaw/core/llm/AssistantPrompts.generated.kt":
-        frozenset({"android", "core-linux"}),
+        frozenset({"android", "android-sync", "core-linux"}),
     # This is a check-version.py input, despite its Markdown extension.
     "README.md": frozenset({"core-linux", "deb"}),
     # The version checker also reads the committed Android literals.
-    "android/app/build.gradle.kts": frozenset({"android", "core-linux", "deb"}),
+    "android/app/build.gradle.kts": frozenset({"android", "android-sync", "core-linux", "deb"}),
     # The verifier tests compare the recorded fingerprint with this ADR.
     "docs/decisions/0001-android-zero-secret-signing.md": frozenset({"core-linux"}),
     "compose.yaml": SERVER_JOBS,
     ".env.example": SERVER_JOBS,
     "Caddyfile": SERVER_JOBS,
-    ".dockerignore": frozenset({"server-image", "compose-smoke"}),
+    ".dockerignore": frozenset({"server-image", "compose-smoke", "android-sync"}),
     "update.sh": SERVER_JOBS | {"deb"},
     "media-sources/icon.png": LINUX_JOBS | MACOS_JOBS,
     "scripts/check-pbxproj.py": frozenset({"core-linux"}),
@@ -54,7 +54,9 @@ FILES = {
     "scripts/generate-seeds.py": SWIFT_JOBS,
     "scripts/generate-assistant-prompts.py": ALL_JOBS,
     "scripts/tests/test_generate_assistant_prompts.py": frozenset({"core-linux"}),
-    "scripts/generate-kotlin-sync-fold.py": frozenset({"android"}),
+    "scripts/generate-kotlin-sync-fold.py": frozenset({"android", "android-sync"}),
+    "scripts/android-sync-ci.py": frozenset({"core-linux", "android-sync"}),
+    "scripts/tests/test_android_sync_ci.py": frozenset({"core-linux", "android-sync"}),
     "scripts/backup.sh": SERVER_JOBS | {"deb"},
     # unittest discovery in core-linux also executes the compose script.
     "scripts/compose-smoke.sh": SERVER_JOBS | {"core-linux"},
@@ -80,8 +82,8 @@ FILES = {
 PREFIXES = (
     (".github/workflows/", ALL_JOBS),
     (".github/actions/", ALL_JOBS),
-    ("Sources/MonkeysPawCore/", SWIFT_JOBS),
-    ("Tests/MonkeysPawCoreTests/", SWIFT_JOBS),
+    ("Sources/MonkeysPawCore/", SWIFT_JOBS | {"android-sync"}),
+    ("Tests/MonkeysPawCoreTests/", SWIFT_JOBS | {"android-sync"}),
     ("Assistant/Prompts/", ALL_JOBS),
     ("spec/", ALL_JOBS),
     ("seed/", ALL_JOBS),
@@ -97,7 +99,7 @@ PREFIXES = (
     ("MonkeysPaw.xcodeproj/", MACOS_JOBS | {"core-linux", "deb"}),
     ("server/", SERVER_JOBS),
     ("deploy/caddy/", SERVER_JOBS),
-    ("android/", frozenset({"android"})),
+    ("android/", frozenset({"android", "android-sync"})),
     ("flatpak/", frozenset({"deb", "flatpak"})),
     ("docs/", frozenset()),
 )

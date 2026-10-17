@@ -275,6 +275,12 @@ final class SyncApplyJournal {
         }
         if let record {
             mutations.resume(record.id, nextState: record.nextState)
+            if let change = record.bindingChange {
+                guard let accounts else { throw SyncError.invalidState }
+                try accounts.recoverBinding(for: change.next.root) { actual in
+                    guard actual == change.expected || actual == change.next else { throw LibraryError.recoveryRequired }
+                }
+            }
             _ = try states.recover(for: record.nextState.binding)
             let intended = try permit?.intendedWrites(edits: record.steps.map(\.edit),
                 directories: record.directorySteps.map(\.edit), library: mutations) ?? []

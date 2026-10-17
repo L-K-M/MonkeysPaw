@@ -10,6 +10,23 @@ internal class FillBoundaryTest {
     private val root = sources.resolve("kotlin/ch/lkmc/monkeyspaw")
 
     @Test
+    fun `IME delivery and Application local graph reach no authenticated engine or work scheduler`() {
+        val localPaths = listOf("ui/fill/FillViewModel.kt", "ui/fill/FillViewModelFactory.kt", "ui/fill/FillSession.kt",
+            "ime/ImeInputPolicy.kt", "entry/FillActivity.kt", "entry/ProcessTextActivity.kt", "MonkeysPawApplication.kt",
+            "data/LibraryRepository.kt", "data/AndroidSyncStartup.kt")
+        val forbidden = Regex("\\b(?:AndroidSyncRepository|SyncEngine|SyncAccountService|HttpTransport|SecretStore|WorkManager|SyncWorkScheduler|Logger|Log)\\b")
+        for (path in localPaths) assertFalse(forbidden.containsMatchIn(root.resolve(path).readText()), path)
+        val module = root.resolve("di/AppModule.kt").readText()
+        val localProvider = module.substringAfter("fun repository(").substringBefore("@Provides")
+        assertTrue(localProvider.contains("startup.ready()"))
+        assertFalse(forbidden.containsMatchIn(localProvider))
+        val syncProvider = module.substringAfter("fun syncRepository(").substringBefore("@Provides")
+        assertTrue(syncProvider.contains("secrets: Lazy<SecretStore>"))
+        assertTrue(syncProvider.contains("http: Lazy<HttpTransport>"))
+        assertFalse(root.resolve("MonkeysPawApplication.kt").readText().contains(".resume("))
+    }
+
+    @Test
     fun `handoff route carries only an opaque token and retained model avoids consuming it after rotation`() {
         val route = root.resolve("entry/FillRoute.kt").readText()
         assertEquals(1, Regex("\\bputExtra\\(").findAll(route).count())

@@ -146,7 +146,9 @@ release remain distinct from up to date.
 The installed desktop handler stages `monkeyspaw://join` links for explicit
 Accept. It does not set your MIME default. Read the
 [argv/browser-history exposure](PRIVACY.md#invite-links) before sharing links.
-Desktop sync comes from this branch's unmerged M6 base; its dedicated guide
-and acceptance remain Y34/Z27 work. See [hosting](docs/platform/server.md#host-the-sync-server),
+Desktop Account, invites, sync status, groups and conflict resolution are
+available on main. The dedicated sync guide, deployed-server acceptance and
+native credential/privacy checks remain M6 Y34 work. See
+[hosting](docs/platform/server.md#host-the-sync-server),
 [Linux owner procedures](docs/platform/linux.md#m7-current-desktop-procedures)
 and [local build prerequisites](CICD.md).

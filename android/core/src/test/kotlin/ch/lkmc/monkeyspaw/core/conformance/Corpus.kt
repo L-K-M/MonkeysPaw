@@ -43,6 +43,7 @@ internal class Corpus private constructor(
     val cases: List<FixtureCase>,
     val enumeratedFiles: Set<String>,
     val accountedFiles: Set<String>,
+    val delegatedFiles: Map<String, Set<String>>,
 ) {
     fun cases(category: Category): List<FixtureCase> = cases.filter { it.category == category }
 
@@ -65,7 +66,7 @@ internal class Corpus private constructor(
             val directories = visibleChildren(root)
             corpusRequire(directories.map { it.fileName.toString() }.toSet() ==
                 Category.entries.map { it.directory }.toSet() + "sync", "Unknown or missing category")
-            // E34: sync-engine scenarios execute in the server suite until M10.
+            // Structural reads never count as execution: the mandatory JVM task owns sync.
             val sync = root.resolve("sync")
             requireDirectory(sync)
             val syncFiles = visibleChildren(sync)
@@ -149,7 +150,8 @@ internal class Corpus private constructor(
                 corpusRequire(cases.size > before, "Empty case set in ${category.directory}")
             }
             corpusRequire(accounted == enumerated, "Unaccounted files: ${enumerated - accounted}")
-            return Corpus(root, schema, schemas, cases, enumerated, accounted)
+            return Corpus(root, schema, schemas, cases, enumerated, accounted,
+                mapOf("syncIntegrationTest" to syncFiles.map { "sync/" + it.fileName }.toSet()))
         }
 
         private fun testDirectory(property: String): Path {

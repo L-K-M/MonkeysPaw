@@ -2,9 +2,10 @@
 
 You need Android API 26 or later. This guide covers the Android app behavior
 already merged into main. Physical-device acceptance remains **NOT RUN
-(owner)** in the [Android record](docs/platform/android.md); portable sync
-components do not provide a connected Account/sync UI yet. The dedicated
-sync guide and acceptance remain M6 Y34 / M10 Z27 work.
+(owner)** in the [Android record](docs/platform/android.md). Sync repository
+support is on main, but the background scheduler and connected Account,
+group, invite and conflict-resolution UI are not yet available. The sync
+guide and phone/desktop acceptance remain M10 Z27 work.
 
 ## Install or update
 

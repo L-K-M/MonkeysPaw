@@ -14,9 +14,12 @@ import ch.lkmc.monkeyspaw.core.services.AssistantAccess
 import ch.lkmc.monkeyspaw.core.services.AssistantService
 import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
 import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
+import ch.lkmc.monkeyspaw.core.services.SyncEngine
+import ch.lkmc.monkeyspaw.core.services.SyncAccountService
 import ch.lkmc.monkeyspaw.data.*
 import dagger.Module
 import dagger.Provides
+import dagger.Lazy
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
@@ -60,8 +63,12 @@ internal object AppModule {
 
     @Provides
     @Singleton
-    fun state(@ApplicationContext context: Context, settings: AndroidSettingsStore): StateStore =
+    fun state(@ApplicationContext context: Context, settings: AndroidSettingsStore): AndroidStateStore =
         AndroidStateStore(File(context.filesDir, "state"), settings = settings)
+
+    @Provides
+    @Singleton
+    fun stateStore(state: AndroidStateStore): StateStore = state
 
     @Provides
     @Singleton
@@ -117,7 +124,25 @@ internal object AppModule {
     @Provides
     @Singleton
     fun repository(library: LibraryService, editing: EditingService, prompts: AndroidPromptStore,
-        @IoDispatcher io: CoroutineDispatcher): LibraryRepository = LibraryRepository(library, editing, prompts, io)
+        @IoDispatcher io: CoroutineDispatcher, startup: AndroidSyncStartup): LibraryRepository =
+        LibraryRepository(library, editing, prompts, io) { startup.ready() }
+
+    @Provides
+    @Singleton
+    fun syncStartup(@ApplicationContext context: Context, library: LibraryService, prompts: AndroidPromptStore,
+        state: AndroidStateStore, @IoDispatcher io: CoroutineDispatcher): AndroidSyncStartup =
+        AndroidSyncStartup(library, prompts, state, File(context.filesDir, "library").absolutePath, io)
+
+    @Provides
+    @Singleton
+    fun syncRepository(startup: AndroidSyncStartup, library: LibraryService, repository: LibraryRepository,
+        @ApplicationScope scope: CoroutineScope, @IoDispatcher io: CoroutineDispatcher, clock: Clock,
+        entropy: Entropy, monotonic: MonotonicClock, secrets: Lazy<SecretStore>, http: Lazy<HttpTransport>,
+        settings: AndroidSettingsStore): AndroidSyncRepository =
+        AndroidSyncRepository(startup, library, repository, scope, io,
+            { local -> SyncEngine(local, scope, io, clock, entropy, monotonic) },
+            { engine, local -> SyncAccountService(engine, local.accounts, secrets.get(), http.get(), startup.libraryRoot, io, monotonic,
+                tlsTrust = { server -> settings.read().syncTls?.trustFor(server) ?: SyncTLSTrust.SYSTEM }) }, settings)
 
     @Provides
     @Singleton

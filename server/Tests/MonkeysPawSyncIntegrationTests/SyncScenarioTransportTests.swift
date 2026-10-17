@@ -22,6 +22,9 @@ final class SyncScenarioTransportTests: XCTestCase {
             try await app.test(.router) { client in
                 let response = try await client.executeRequest(uri: "/probe", method: .get, headers: [:], body: nil)
                 XCTAssertEqual(response.status.code, status)
+                // The peer task drops its channel asynchronously after the response; wait for release, not leak.
+                let deadline = ContinuousClock.now + .seconds(5)
+                while capture.channel != nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
                 XCTAssertNil(capture.channel, "Scenario peer channel must be released")
                 if let channel = capture.channel { _ = try await channel.finish(acceptAlreadyClosed: true) }
             }

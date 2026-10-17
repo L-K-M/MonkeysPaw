@@ -21,11 +21,20 @@ from urllib.parse import quote
 
 
 APP_ID = "ch.lkmc.monkeyspaw"
+# libatspi's private AtspiError enum exposes APPLICATION_GONE as atspi_error/0.
+ATSPI_ERROR_APPLICATION_GONE = 0
+
+
+class NameHasNoOwner(RuntimeError):
+    """The bus replied that the queried name has no current owner."""
 
 
 def command(*args, allowed=(0,)):
     result = subprocess.run(args, capture_output=True, text=True, timeout=15)
     if result.returncode not in allowed:
+        if (result.returncode == 1 and args[:2] == ("gdbus", "call")
+                and result.stderr.startswith("Error: GDBus.Error:org.freedesktop.DBus.Error.NameHasNoOwner: ")):
+            raise NameHasNoOwner("Installed application command failed")
         raise RuntimeError("Installed application command failed")
     return result.stdout.strip()
 
@@ -38,7 +47,13 @@ def bus(destination, method, *args):
 
 def owner():
     exists = bus("org.freedesktop.DBus", "org.freedesktop.DBus.NameHasOwner", APP_ID)
-    return bus("org.freedesktop.DBus", "org.freedesktop.DBus.GetNameOwner", APP_ID) if exists == "(true,)" else None
+    if exists != "(true,)":
+        return None
+    try:
+        return bus("org.freedesktop.DBus", "org.freedesktop.DBus.GetNameOwner", APP_ID)
+    except NameHasNoOwner:
+        # Normal shutdown can release the name between these two bus calls.
+        return None
 
 
 def wait_for(predicate, message):
@@ -48,6 +63,21 @@ def wait_for(predicate, message):
             return
         time.sleep(0.2)
     raise RuntimeError(message)
+
+
+def wait_for_accessibility(predicate, message):
+    from gi.repository import GLib
+
+    def ready():
+        try:
+            return predicate()
+        except GLib.Error as error:
+            if error.domain != "atspi_error" or error.code != ATSPI_ERROR_APPLICATION_GONE:
+                raise RuntimeError("Installed accessibility read failed") from None
+            # Retry the complete predicate, including any absence check.
+            return False
+
+    wait_for(ready, message)
 
 
 def action(name):
@@ -202,14 +232,14 @@ def main():
         singleton(primary)
         stop()
         action("repeat")
-        wait_for(lambda: label_visible("Nothing to repeat"), "Cold repeat did not show its empty-record result")
+        wait_for_accessibility(lambda: label_visible("Nothing to repeat"), "Cold repeat did not show its empty-record result")
         primary = owner()
         wait_for(dismiss_repeat_result, "Cold repeat result could not be dismissed")
-        wait_for(lambda: not repeat_windows() and not label_visible("Nothing to repeat"),
-                 "Cold repeat result did not dismiss")
+        wait_for_accessibility(lambda: not repeat_windows() and not label_visible("Nothing to repeat"),
+                               "Cold repeat result did not dismiss")
         action("repeat")
-        wait_for(lambda: repeat_windows() and label_visible("Nothing to repeat"),
-                 "Resident repeat did not show its empty-record result")
+        wait_for_accessibility(lambda: repeat_windows() and label_visible("Nothing to repeat"),
+                               "Resident repeat did not show its empty-record result")
         singleton(primary)
         stop()
 
@@ -238,7 +268,7 @@ def main():
                     if child.wait(timeout=15) != 0:
                         raise RuntimeError("Resident launcher failed")
             wait_for(show_review, "Installed Settings window did not appear")
-            wait_for(lambda: invite_is_staged(nodes(), destination, pyatspi), "Installed invite review did not appear")
+            wait_for_accessibility(lambda: invite_is_staged(nodes(), destination, pyatspi), "Installed invite review did not appear")
             singleton(primary or owner())
             if picker_visible():
                 raise RuntimeError("Invite activation toggled the picker")

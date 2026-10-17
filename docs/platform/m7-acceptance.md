@@ -123,9 +123,11 @@ choice, with fallback checked in the Linux procedure.
   and [Flatpak](flatpak.md) retain detailed procedures and their earlier results.
 - D20 collects actual owner runs, follows up verified defects separately and
   reconciles the final main/artifact baseline before milestone closure.
-- Desktop sync on this branch comes from the M6 base awaiting main integration.
-  The dedicated `docs/platform/sync.md` is a planned guide, not an existing
-  link. Y34 owns desktop sync privacy/closure; Z27 owns Android sync closure.
+- Desktop Account, invites, sync status, groups and conflict resolution are
+  available on main. The dedicated `docs/platform/sync.md` is a planned guide,
+  not an existing link. Y34 still owns desktop sync privacy/deployed closure;
+  Z27 owns Android sync closure. Android's repository is on main, but its
+  scheduler and connected sync UI are not yet integrated.
   See [§15](../plan/15-milestones.md) and the existing [server](server.md) and
   [Android](android.md) records. M7's URI staging procedure proves no sync
   transfer or invite redemption acceptance.

@@ -10,6 +10,7 @@ final class PickerViewState: ObservableObject {
     @Published private(set) var transientStatus: String?
     @Published var pasteTarget = Strings.noPasteTarget
     let model: PickerModel
+    let syncStatus: SyncStatusViewState?
     private let mainThread: MainThread
     private let isCurrent: () -> Bool
     private let requestedIntent: (PickerModel.Intent) -> Void
@@ -17,9 +18,11 @@ final class PickerViewState: ObservableObject {
 
     init(model: PickerModel, mainThread: MainThread,
          isCurrent: @escaping () -> Bool = { true },
+         syncStatus: SyncStatusViewState? = nil,
          requestedIntent: @escaping (PickerModel.Intent) -> Void,
          createPrompt: @escaping (String) -> Void) {
         self.model = model
+        self.syncStatus = syncStatus
         self.mainThread = mainThread
         self.isCurrent = isCurrent
         self.requestedIntent = requestedIntent
@@ -32,6 +35,7 @@ final class PickerViewState: ObservableObject {
 
     private func refresh() {
         guard isCurrent() else { return }
+        syncStatus?.refreshBinding()
         let intent = model.state == .picker ? model.takeRequestedIntent() : nil
         if state != model.state { focusRevision &+= 1 }
         state = model.state // Republishes field values, selection and preview too.
@@ -40,9 +44,14 @@ final class PickerViewState: ObservableObject {
 
     func didShow() {
         guard isCurrent() else { return }
+        syncStatus?.show()
         transientStatus = nil
         focusRevision &+= 1
     }
+
+    func didHide() { syncStatus?.hide() }
+
+    deinit { syncStatus?.retire() }
 
     func setQuery(_ query: String) {
         guard isCurrent() else { return }

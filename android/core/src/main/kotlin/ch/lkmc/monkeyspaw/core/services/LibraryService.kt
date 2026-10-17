@@ -12,6 +12,8 @@ import ch.lkmc.monkeyspaw.core.domain.ranking.Utf8Order
 import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.sync.SyncConflictMetadata
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 /**
@@ -36,6 +38,9 @@ class LibraryService(
     private val keyedStores = listOf<PromptKeyedStore>(history, usage, values)
     private var groupAccess: GroupAccessService? = null
     private val writeAuthority = Any()
+    private val mutableSourceChanges = MutableStateFlow(0L)
+    /** Ordinary source publications only; personal state and checked sync apply never trigger a push. */
+    val sourceChanges = mutableSourceChanges.asStateFlow()
     @Volatile var accessSnapshot: GroupAccessSnapshot = GroupAccessSnapshot.local
         private set
 
@@ -199,6 +204,7 @@ class LibraryService(
             requireMutation(destination, loaded.entry.identity, permit)
             try { prompts.move(source, destination) }
             catch (_: StoreError.AlreadyExists) { throw LibraryError.DestinationOccupied }
+            mutableSourceChanges.value++
         } catch (error: Exception) {
             rollback(migrated, targetIdentity, loaded.entry.identity)
             throw error
@@ -226,6 +232,7 @@ class LibraryService(
         }
         requireMutation(path, current?.entry?.identity, permit)
         prompts.delete(path)
+        mutableSourceChanges.value++
         index.acceptDeleted(path)
     }
 
@@ -374,6 +381,7 @@ class LibraryService(
             throw error
         }
 
+        mutableSourceChanges.value++
         val committed = try { requireCurrent(path) }
         catch (_: Exception) { throw LibraryError.CommitUnverified }
         if (!committed.bytes.contentEquals(bytes)) throw LibraryError.Conflict
