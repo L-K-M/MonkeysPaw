@@ -1,5 +1,10 @@
 # macOS delivery acceptance
 
+For current setup, see [README.mac.md](../../README.mac.md). Earlier
+milestone procedures retain their original unrun results; use the
+[current M7 procedure](#m7-current-desktop-procedures) and [M7 ledger](m7-acceptance.md)
+for the added behavior and exact-build owner evidence.
+
 Owner-run checks for M1a (§6 and §15). These checks have not been run on the
 Linux implementation host. Record results against the exact build tested.
 
@@ -728,6 +733,34 @@ only in a versioned runtime outside XCTest.
 | Check Now shows progress and distinct success/no-release/offline/rate-limit errors, including while automatic is off. Update available is passive; only View release opens the repository release page, and opening failure is actionable. No download, installation or restart occurs automatically | NOT RUN | |
 | Disable automatic checks during slow work, close/reopen Settings, switch libraries and quit; no stale result revives a retired window and no update timer survives shutdown. Check timestamp/state errors using disposable app-data permissions | NOT RUN | |
 | With macOS Keyboard navigation enabled, Monkey's Paw active and Settings key, Tab/Shift+Tab reach both toggles, Test paste, Open Setup, Check Now and View release with visible focus; VoiceOver reads each label, version, status and error. Native text editing, Cmd+V and existing shortcut recorders retain focus and key handling | NOT RUN | |
+
+## M7 current desktop procedures
+
+Status: **NOT RUN**. Record each result and sanitized evidence in the
+[M7 ledger](m7-acceptance.md). Keep every earlier unrun row above. Run the
+existing [D17 Settings procedure](#m7-d17-delivery-and-update-settings-not-run)
+and installation procedure on both installed dmg/zip copies; duplicate ledger
+rows for Safari, Chrome and Terminal, normal/full-screen Spaces and each
+architecture actually tested. Record main SHA, full artifact version/build/hash,
+OS/hardware/keyboard, signing and permission state, target versions and tester/date.
+
+Use harmless Unicode/multiline prompts with remembered and non-remembered
+fields, including an explicitly empty field and date/time/clipboard builtins.
+Never attach those values or prior clipboard contents to the evidence.
+
+| Check | Required observation | Result | Evidence |
+|---|---|---|---|
+| Both shortcut actions | Assign and verify picker/Repeat independently, clear one without changing the other, restart with custom keys and deliberately unbound Repeat. Verify only real Carbon activation, with release/debounce and no duplicate delivery. | NOT RUN | NOT RUN |
+| Latest completed delivery | Paste, explicit Copy and failed-backend Copy fallback each become the latest repeat once; cancelled forms, preview and self-test do not. Repeat from a different current app/field refreshes used builtins and keeps exact user fields. Overlapping invocations do not flood pastes; active own Settings/Library refuses repeat. | NOT RUN | NOT RUN |
+| Restart and source review | Remember-only/fieldless records can repeat after restart; a non-remembered delivery requires reopening and cannot expose an older record. Edit/change/delete the source or lose access: review/refusal occurs before paste. Moves with the same assigned identity retain the identity check. | NOT RUN | NOT RUN |
+| Forget and retirement | Forget one/all clears the applicable repeat and draft/remembered fields. Account sign-out/switch and library replacement retire old repeat work. On a disposable unwritable app-data root, failed invalidation reports failure, prevents successful retirement and disables repeat until retry. Restart must not revive a successfully cleared record. | NOT RUN | NOT RUN |
+| Clipboard restore and privacy | With restore off, count no extra restore reads. With it on, test actual browser/chat/terminal readback and paste-privacy prompts, slow targets, and newer identical/different copies. Copy, fallback, self-test, disable, new delivery and retirement leave the appropriate clipboard; previous text is not persisted/logged. Record the OS simultaneous-copy limit and any slow-target failure. | NOT RUN | NOT RUN |
+| Installed focus and fallback | Deny/revoke/regrant AX and Automation; run the same-build self-test plus real Safari/Chrome/Terminal normal/full-screen and multiple-monitor deliveries. Check exact receipt once, no Return event, fallback clipboard and self-test cache recovery. An injection result alone is insufficient. | NOT RUN | NOT RUN |
+| Settings, updates and accessibility | Complete all D17 rows, preserving Account/Assistant. Observe default-on metadata traffic when due, off/restart zero checker requests, explicit Check Now and View release in the real browser. Close/reopen and retire during work; no stale window/timer/delivery reappears. Check keyboard navigation and VoiceOver. | NOT RUN | NOT RUN |
+
+Application data and the opt-in restoration limits are described in
+[Privacy](../../PRIVACY.md); signing/Keychain access still require the actual
+installed build. Native sync/Account acceptance stays with M6 Y34, not M7.
 
 ## M6 Y23 invite activation: NOT RUN
 

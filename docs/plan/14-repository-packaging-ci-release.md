@@ -13,9 +13,15 @@ Rollout by milestone:
 | M8 | ci.yml `android` job (wrapper validation, `:core:test`, unit tests, lint, debug + release assemble); release.yml APK job; dependabot `gradle` for `/android` |
 
 - **README.md.** The LLM disclosure callout, then the version marker.
-  Sections: install, the first hotkey, hosting a server (the compose
-  walkthrough), troubleshooting. Per-platform notes go in `README.android.md`, `README.mac.md`,
-  `README.gnome.md`, and `README.kde.md`.
+  Sections: install, the first hotkey, hosting and troubleshooting links.
+  The compose walkthrough and backup instructions live in
+  [docs/platform/server.md](../platform/server.md#host-the-sync-server).
+  Per-platform setup lives in [README.android.md](../../README.android.md),
+  [README.mac.md](../../README.mac.md), [README.gnome.md](../../README.gnome.md),
+  [README.kde.md](../../README.kde.md) and [README.linux.md](../../README.linux.md)
+  (X11/wlroots/Flatpak). README discloses default-on update traffic before
+  launch and links [SECURITY.md](../../SECURITY.md), [PRIVACY.md](../../PRIVACY.md)
+  and [CICD.md](../../CICD.md).
 - **Agent and repo furniture.**
   - `AGENTS.md`: the repo brief (build/test commands, the portability rule,
     GLib/main-actor traps, the paste/window footguns from §6, the layering
@@ -23,6 +29,11 @@ Rollout by milestone:
   - `CLAUDE.md`: copied verbatim from a peer repo.
   - `CHANGELOG.md`: Keep a Changelog.
   - `CICD.md`: workflows, the tag → release flow, the ghcr notes.
+  - [M7 acceptance ledger](../platform/m7-acceptance.md): exact main/artifact
+    and owner-session evidence, initially NOT RUN. CI does not prove real
+    focus, consent, clipboard or installed-browser behavior. The owner must
+    enable GitHub private vulnerability reporting before release (§21 G23).
+    Earlier owner NOT RUN rows remain; D20 records actual results on main.
   - `.github/dependabot.yml`: swift, docker, github-actions, and `gradle`
     for `/android`, with the androidx and kotlin+ksp groups.
   - `zai-code-review.yml`: copied byte-identical. It reviews from the PR
@@ -249,7 +260,7 @@ Rollout by milestone:
     only in disposable repositories (§20 F19).
   - Deb `Depends:` comes from `dpkg-shlibdeps` (Ubuntu 24.04's t64 renames),
     plus `libglib2.0-bin`. `Recommends:` `libsecret-tools`, `ydotool`,
-    `xdotool`. Prerelease versions use a tilde (every prerelease hyphen
+    `xdotool`, `x11-utils`. Prerelease versions use a tilde (every prerelease hyphen
     becomes `~`), so they sort below the release; dpkg compares digit runs
     numerically (`~beta.9` < `~beta.10`).
 - **macOS packaging.** On a Mac with Xcode and `brew install create-dmg`,
@@ -319,7 +330,7 @@ Rollout by milestone:
   hicolor icons, copyright and changelog under `build/deb/`, validates the
   desktop entry when the validator is available, and resolves `Depends:`
   with `dpkg-shlibdeps` without a fallback. It adds `libglib2.0-bin` for
-  `gapplication` and recommends `libsecret-tools, ydotool, xdotool`.
+  `gapplication` and recommends `libsecret-tools, ydotool, xdotool, x11-utils`.
   `dpkg-deb --root-owner-group` writes
   `dist/monkeyspaw_<deb-version>_<architecture>.deb` and its `.deb.sha256`
   checksum. Regenerate the committed 16, 24, 32, 48, 64, 128, 256 and 512 pixel
@@ -383,3 +394,11 @@ Rollout by milestone:
   - ydotool is unreachable from the sandbox.
   - Autostart from inside the sandbox does not register with the host.
   - The library must be under `$HOME`.
+
+  Installation and explicit bundle replacement are documented in
+  [README.linux.md](../../README.linux.md#flatpak). A single-file bundle has
+  no app update feed. Real GNOME-/KDE-host permissions, Secret Service,
+  consent, URI association and readback require the
+  [Flatpak owner procedure](../platform/flatpak.md) and M7 ledger evidence.
+  The dedicated sync guide remains Y34/Z27 work; no sync acceptance follows
+  from Flatpak's installed-URI CI proof.

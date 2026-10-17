@@ -1,5 +1,8 @@
 # Android acceptance
 
+For installation and merged app behavior, see [README.android.md](../../README.android.md).
+This link changes no acceptance result below; all earlier owner rows remain.
+
 ## M8 acceptance record
 
 **M8 is code-complete, but NOT closed.** K1–K19 are merged. K20's owner
