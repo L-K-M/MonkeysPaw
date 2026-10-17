@@ -17,6 +17,9 @@ final class LinuxLibraryWindow {
     private weak var editor: EditorModel?
     private var assistantProvider: () -> AssistantModel? = { nil }
     private let assistantPanel = LinuxAssistantPanel()
+    private var conflictProvider: () -> ConflictModel? = { nil }
+    private weak var conflictModel: ConflictModel?
+    private let conflictView = LinuxConflictView()
     private var assistantMessage: String?
     private var assistantMessagePrompt: LibraryPromptSelection?
     private var assistantMessageStamp: FileStamp?
@@ -75,6 +78,7 @@ final class LinuxLibraryWindow {
     init(application: UnsafeMutablePointer<GtkApplication>, browser: LibraryBrowserModel, editor: EditorModel,
          imports: ImportBinding? = nil,
          assistant: @escaping () -> AssistantModel? = { nil },
+         conflict: @escaping () -> ConflictModel? = { nil },
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         window = gtk_application_window_new(application)!
@@ -103,8 +107,8 @@ final class LinuxLibraryWindow {
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed else { return }
-            if self.isVisible { self.updateDialog() }
-            else { self.commands.cancelDialog(); self.assistantPanel.close() }
+            if self.isVisible { self.render() }
+            else { self.commands.cancelDialog(); self.assistantPanel.close(); self.conflictView.close() }
         }
         GTK.observeKeys(window) { [weak self] key, modifiers in
             self?.keyPressed(key, modifiers: modifiers) ?? false
@@ -173,13 +177,14 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(content), status)
         gtk_box_append(mp_box(content), GTK.label(LinuxStrings.libraryHint))
         gtk_window_set_child(mp_window(window), content)
-        rebind(browser: browser, editor: editor, imports: imports?.state, assistant: assistant)
+        rebind(browser: browser, editor: editor, imports: imports?.state, assistant: assistant, conflict: conflict)
     }
 
     deinit { unbind() }
 
     func rebind(browser: LibraryBrowserModel, editor: EditorModel, imports: LinuxLibraryImportState? = nil,
-                assistant: @escaping () -> AssistantModel? = { nil }) {
+                assistant: @escaping () -> AssistantModel? = { nil },
+                conflict: @escaping () -> ConflictModel? = { nil }) {
         guard !isDestroyed else { return }
         precondition((importView == nil) == (imports == nil),
                      "Import-enabled windows require the current graph's import state")
@@ -187,6 +192,9 @@ final class LinuxLibraryWindow {
         self.browser = browser
         self.editor = editor
         assistantProvider = assistant
+        conflictProvider = conflict
+        conflictView.onChange = { [weak self] in self?.render() }
+        conflictView.onResolve = { [weak self] action in self?.resolveConflict(action) }
         assistantMessage = nil
         renderedEditorStatus = nil
         let binding = bindingRevision
@@ -270,6 +278,9 @@ final class LinuxLibraryWindow {
 
     private func unbind() {
         assistantPanel.retire(destroyed: isDestroyed)
+        conflictView.unbind(isDestroyed ? .destroyed : .rebind)
+        conflictProvider = { nil }
+        conflictModel = nil
         assistantProvider = { nil }
         endDialog()
         commands.unbind()
@@ -301,6 +312,7 @@ final class LinuxLibraryWindow {
 
     private func selectPrompt(_ selection: LibraryPromptSelection) {
         guard !isDestroyed, let editor else { return }
+        guard !conflictView.isResolving else { render(); return }
         let action = EditorDiscardAction.open(selection)
         guard editor.state.pendingDecision?.action != action, !editor.state.queuedActions.contains(action) else { return }
         let revision = bindingRevision
@@ -328,6 +340,7 @@ final class LinuxLibraryWindow {
     private func requestClose() -> Bool {
         guard !isDestroyed, !closeRequested, let editor else { return false }
         assistantPanel.close()
+        conflictView.close()
         closeRequested = true
         let revision = bindingRevision
         editor.request(.close) { [weak self] result in
@@ -377,11 +390,11 @@ final class LinuxLibraryWindow {
         }
         GTK.onSignal(save, "clicked") { [weak self] in self?.savePrompt() }
         GTK.onSignal(saveCopy, "clicked") { [weak self] in
-            guard let self, self.isVisible, self.available else { return }
+            guard let self, self.isVisible, self.available, !self.conflictView.isResolving else { return }
             self.editor?.saveAsCopy()
         }
         GTK.onSignal(revert, "clicked") { [weak self] in
-            guard let self, self.isVisible, self.available else { return }
+            guard let self, self.isVisible, self.available, !self.conflictView.isResolving else { return }
             self.editor?.revert()
         }
         gtk_box_append(mp_box(actions), commands.widget)
@@ -426,6 +439,7 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(detail), tabs)
         gtk_widget_set_name(editorStatus, "library-editor-status")
         gtk_box_append(mp_box(detail), editorStatus)
+        gtk_box_append(mp_box(detail), conflictView.widget)
         assistantPanel.onHighlight = { [weak self] range in
             guard let self, !self.isDestroyed else { return }
             if range != nil { gtk_notebook_set_current_page(mp_notebook(self.tabs), 0) }
@@ -433,7 +447,7 @@ final class LinuxLibraryWindow {
         }
         gtk_box_append(mp_box(detail), assistantPanel.widget)
         source.onEdit = { [weak self] text in
-            guard let self, !self.isDestroyed, self.available else { return }
+            guard let self, !self.isDestroyed, self.available, !self.conflictView.isResolving else { return }
             self.assistantMessage = nil
             self.editor?.edit(text)
             // Editor publications may coalesce edits away and back. Revoke
@@ -450,9 +464,17 @@ final class LinuxLibraryWindow {
     private func renderEditor() {
         guard let editor else { return }
         let state = editor.state
-        assistantPanel.bind(model: assistantProvider(), editor: editor, available: available)
+        let busy = state.status == .loading || state.status == .saving || state.status == .commandRunning
+        let row = browser?.state.selectedPrompt
+        let conflictSelection = row?.conflictOrigin != nil && row?.selection == state.prompt && state.stamp != nil
+            && isVisible ? state.prompt : nil
+        if conflictSelection != nil { conflictModel = conflictProvider() }
+        conflictView.bind(model: conflictModel, selection: conflictSelection, stamp: state.stamp,
+            available: available && !busy && state.pendingDecision == nil && state.queuedActions.isEmpty)
+        let editorAvailable = available && !conflictView.isResolving
+        assistantPanel.bind(model: assistantProvider(), editor: editor, available: editorAvailable)
         gtk_label_set_text(mp_label(previewTitle), state.prompt?.relativePath.string ?? LinuxStrings.selectLibraryPrompt)
-        source.update(state, revision: sourceRevision, available: available)
+        source.update(state, revision: sourceRevision, available: editorAvailable)
         gtk_label_set_text(mp_label(readOnly), state.readOnlyReason.map(LinuxEditorStrings.readOnly) ?? "")
         gtk_widget_set_visible(readOnly, state.readOnlyReason == nil ? 0 : 1)
         gtk_label_set_text(mp_label(validation), state.issues.map(LinuxEditorStrings.issue).joined(separator: "\n"))
@@ -483,13 +505,12 @@ final class LinuxLibraryWindow {
                 }
             }
         }
-        gtk_widget_set_sensitive(save, available && state.canSave ? 1 : 0)
-        gtk_widget_set_sensitive(saveCopy, available && state.canSaveAsCopy ? 1 : 0)
-        gtk_widget_set_sensitive(revert, available && state.prompt != nil && state.status != .loading
+        gtk_widget_set_sensitive(save, editorAvailable && state.canSave ? 1 : 0)
+        gtk_widget_set_sensitive(saveCopy, editorAvailable && state.canSaveAsCopy ? 1 : 0)
+        gtk_widget_set_sensitive(revert, editorAvailable && state.prompt != nil && state.status != .loading
             && state.status != .saving && state.status != .commandRunning ? 1 : 0)
-        commands.update(state, available: available)
-        history.update(state, available: available, canRestore: commands.canRun && !commands.hasDialog)
-        let busy = state.status == .loading || state.status == .saving || state.status == .commandRunning
+        commands.update(state, available: editorAvailable)
+        history.update(state, available: editorAvailable, canRestore: commands.canRun && !commands.hasDialog)
         if assistantMessagePrompt != state.prompt || assistantMessageStamp != state.stamp
             || (busy && renderedEditorStatus != state.status) { assistantMessage = nil }
         renderedEditorStatus = state.status
@@ -522,12 +543,31 @@ final class LinuxLibraryWindow {
 
     @discardableResult
     private func savePrompt() -> Bool {
-        guard isVisible, available, let editor, editor.state.canSave else { return false }
+        guard isVisible, available, !conflictView.isResolving, let editor, editor.state.canSave else { return false }
         if editor.state.conflict != nil {
             dismissedConflict = nil
             updateDialog()
         } else { editor.save() }
         return true
+    }
+
+    private func resolveConflict(_ action: ConflictResolutionAction) {
+        guard isVisible, available, let editor, let model = conflictModel, !model.state.isBusy,
+              let preview = model.state.preview, preview.copy == editor.state.prompt,
+              preview.copy == browser?.selection else { return }
+        if editor.state.isDirty || editor.state.conflict != nil {
+            guard editor.state.pendingDecision?.action != .revert,
+                  !editor.state.queuedActions.contains(.revert) else { return }
+            let revision = bindingRevision
+            editor.request(.revert) { [weak self, weak model] result in
+                guard let self, let model, !self.isDestroyed, self.isVisible,
+                      self.bindingRevision == revision, self.conflictModel === model,
+                      result == .allowed, self.browser?.selection == preview.copy else { return }
+                // A save can change the candidate. Never apply the earlier
+                // button press to bytes the user has not compared yet.
+                self.conflictView.refreshComparison(.afterEditing)
+            }
+        } else { conflictView.resolve(action) }
     }
 
     private func updateDialog() {
@@ -627,7 +667,7 @@ final class LinuxLibraryWindow {
     }
 
     private func canFavorite(_ state: LibraryBrowserState) -> Bool {
-        available && state.selectedPrompt?.canRender == true && state.selectedPrompt?.isReadOnly == false
+        available && !conflictView.isResolving && state.selectedPrompt?.canRender == true && state.selectedPrompt?.isReadOnly == false
             && (editor?.state.prompt?.relativePath != state.selection?.relativePath
                 || (editor?.state.canEdit == true && editor?.state.previewFailure == nil))
     }
@@ -657,7 +697,7 @@ final class LinuxLibraryWindow {
         guard activeDialog == nil, !commands.hasDialog else { return false }
         if modifiers == GDK_CONTROL_MASK.rawValue,
            [UInt32(GDK_KEY_r), UInt32(GDK_KEY_R), UInt32(GDK_KEY_i), UInt32(GDK_KEY_I)].contains(key) {
-            guard available, let editor, let model = assistantProvider() else { return false }
+            guard available, !conflictView.isResolving, let editor, let model = assistantProvider() else { return false }
             assistantPanel.bind(model: model, editor: editor, available: available)
             return assistantPanel.start([UInt32(GDK_KEY_r), UInt32(GDK_KEY_R)].contains(key) ? .review : .improve)
         }
