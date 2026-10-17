@@ -237,8 +237,10 @@ Rollout by milestone:
     every build and workflow-artifact verification, including both image
     smoke tests, and skip both publish jobs without logging in to ghcr.
     This includes fork PRs. Both publish jobs require a tag and a true
-    publish output. Release notes include Android checksum/sideload guidance
-    and the public-signing disclosure alongside generated changes.
+    publish output. Generated release notes link to `CHANGELOG.md` at the full
+    release tag, retain Android checksum/sideload guidance and the public-signing
+    disclosure, and include Flatpak checksum/install instructions and Linux
+    x86_64/GNOME Platform 50 requirements.
   - To cut the first release after CI and owner installation checks pass,
     run `scripts/release.sh 0.1.0 --push` on current main with the shared
     `lkm-release` engine installed. It bumps committed versions and pushes

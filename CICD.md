@@ -99,6 +99,9 @@ a draft with all nine assets, downloads them again from the release, and
 byte-compares each before publishing. A failed upload or
 comparison leaves the release unpublished. Hyphenated tags are prereleases
 and are explicitly excluded from `latest`.
+Generated release notes link to `CHANGELOG.md` at the full release tag, retain
+Android checksum/sideload and public-signer guidance, and include Flatpak
+checksum/install instructions and Linux x86_64/GNOME Platform 50 requirements.
 Assembly waits for both native image builds. Android failure reports use
 `MonkeysPaw-android-release-reports`, outside the release asset glob and
 distinct from ordinary CI reports, so retained reports cannot contaminate
