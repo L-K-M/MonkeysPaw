@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.core.domain.llm
 
+import ch.lkmc.monkeyspaw.core.domain.canonical.CanonicalForm
 import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
 import ch.lkmc.monkeyspaw.core.domain.format.PromptDocument
 import ch.lkmc.monkeyspaw.core.domain.format.Template
@@ -30,15 +31,27 @@ class ArtifactDiff private constructor(
         /** Canonical header (with delimiters) and exact body compare separately; null is a write baseline. */
         fun compare(original: PromptDocument?, candidate: ArtifactMergeCandidate): ArtifactDiff {
             val oldSource = original?.let(PromptCodec::write).orEmpty().toByteArray(Charsets.UTF_8)
+            return compare(original, oldSource, candidate.document, candidate.canonicalBytes)
+        }
+
+        /** Exact storage comparison, including header presentation and body line endings. */
+        fun compare(originalBytes: ByteArray, candidateBytes: ByteArray): ArtifactDiff {
+            val oldSource = CanonicalForm.user(originalBytes, "server.md").bytes
+            val newSource = CanonicalForm.user(candidateBytes, "candidate.md").bytes
+            return compare(PromptCodec.parseFile(oldSource, "server.md"), oldSource,
+                PromptCodec.parseFile(newSource, "candidate.md"), newSource)
+        }
+
+        private fun compare(original: PromptDocument?, oldSource: ByteArray,
+                            candidate: PromptDocument, newSource: ByteArray): ArtifactDiff {
             val oldBody = original?.body.orEmpty()
-            val newBody = candidate.document.body
-            val newSource = candidate.canonicalBytes
+            val newBody = candidate.body
             val oldHeader = oldSource.copyOfRange(0, oldSource.size - oldBody.toByteArray(Charsets.UTF_8).size)
             val newHeader = newSource.copyOfRange(0, newSource.size - newBody.toByteArray(Charsets.UTF_8).size)
             val headerDiff = MyersLineDiff.compare(oldHeader.toString(Charsets.UTF_8), newHeader.toString(Charsets.UTF_8))
             val bodyDiff = MyersLineDiff.compare(oldBody, newBody)
             val oldTemplate = original?.template ?: Template.parse("")
-            val newTemplate = candidate.document.template
+            val newTemplate = candidate.template
             val oldNames = oldTemplate.names.toSet()
             val newNames = newTemplate.names.toSet()
             val removed = oldTemplate.names.filter { it !in newNames }

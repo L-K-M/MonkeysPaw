@@ -59,6 +59,8 @@ class SyncEngine internal constructor(
     private var session: Session? = null
     private var graphRoot: SyncLibraryRoot? = null
     private var active: Active? = null
+    private class ResolutionRun(val permit: SyncWorkPermit, val job: Job)
+    private var resolution: ResolutionRun? = null
     private var mode = SyncExecutionMode.BACKGROUND
     private var health = SyncRootHealth.AVAILABLE
     private var retired = false
@@ -213,12 +215,44 @@ class SyncEngine internal constructor(
 
     /** This suspends off UI; it never holds the library mutation lock. */
     suspend fun drain() {
-        val task = lock.withLock { active?.task }
-        withContext(NonCancellable) { task?.join() }
+        val tasks = lock.withLock { listOfNotNull(active?.task, resolution?.job) }
+        withContext(NonCancellable) { tasks.forEach { it.join() } }
+    }
+
+    /** Explicit decisions share the pass's single writer, credentials, epoch and stop/drain boundary. */
+    internal suspend fun <T> resolvingConflict(expectedEpoch: Long? = null,
+        work: suspend (SyncResolutionContext) -> T): T = withContext(io) {
+        val job = currentCoroutineContext().job
+        val (run, context) = lock.withLock {
+            if (expectedEpoch != null && expectedEpoch != epoch) throw SyncResolutionFailure.StaleSession
+            if (!eligible) throw SyncResolutionFailure.Inactive
+            if (active != null || resolution != null) throw SyncResolutionFailure.Busy
+            if (recoveryState() != SyncStopResult.STOPPED) throw SyncResolutionFailure.RecoveryRequired
+            val session = session ?: throw SyncResolutionFailure.Inactive
+            val permit = SyncWorkPermit(session.binding, epoch, job, scope.coroutineContext[Job])
+            val run = ResolutionRun(permit, job)
+            resolution = run
+            run to SyncResolutionContext(session.binding, permit, session.client.permitting(permit), graph, wallClock)
+        }
+        val cancellation = scope.coroutineContext[Job]?.invokeOnCompletion { job.cancel() }
+        try { work(context) }
+        catch (error: SyncHTTPClientError) {
+            if (error == SyncHTTPClientError.Unauthorized) lock.withLock {
+                if (epoch == run.permit.epoch) requireSignIn()
+            }
+            throw error
+        } finally {
+            cancellation?.dispose()
+            run.permit.revoke()
+            lock.withLock {
+                if (resolution === run) resolution = null
+                if (eligible && dirty && mode == SyncExecutionMode.FOREGROUND) launch()
+            }
+        }
     }
 
     fun rootHealthChanged(rootHealth: SyncRootHealth): SyncStopResult = lock.withLock {
-        if (health == rootHealth) return@withLock if (active != null) SyncStopResult.BUSY else recoveryState()
+        if (health == rootHealth) return@withLock if (active != null || resolution != null) SyncStopResult.BUSY else recoveryState()
         health = rootHealth
         if (health == SyncRootHealth.UNAVAILABLE) {
             mutableReport.value = mutableReport.value.copy(blockingIssue = SyncBlockingIssue.ROOT_UNAVAILABLE)
@@ -230,7 +264,7 @@ class SyncEngine internal constructor(
             markDirty()
             if (mode == SyncExecutionMode.FOREGROUND) { armPoll(); launch() }
         }
-        if (active != null) SyncStopResult.BUSY else recoveryState()
+        if (active != null || resolution != null) SyncStopResult.BUSY else recoveryState()
     }
 
     /** Recover exact old-graph intents only. This never collects or scans unrelated files. */
@@ -259,7 +293,7 @@ class SyncEngine internal constructor(
 
     /** Account services use these same capabilities only after stop/drain. */
     internal fun requireStoppedGraph(root: SyncLibraryRoot) = lock.withLock {
-        if (active != null || retired) throw SyncPushError.Busy
+        if (active != null || resolution != null || retired) throw SyncPushError.Busy
         if (health != SyncRootHealth.AVAILABLE) throw SyncReconciliationError.UnavailableLibrary
         if (graphRoot != null && graphRoot != root) throw SyncError.BindingMismatch
         if (graph.journal.pending?.nextState?.binding?.root?.let { it != root } == true) throw SyncError.BindingMismatch
@@ -334,7 +368,7 @@ class SyncEngine internal constructor(
         stopAccountSession()
         drain()
         lock.withLock {
-            if (active != null || retired) throw SyncPushError.Busy
+            if (active != null || resolution != null || retired) throw SyncPushError.Busy
             if (graph.journal.pending != null || graph.mutations.pendingPermit != null || graph.mutations.hasUnreadableJournal) {
                 requireStoppedGraph(root)
                 requireAccountCommit(graph.journal.replay())
@@ -355,7 +389,7 @@ class SyncEngine internal constructor(
         !reports.value.needsSignIn && reports.value.blockingIssue == null && scope.coroutineContext[Job]?.isActive != false
 
     private fun launch(): Active? {
-        if (!eligible || active != null || !dirty || session == null) return null
+        if (!eligible || active != null || resolution != null || !dirty || session == null) return null
         if (retryAtNanos?.let { it - monotonicClock.nowNanos() > 0 } == true) return null
         return newActive(RunKind.PASS)
     }
@@ -527,13 +561,15 @@ class SyncEngine internal constructor(
         invalidateTimers()
         epoch++
         val drained = active?.coordinator?.permit?.revoke() ?: true
+        val resolutionDrained = resolution?.permit?.revoke() ?: true
+        resolution?.job?.cancel()
         active?.parent?.cancel()
         active?.task?.cancel()
         dirty = false
         retryAtNanos = null
         mutableReport.value = reports.value.copy(phase = SyncPhase.IDLE)
         publishScheduling()
-        return if (active != null || !drained) SyncStopResult.BUSY else recoveryState()
+        return if (active != null || resolution != null || !drained || !resolutionDrained) SyncStopResult.BUSY else recoveryState()
     }
     private fun recoveryState(): SyncStopResult = if (graph.journal.pending != null || graph.mutations.pendingPermit != null ||
         graph.mutations.hasUnreadableJournal || graph.pending.snapshot.let { it.error != null || it.value != null }) SyncStopResult.RECOVERY_REQUIRED
