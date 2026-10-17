@@ -740,7 +740,13 @@ jobs:
           Use the Quick Settings tile, launcher shortcut or widget to pick and fill a prompt, then Copy and paste manually in the target app.
 
           Both Android variants use the same public signing key. The signature does not establish publisher identity; use artifacts from this repository's GitHub Release. See the [signing decision](https://github.com/L-K-M/MonkeysPaw/blob/main/docs/decisions/0001-android-zero-secret-signing.md) and [Android checks](https://github.com/L-K-M/MonkeysPaw/blob/main/docs/platform/android.md).
+
+          The Flatpak bundle requires Linux x86_64, Flatpak and GNOME Platform 50. Download the .flatpak bundle and its .flatpak.sha256 together. Replace <bundle> with the downloaded bundle's filename: verify with `sha256sum -c <bundle>.sha256` before installing with `flatpak install --user ./<bundle>`.
+
+          Use one active native or Flatpak installation per user. Keep your library under your home directory; sandbox delivery uses portals with a copy fallback.
           NOTES
+          printf '\n[Release changelog](https://github.com/%s/blob/%s/CHANGELOG.md)\n' \
+            "$GH_REPO" "$RELEASE_TAG" >> "$RUNNER_TEMP/android-release-notes.md"
           gh release create "$RELEASE_TAG" "${files[@]}" --verify-tag --draft \
             --title "Monkey's Paw $VERSION" --generate-notes \
             --notes-file "$RUNNER_TEMP/android-release-notes.md" \

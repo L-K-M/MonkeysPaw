@@ -162,8 +162,22 @@ class ReleaseAssetTests(unittest.TestCase):
         self.root = Path(directory.name)
         self.dist = self.root / "dist"
         self.dist.mkdir()
-        self.version = "0.1.0-beta.1"
-        self.deb = "monkeyspaw_0.1.0~beta.1_amd64.deb"
+        self.calls = self.root / "gh-calls"
+        gh = self.root / "bin/gh"
+        gh.parent.mkdir()
+        gh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$GH_CALLS"\n')
+        gh.chmod(0o755)
+        self.env = os.environ | {
+            "PATH": f"{gh.parent}:{os.environ['PATH']}", "GH_CALLS": str(self.calls),
+            "GH_REPO": "example/MonkeysPaw", "PRERELEASE": "true", "RUNNER_TEMP": str(self.root),
+        }
+        self.prepare_assets("0.1.0-beta.1")
+
+    def prepare_assets(self, version):
+        for file in self.dist.iterdir():
+            file.unlink()
+        self.version = version
+        self.deb = f"monkeyspaw_{version.replace('-', '~')}_amd64.deb"
         self.bundle = f"monkeyspaw_{self.version}_x86_64.flatpak"
         self.apk = f"monkeyspaw-v{self.version}.apk"
         self.groups = {
@@ -180,17 +194,10 @@ class ReleaseAssetTests(unittest.TestCase):
                 (self.dist / name).write_bytes(data)
                 lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
             (self.dist / manifest).write_text("".join(lines))
-        self.calls = self.root / "gh-calls"
-        gh = self.root / "bin/gh"
-        gh.parent.mkdir()
-        gh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$GH_CALLS"\n')
-        gh.chmod(0o755)
-        self.env = os.environ | {
-            "PATH": f"{gh.parent}:{os.environ['PATH']}", "GH_CALLS": str(self.calls),
+        self.env.update({
             "VERSION": self.version, "RELEASE_TAG": f"v{self.version}", "DEB_FILE": self.deb,
-            "BUNDLE_FILE": self.bundle,
-            "APK_FILE": self.apk, "PRERELEASE": "true", "RUNNER_TEMP": str(self.root),
-        }
+            "BUNDLE_FILE": self.bundle, "APK_FILE": self.apk,
+        })
 
     def run_step(self, job, name):
         return subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", step_script(job, name)],
@@ -218,6 +225,47 @@ class ReleaseAssetTests(unittest.TestCase):
         self.assertIn("verify the checksum before sideloading", notes)
         for name in self.dist.iterdir():
             self.assertIn(f"dist/{name.name}", call)
+
+    def test_generated_notes_link_the_full_tag_and_keep_platform_guidance(self):
+        for repository, version, prerelease in (
+            ("example/StableRelease", "0.1.0", "false"),
+            ("another/Prerelease", "0.1.0-rc-1.2", "true"),
+        ):
+            with self.subTest(repository=repository, version=version):
+                self.prepare_assets(version)
+                self.calls.unlink(missing_ok=True)
+                self.env.update({"GH_REPO": repository, "PRERELEASE": prerelease})
+                assets = {file.name: file.read_bytes() for file in self.dist.iterdir()}
+                result = self.run_step("publish", "Create draft and attach every asset")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                notes = (self.root / "android-release-notes.md").read_text()
+                self.assertIn(f"[Release changelog](https://github.com/{repository}/blob/v{version}/CHANGELOG.md)",
+                              notes)
+                for guidance in (
+                    "Android requires API 26", "verify the checksum before sideloading",
+                    "signed and shrunk with R8", "Copy and paste manually", "public signing key",
+                    "signature does not establish publisher identity", "/docs/platform/android.md",
+                    "Linux x86_64", "GNOME Platform 50", ".flatpak.sha256",
+                    "sha256sum -c <bundle>.sha256", "flatpak install --user ./<bundle>",
+                    "one active native or Flatpak installation", "home directory", "copy fallback",
+                ):
+                    self.assertIn(guidance, notes)
+                create = self.calls.read_text().splitlines()
+                self.assertEqual(len(create), 1)
+                self.assertIn(f"release create v{version} ", create[0])
+                for flags in ("--verify-tag --draft", "--generate-notes", "--notes-file",
+                              f"--prerelease={prerelease} --latest=false"):
+                    self.assertIn(flags, create[0])
+                self.assertEqual(len(assets), 9)
+                self.assertEqual(sorted(arg for arg in create[0].split() if arg.startswith("dist/")),
+                                 sorted(f"dist/{name}" for name in assets))
+                self.assertEqual({file.name: file.read_bytes() for file in self.dist.iterdir()}, assets)
+                result = self.run_step("publish", "Publish only after every comparison passes")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                latest = "false" if prerelease == "true" else "true"
+                self.assertEqual(self.calls.read_text().splitlines()[1],
+                                 f"release edit v{version} --verify-tag --draft=false "
+                                 f"--prerelease={prerelease} --latest={latest}")
 
     def test_desktop_only_set_cannot_be_published(self):
         (self.dist / self.apk).unlink()
