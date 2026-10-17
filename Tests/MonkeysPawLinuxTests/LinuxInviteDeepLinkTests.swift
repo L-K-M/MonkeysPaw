@@ -117,6 +117,9 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
 
     func testExistingAccountJoinShowsBindingAndNeverRegistersAutomatically() throws {
         try signIn()
+        environment.showInviteSettings()
+        try findWindow()
+        try waitForAccountPageReady()
         let before = http.requests.count
         try open(link())
         let model = try XCTUnwrap(environment.inviteModel)
@@ -133,6 +136,47 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
         XCTAssertTrue(body.inviteToken == token, "Invite was not preserved")
         XCTAssertEqual(http.requests.filter { $0.url.path.hasSuffix("/register") }.count, 0)
         XCTAssertNotNil(joins.first?.headers["Authorization"])
+        try assertNoPersistedInvite()
+    }
+
+    func testColdExistingAccountStagingOnlyReadsCurrentServerWithoutRedeeming() throws {
+        let account = try XCTUnwrap(environment.accountModel)
+        XCTAssertTrue(GTKTestSupport.spin { !account.state.isBusy })
+        var password = "cold-account-" + UUID().uuidString
+        account.login(server: "https://example.test/paw", username: "person", password: &password, deviceName: "Linux")
+        XCTAssertTrue(GTKTestSupport.spin { account.state.enabled && !account.state.isBusy })
+        let boundServer = try XCTUnwrap(account.state.connection?.serverURL)
+        let before = http.requests.count
+
+        try open(link(server: "https://unaccepted.test/other"))
+        try waitForAccountPageReady()
+        let drained = InviteFlag()
+        let sync = environment.syncService
+        Task.detached { await sync?.drain(); drained.set() }
+        XCTAssertTrue(GTKTestSupport.spin { drained.value })
+        drainUI()
+
+        let observed = Array(http.requests.dropFirst(before))
+        XCTAssertTrue(observed.contains { $0.method == .get && $0.url.path == "/paw/api/v1/me" },
+            "Cold Account entry did not refresh current metadata")
+        for request in observed {
+            let current = request.url.scheme == boundServer.scheme && request.url.host == boundServer.host
+                && request.url.port == boundServer.port && request.url.user == nil && request.url.password == nil
+                && request.url.query == nil && request.url.fragment == nil
+            XCTAssertTrue(current, "Cold staging contacted a destination outside the current account")
+            let metadata = request.method == .get && request.url.path == "/paw/api/v1/me"
+            let pull = request.method == .post && request.url.path == "/paw/api/v1/sync/pull"
+            XCTAssertTrue(metadata || pull, "Cold staging sent an acceptance or unexpected request")
+            XCTAssertFalse(request.headers.contains { $0.key.contains(token) || $0.value.contains(token) },
+                "An invitation bearer entered outbound headers before Accept")
+            XCTAssertFalse(request.body?.range(of: Data(token.utf8)) != nil,
+                "An invitation bearer entered an outbound body before Accept")
+        }
+        let invite = try XCTUnwrap(environment.inviteModel)
+        XCTAssertTrue(invite.state.canAccept && !invite.state.accepted, "Cold entry did not retain staged consent")
+        XCTAssertFalse(try sensitive("join"))
+        XCTAssertTrue(try sensitive("register"))
+        XCTAssertTrue(account.state.connection?.serverURL == boundServer, "Staging changed the bound account")
         try assertNoPersistedInvite()
     }
 
@@ -463,6 +507,18 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
     }
 
     private func control(_ name: String) throws -> GTK.Widget { try settingsWidget("settings-invite-" + name, in: window) }
+
+    private func waitForAccountPageReady() throws {
+        let refresh = try settingsWidget("settings-groups-refresh", in: window)
+        let signOut = try settingsWidget("settings-account-sign-out", in: window)
+        // Native admission includes the group refresh queued when Account maps.
+        XCTAssertTrue(GTKTestSupport.spin {
+            gtk_widget_get_mapped(signOut) != 0 && gtk_widget_is_sensitive(signOut) != 0
+                && gtk_widget_is_sensitive(refresh) != 0
+        }, "Account controls did not become ready")
+        drainUI()
+    }
+
     private func input(_ name: String, _ value: String) throws { mp_entry_set_text(try control(name), value) }
     private func text(_ name: String) throws -> String { String(cString: mp_entry_text(try control(name))) }
     private func label(_ name: String) throws -> String { String(cString: gtk_label_get_text(mp_label(try control(name)))) }
