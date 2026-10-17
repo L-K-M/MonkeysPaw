@@ -400,7 +400,12 @@ final class KeychainSecretScanTests: XCTestCase {
         try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: unreadable.path) }
         try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
-        XCTAssertThrowsError(try combined.matches(in: [unreadable]))
+        // Privileged runners can read chmod-000 directories.
+        if FileManager.default.isReadableFile(atPath: unreadable.path) {
+            XCTAssertTrue(try combined.matches(in: [unreadable]).isEmpty)
+        } else {
+            XCTAssertThrowsError(try combined.matches(in: [unreadable]))
+        }
     }
 
     private func scanEncodings(_ sentinel: String) throws -> [Data] {
