@@ -53,14 +53,16 @@ final class LinuxSettingsWindow {
          librarySwitchMessage: @escaping () -> String? = { nil },
          makeAccount: @escaping () -> AccountModel? = { nil },
          makeInvite: @escaping () -> InviteModel? = { nil },
-         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
+         makeGroups: @escaping () -> GroupManagementModel? = { nil },
+         accountStartupPending: @escaping () -> Bool = { false }) {
         self.general = general
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
         assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
         self.delivery = LinuxSettingsDeliveryPage(model: delivery, session: session)
         self.updates = LinuxSettingsUpdatePage(model: updates)
-        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeInvite: makeInvite, makeGroups: makeGroups)
+        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeInvite: makeInvite,
+            makeGroups: makeGroups, accountStartupPending: accountStartupPending)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
@@ -159,6 +161,8 @@ final class LinuxSettingsWindow {
     func suspendAccount() { account.retire(.hidden) }
 
     func refreshLibrarySwitchMessage() { renderGeneral() }
+
+    func refreshAccountStartup() { account.refreshStartup() }
 
     func rebindAccount() {
         guard !isDestroyed else { return }

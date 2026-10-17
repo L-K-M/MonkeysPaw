@@ -397,6 +397,150 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertEqual(environment.settingsModel.libraryFolderPath, target.path)
     }
 
+    func testRecoveredVisibleAccountReservesBootstrapBeforeAutomaticGroups() throws {
+        try assertVisibleAccountBootstrap(target: .rejected)
+    }
+
+    func testSwitchedVisibleAccountReservesBootstrapBeforeAutomaticGroups() throws {
+        try assertVisibleAccountBootstrap(target: .valid)
+    }
+
+    func testFreshInviteSettingsDuringFailedBootstrapPreservesInputAndReleasesControls() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        transport.wrongDevice = true
+        compose()
+        let account = try XCTUnwrap(environment.accountModel)
+        let groups = try XCTUnwrap(environment.groupManagementModel)
+        let observation = LinuxSyncBootstrapObservation(account: account, groups: groups)
+        var opened = false
+        var wroteDraft = false
+        account.onChange = { [weak self, weak account] in
+            guard let self, let account, !opened, !account.state.isBusy,
+                  account.state.connection != nil, account.state.error == nil else { return }
+            opened = true
+            // The initial snapshot has arrived, but composition has not yet
+            // admitted startup. Open a fresh window through the real deep link.
+            var link = self.bootstrapInviteLink
+            self.environment.openInvite(&link)
+            XCTAssertTrue(link.isEmpty)
+            GTK.onMainLoop { [weak self] in
+                guard let entry = self?.findWidget("settings-account-username") else { return }
+                mp_entry_set_text(entry, "unsent draft")
+                wroteDraft = true
+            }
+        }
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin {
+            opened && wroteDraft && !account.state.isBusy && account.state.error == .needsSignIn
+                && self.environment.inviteModel?.state.destination != nil
+                && !groups.state.isBusy
+                && self.findWidget("settings-account-sign-in").map { gtk_widget_is_sensitive($0) != 0 } == true
+        })
+        XCTAssertEqual(observation.earlyRefreshes, 0, "Automatic groups entered before bootstrap settled")
+        XCTAssertGreaterThan(observation.settledSignedOutRefreshes, 0)
+        XCTAssertFalse(account.state.enabled)
+        XCTAssertNotEqual(account.state.error, .busy)
+        XCTAssertEqual(groups.state.error, .account(.signedOut))
+        for name in ["settings-account-sign-in", "settings-account-refresh", "settings-account-sign-out", "settings-groups-refresh"] {
+            XCTAssertTrue(findWidget(name).map { gtk_widget_is_sensitive($0) != 0 } == true, name)
+        }
+        let username = try XCTUnwrap(findWidget("settings-account-username"))
+        XCTAssertTrue(String(cString: mp_entry_text(username)) == "unsent draft", "Reservation release must preserve the editable draft")
+        let invite = try XCTUnwrap(environment.inviteModel)
+        XCTAssertNotNil(invite.state.destination)
+        XCTAssertFalse(invite.state.accepted)
+        XCTAssertFalse(transport.requests.contains { $0.url.path.hasSuffix("/groups/join") || $0.url.path.hasSuffix("/register") })
+        let signedOutRefreshes = observation.settledSignedOutRefreshes
+        let refresh = try XCTUnwrap(findWidget("settings-groups-refresh"))
+        XCTAssertNotEqual(gtk_widget_activate(refresh), 0)
+        XCTAssertTrue(GTKTestSupport.spin {
+            observation.settledSignedOutRefreshes > signedOutRefreshes && !groups.state.isBusy
+        }, "Failed bootstrap must leave manual refresh usable")
+        transport.wrongDevice = false
+        var password = "transient-password"
+        account.login(server: "https://sync.example.test", username: "person", password: &password, deviceName: "Linux")
+        XCTAssertTrue(password.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            account.state.enabled && !account.state.isBusy && !groups.state.isBusy
+                && observation.authenticatedRefreshes > 0
+                && self.findWidget("settings-groups-create-name").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, timeout: .seconds(10)))
+        XCTAssertNil(account.state.error)
+        XCTAssertFalse(invite.state.accepted, "Sign-in must not redeem staged consent")
+    }
+
+    private var bootstrapInviteLink: String {
+        "monkeyspaw://join?server=https%3A%2F%2Fsync.example.test&token=" + String(repeating: "b", count: 42) + "A"
+    }
+
+    private enum BootstrapTarget { case valid, rejected }
+
+    private func assertVisibleAccountBootstrap(target kind: BootstrapTarget) throws {
+        let rejectTarget = kind == .rejected
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        var watcherCount = 0
+        var observation: LinuxSyncBootstrapObservation?
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            libraryWatcherFactory: { [weak self] _ in
+                watcherCount += 1
+                if watcherCount == 2 {
+                    // Attach to the replacement's public models before its
+                    // queued initial snapshots, without delaying any service.
+                    GTK.onMainLoop {
+                        guard let account = self?.environment.accountModel,
+                              let groups = self?.environment.groupManagementModel else { return }
+                        observation = LinuxSyncBootstrapObservation(account: account, groups: groups)
+                    }
+                }
+                return LinuxSyncTestWatcher()
+            }, syncTransport: transport)
+        _ = environment.libraryStatusModel
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.accountModel?.state.enabled == true && self.environment.syncService?.report.lastSuccess != nil
+        })
+        environment.showSettings(page: .account)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.findWidget("settings-account-sign-out").map { gtk_widget_is_sensitive($0) != 0 } == true
+        })
+        let oldAccount = try XCTUnwrap(environment.accountModel)
+        let oldSync = try XCTUnwrap(environment.syncService)
+        let oldPicker = environment.pickerModel
+        transport.holdPull = true
+        defer { transport.releaseHeld() }
+        oldSync.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("bootstrap-target")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { !oldPicker.libraryAvailable })
+        if rejectTarget {
+            try FileManager.default.removeItem(at: target)
+            try Data("Not a directory\n".utf8).write(to: target)
+        }
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.accountModel !== oldAccount
+                && self.environment.accountModel?.state.enabled == true
+                && self.environment.accountModel?.state.isBusy == false
+                && (observation?.authenticatedRefreshes ?? 0) > 0
+                && self.findWidget("settings-groups-create-name").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, timeout: .seconds(10)))
+        let observed = try XCTUnwrap(observation)
+        XCTAssertEqual(observed.earlyRefreshes, 0, "Automatic groups entered before authenticated bootstrap readiness")
+        XCTAssertGreaterThan(observed.authenticatedRefreshes, 0)
+        XCTAssertNil(environment.accountModel?.state.error)
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertFalse(oldPicker.libraryAvailable)
+        XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, rejectTarget ? libraryRoot.path : target.path)
+        XCTAssertEqual(environment.settingsModel.libraryFolderPath, rejectTarget ? nil : target.path)
+        XCTAssertEqual(environment.syncReplacementIssue, rejectTarget ? .invalidTarget(.invalidRoot) : nil)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
+    }
+
     func testFailedTargetReadmissionKeepsOldLibraryUsableAndRetryRecovers() throws {
         var watchers: [LinuxSyncTestWatcher] = []
         environment = LinuxEnvironment(application: application, environment: tools.environment,
@@ -1022,6 +1166,21 @@ final class LinuxSyncCompositionTests: XCTestCase {
             windows = node.pointee.next
         }
         return nil
+    }
+}
+
+private final class LinuxSyncBootstrapObservation {
+    private(set) var earlyRefreshes = 0
+    private(set) var authenticatedRefreshes = 0
+    private(set) var settledSignedOutRefreshes = 0
+
+    init(account: AccountModel, groups: GroupManagementModel) {
+        groups.onChange = { [weak self, weak account, weak groups] in
+            guard let self, let account, groups?.state.operation == .refreshing else { return }
+            if !account.state.isBusy, account.state.enabled { self.authenticatedRefreshes += 1 }
+            else if !account.state.isBusy, account.state.error == .needsSignIn { self.settledSignedOutRefreshes += 1 }
+            else { self.earlyRefreshes += 1 }
+        }
     }
 }
 

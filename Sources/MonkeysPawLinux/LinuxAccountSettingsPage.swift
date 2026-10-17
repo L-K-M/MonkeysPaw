@@ -8,6 +8,8 @@ final class LinuxAccountSettingsPage {
     enum Retirement { case hidden, destroyed }
     let widget: GTK.Widget
     private let makeModel: () -> AccountModel?
+    private let accountStartupPending: () -> Bool
+    private let startupIntent = UUID()
     private let invite: LinuxInviteView
     private let groups: LinuxGroupManagementView
     private var model: AccountModel?
@@ -45,8 +47,10 @@ final class LinuxAccountSettingsPage {
     private var include: GTK.Widget!
 
     init(makeModel: @escaping () -> AccountModel?, makeInvite: @escaping () -> InviteModel? = { nil },
-         makeGroups: @escaping () -> GroupManagementModel? = { nil }) {
+         makeGroups: @escaping () -> GroupManagementModel? = { nil },
+         accountStartupPending: @escaping () -> Bool = { false }) {
         self.makeModel = makeModel
+        self.accountStartupPending = accountStartupPending
         invite = LinuxInviteView(makeModel: makeInvite)
         groups = LinuxGroupManagementView(makeModel: makeGroups)
         let page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
@@ -161,14 +165,17 @@ final class LinuxAccountSettingsPage {
         render()
     }
 
+    func refreshStartup() { render() }
+
     private var canOperate: Bool {
-        isShown && !isDestroyed && pendingIntent == nil && model?.state.isBusy == false && !groups.isBusy
+        isShown && !isDestroyed && pendingIntent == nil && !accountStartupPending()
+            && model?.state.isBusy == false && !groups.isBusy
     }
 
     private func render() {
         guard !isDestroyed else { return }
         let state = model?.state
-        groups.updateAccount(state, pendingIntent: pendingIntent)
+        groups.updateAccount(state, pendingIntent: pendingIntent ?? (accountStartupPending() ? startupIntent : nil))
         let canOperate = canOperate
         if !canOperate { releaseFormFocus() }
         gtk_widget_set_sensitive(form, canOperate ? 1 : 0)
