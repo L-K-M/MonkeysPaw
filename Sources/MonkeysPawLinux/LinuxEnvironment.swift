@@ -759,7 +759,12 @@ final class LinuxEnvironment {
                         return model
                     },
                     chooser: self.folderChooser, openSetup: { [weak self] in self?.showSetup() },
-                    librarySwitchMessage: { [weak self] in self?.librarySwitchMessage })
+                    librarySwitchMessage: { [weak self] in self?.librarySwitchMessage },
+                    makeAccount: { [weak self] in
+                        guard let self, !self.isShutDown,
+                              self.libraryGraph.sync?.retired == false else { return nil }
+                        return self.accountModel
+                    })
             }
             self.currentSettingsWindow?.show()
         }
@@ -790,10 +795,12 @@ final class LinuxEnvironment {
     private func presentLibraryWindow() {
         if currentLibraryWindow == nil {
             let graph = libraryGraph
+            // Browsing alone must not start account-model loading work.
             currentLibraryWindow = LinuxLibraryWindow(application: application,
                 browser: libraryBrowserModel, editor: editorModel,
                 imports: .init(state: libraryImportState, chooser: importChooser),
-                assistant: { [weak graph] in graph?.assistant }, openFolder: { [weak self] in
+                assistant: { [weak graph] in graph?.assistant },
+                conflict: { [weak graph] in graph?.sync?.conflict }, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
                 })
@@ -829,6 +836,7 @@ final class LinuxEnvironment {
 
     private func approveQuit(afterDraining graph: LibraryGraph, approved: @escaping () -> Void) {
         guard let sync = graph.sync else { approved(); return }
+        currentSettingsWindow?.suspendAccount()
         if !sync.needsDrain, sync.service.retire() == .stopped {
             sync.retireModels()
             sync.drained = true
@@ -1211,14 +1219,16 @@ final class LinuxEnvironment {
         // The reused panel was hidden directly above. Revoke old requests held
         // by Setup or focus restoration before retiring their graph.
         delivery.invalidatePendingPresentation()
+        currentSettingsWindow?.suspendAccount()
         old.stop()
         quitPending = false
         libraryGraph = makeLibraryGraph(directory: target, files: files)
         let startupError = startLibrary(libraryGraph)
         let graph = libraryGraph
         if resumeSync { startSync(in: graph) }
+        currentSettingsWindow?.rebindAccount()
         currentLibraryWindow?.rebind(browser: graph.browser, editor: graph.editor, imports: graph.imports,
-            assistant: { [weak graph] in graph?.assistant })
+            assistant: { [weak graph] in graph?.assistant }, conflict: { [weak graph] in graph?.sync?.conflict })
         currentLibraryWindow?.setLibraryAvailable(libraryGraph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
         // graph. A later first read derives health from the replacement.
@@ -1236,6 +1246,7 @@ final class LinuxEnvironment {
     private func beginSyncReplacement(_ graph: LibraryGraph, directory: URL?) {
         guard let sync = graph.sync else { return }
         syncReplacementIssue = nil
+        currentSettingsWindow?.suspendAccount()
         sync.retireModels()
         graph.stop()
         graph.picker.libraryAvailable = false

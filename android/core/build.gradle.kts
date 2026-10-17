@@ -52,7 +52,7 @@ dependencies {
 }
 
 tasks.register<Test>(syncIntegrationTest.name) {
-    description = "Check sync scenario infrastructure and the optional local live smoke (Z15 partial proof)."
+    description = "Run named Y12/Y13 sync scenarios over the real server (Z16 partial proof; Z17 completes ownership)."
     group = "verification"
     testClassesDirs = syncIntegrationTest.output.classesDirs
     classpath = syncIntegrationTest.runtimeClasspath
