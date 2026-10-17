@@ -154,6 +154,8 @@ final class LinuxSettingsWindow {
     // Account follows the replaceable library graph, independently of General.
     func suspendAccount() { account.retire(.hidden) }
 
+    func refreshLibrarySwitchMessage() { renderGeneral() }
+
     func rebindAccount() {
         guard !isDestroyed else { return }
         account.retire(.hidden)
