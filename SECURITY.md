@@ -37,8 +37,9 @@ encryption. Passwords use bcrypt cost 12; device and invite tokens are hashed.
 
 Desktop Account, invite handling, sync status, groups and conflict resolution
 are available on main. Automated device-token privacy fixtures passed both
-native CI suites. The desktop sync guide and checks of deployed servers,
-signed installations, real keyrings and physical devices remain M6 Y34 work.
+native CI suites. The [desktop sync guide](docs/platform/sync.md) records
+automated proof and open checks of deployed servers, signed installations,
+real keyrings and physical devices, which remain M6 Y34 work.
 Android implements optional server sign-in, invite acceptance only on explicit
 consent, groups with viewer read-only access, conflict resolution and
 WorkManager background sync. Its device tokens use Keystore-backed AES-GCM;

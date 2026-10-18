@@ -39,11 +39,12 @@ It does transmit prompt source, so defaults or sensitive text written into a
 template are included. The server operator can read it; there is no end-to-end
 encryption. Desktop Account, invite handling, sync status, groups and conflict
 resolution are available on main. Automated device-token privacy fixtures
-passed both native CI suites. The desktop sync guide and checks of deployed
-servers, signed installations, real keyrings and physical devices remain
-M6 Y34 work. Android implements optional server sign-in, explicit-consent
-invite acceptance, groups with viewer read-only access, conflict resolution
-and WorkManager background sync. Its device token is Keystore-encrypted;
+passed both native CI suites. The [desktop sync guide](docs/platform/sync.md)
+records automated proof and open checks of deployed servers, signed
+installations, real keyrings and physical devices, which remain M6 Y34 work.
+Android implements optional server sign-in, explicit-consent invite
+acceptance, groups with viewer read-only access, conflict resolution and
+WorkManager background sync. Its device token is Keystore-encrypted;
 passwords and invite secrets are not persisted. Physical and phone/desktop
 acceptance remains open in the [M10 checklist](docs/platform/android.md#android-sync-m10-not-run-owner).
 No Android desktop-style update checker is claimed. See

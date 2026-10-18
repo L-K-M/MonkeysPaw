@@ -1,5 +1,6 @@
 """Run the local orchestrator with recording packagers, without any builds."""
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -27,7 +28,16 @@ class BuildTests(unittest.TestCase):
         (self.bin / "python3").symlink_to(sys.executable)
         for name in ("swift", "dpkg-deb", "dpkg-shlibdeps", "readelf", "strip", "flatpak-builder", "pkg-config"):
             self.script(self.bin / name, "exit 0\n")
-        self.script(self.bin / "uname", 'if [[ "$1" == -m ]]; then echo "${FAKE_ARCH:-x86_64}"; else echo Linux; fi\n')
+        self.script(self.bin / "uname", 'if [[ "$1" == -m ]]; then echo "${FAKE_ARCH:-x86_64}"; else echo "${FAKE_HOST:-Linux}"; fi\n')
+        self.script(self.bin / "git", '''
+[[ "${FAKE_GIT_FAILURE:-}" != 1 ]] || exit 1
+case "$*" in
+  'rev-parse HEAD') echo 0123456789abcdef0123456789abcdef01234567 ;;
+  'show -s --format=%cI HEAD') echo 2026-10-15T12:34:56-07:00 ;;
+  *) exit 1 ;;
+esac
+''')
+        self.script(self.bin / "open", 'printf "open\\n" >> "$BUILD_CALLS"\n')
         self.script(self.bin / "dpkg", "echo amd64\n")
         self.script(self.bin / "flatpak", '[[ "${FAKE_MISSING_RUNTIME:-}" != 1 ]]\n')
         self.script(self.root / "scripts/check-version.py", "\n".join((
@@ -60,7 +70,8 @@ fi
 ''')
         self.script(self.bin / "engine", 'printf "%s\\n" "$BUILD_APP_NAME" "$BUILD_KIND" "$BUILD_XCODE_SCHEME" "$@" > "$BUILD_CALLS"\n')
         self.env = os.environ | {"PATH": str(self.bin), "SWIFT": "swift",
-                                 "BUILD_CALLS": str(self.root / "calls"), "LKM_BUILD_BIN": "engine"}
+                                 "BUILD_CALLS": str(self.root / "calls"), "LKM_BUILD_BIN": "engine",
+                                 "DOCKER_CALLS": str(self.root / "docker-calls")}
 
     def script(self, path, body, shebang=True):
         path.write_text(("#!/bin/bash\nset -euo pipefail\n" if shebang else "") + body)
@@ -74,12 +85,143 @@ fi
         file = self.root / "calls"
         return file.read_text().splitlines() if file.exists() else []
 
+    def install_docker(self):
+        self.script(self.bin / "docker", f"#!{sys.executable}\n" + '''
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["DOCKER_CALLS"], "a") as file:
+    file.write(json.dumps(args) + "\\n")
+if args == ["info", "--format", "{{.OSType}}"]:
+    if os.environ.get("FAKE_DOCKER_INFO_FAILURE") == "1":
+        print("daemon connection error", file=sys.stderr)
+        sys.exit(1)
+    print(os.environ.get("FAKE_DOCKER_OS", "linux"))
+elif args and args[0] == "build":
+    with open(os.environ["BUILD_CALLS"], "a") as file:
+        file.write("server-image\\n")
+    sys.exit(1 if os.environ.get("FAKE_DOCKER_BUILD_FAILURE") == "1" else 0)
+else:
+    sys.exit(1)
+''', shebang=False)
+
+    def docker_calls(self):
+        file = self.root / "docker-calls"
+        return [json.loads(line) for line in file.read_text().splitlines()] if file.exists() else []
+
+    def clear_calls(self):
+        for name in ("calls", "docker-calls"):
+            (self.root / name).unlink(missing_ok=True)
+
     def test_default_builds_deb_and_flatpak_once_and_skips_unavailable_targets(self):
         result = self.run_build()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls(), ["deb", "flatpak"])
         self.assertIn("mac: skipped (requires macOS)", result.stdout)
         self.assertIn("android: skipped (no Android SDK)", result.stdout)
+        self.assertIn("server-image: skipped (missing docker", result.stdout)
+
+    def test_server_image_metadata_output_and_duplicates_on_linux_and_darwin(self):
+        self.install_docker()
+        for host in ("Linux", "Darwin"):
+            with self.subTest(host=host):
+                self.clear_calls()
+                result = self.run_build("server-image", "server-image", FAKE_HOST=host)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls(), ["server-image"])
+                self.assertEqual(self.docker_calls(), [
+                    ["info", "--format", "{{.OSType}}"],
+                    ["build", "--load", "--tag", "monkeyspaw-server:0.2.0-rc-1",
+                     "--build-arg", "VERSION=0.2.0-rc-1",
+                     "--build-arg", "REVISION=0123456789abcdef0123456789abcdef01234567",
+                     "--build-arg", "CREATED=2026-10-15T12:34:56-07:00",
+                     "-f", "server/Dockerfile", "."],
+                ])
+                self.assertIn("server-image: ok (Docker image: monkeyspaw-server:0.2.0-rc-1)", result.stdout)
+                self.assertFalse((self.root / "dist").exists())
+
+    def test_default_builds_server_image_and_preserves_host_targets(self):
+        self.install_docker()
+        for host, expected in (("Linux", ["deb", "flatpak", "server-image"]),
+                               ("Darwin", ["server-image"])):
+            with self.subTest(host=host):
+                self.clear_calls()
+                result = self.run_build(FAKE_HOST=host)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls(), expected)
+                self.assertIn("server-image: ok (Docker image:", result.stdout)
+                if host == "Darwin":
+                    self.assertIn("deb: skipped (requires Linux)", result.stdout)
+                    self.assertIn("flatpak: skipped (requires Linux)", result.stdout)
+
+    def test_missing_docker_skips_defaults_and_fails_named_target_on_both_hosts(self):
+        for host in ("Linux", "Darwin"):
+            for args, status in (((), 0), (("server-image",), 1)):
+                with self.subTest(host=host, args=args):
+                    self.clear_calls()
+                    result = self.run_build(*args, FAKE_HOST=host)
+                    self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                    outcome = "skipped" if not args else "FAILED"
+                    self.assertIn(f"server-image: {outcome} (missing docker", result.stdout)
+                    self.assertNotIn("server-image", self.calls())
+                    self.assertEqual(self.docker_calls(), [])
+
+    def test_unusable_docker_skips_defaults_and_fails_named_target_on_both_hosts(self):
+        self.install_docker()
+        for env, reason in (({"FAKE_DOCKER_INFO_FAILURE": "1"}, "docker info failed"),
+                            ({"FAKE_DOCKER_OS": "windows"}, "requires a Linux Docker engine")):
+            for host in ("Linux", "Darwin"):
+                for args, status in (((), 0), (("server-image",), 1)):
+                    with self.subTest(env=env, host=host, args=args):
+                        self.clear_calls()
+                        result = self.run_build(*args, FAKE_HOST=host, **env)
+                        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                        outcome = "skipped" if not args else "FAILED"
+                        self.assertIn(f"server-image: {outcome}", result.stdout)
+                        self.assertIn(reason, result.stdout)
+                        self.assertNotIn("server-image", self.calls())
+                        self.assertEqual(self.docker_calls(), [["info", "--format", "{{.OSType}}"]])
+
+    def test_server_image_and_flatpak_dependencies_build_once_in_either_order(self):
+        self.install_docker()
+        for args, expected in (
+            (("server-image", "flatpak", "deb", "server-image"), ["server-image", "deb", "flatpak"]),
+            (("flatpak", "server-image", "deb", "flatpak"), ["deb", "flatpak", "server-image"]),
+        ):
+            with self.subTest(args=args):
+                self.clear_calls()
+                result = self.run_build(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls(), expected)
+                self.assertEqual(len(self.docker_calls()), 2)
+
+    def test_server_image_failure_summary_and_status_preserve_other_targets(self):
+        self.install_docker()
+        for host in ("Linux", "Darwin"):
+            for args in ((), ("server-image", "android")):
+                with self.subTest(host=host, args=args):
+                    self.clear_calls()
+                    result = self.run_build(*args, "--no-open", FAKE_HOST=host,
+                                            FAKE_DOCKER_BUILD_FAILURE="1", FAKE_ANDROID_AVAILABLE="1")
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("server-image: FAILED", result.stdout.split("Summary\n")[1])
+                    self.assertIn("android: ok (dist/)", result.stdout)
+                    self.assertEqual(self.calls().count("server-image"), 1)
+                    self.assertIn("android", self.calls())
+
+    def test_missing_git_fails_named_target_clearly_and_metadata_failure_prevents_build(self):
+        self.install_docker()
+        result = self.run_build("server-image", FAKE_GIT_FAILURE="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("server-image: FAILED", result.stdout)
+        self.assertEqual(self.calls(), [])
+        (self.bin / "git").unlink()
+        result = self.run_build("server-image")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("server-image: FAILED (missing git", result.stdout)
+        self.assertEqual(self.calls(), [])
 
     def test_both_orders_and_duplicate_targets_build_the_deb_only_once(self):
         for args in (("deb", "flatpak", "deb"), ("flatpak", "deb", "flatpak"), ("flatpak",)):

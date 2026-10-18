@@ -4,6 +4,8 @@ You need Android API 26 or later. This guide covers the Android app behavior
 implemented in this tree. Physical-device acceptance remains **NOT RUN
 (owner)** in the [Android record](docs/platform/android.md), including the
 [M10 phone/desktop checklist](docs/platform/android.md#android-sync-m10-not-run-owner).
+The [desktop sync guide](docs/platform/sync.md) records desktop setup and
+proof limits.
 
 ## Install or update
 

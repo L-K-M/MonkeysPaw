@@ -44,6 +44,7 @@ Run these commands from the repository root:
 | Build every artifact this host can produce | `scripts/build.sh [--no-open]` |
 | Build macOS dmg, zip and checksums | `scripts/build.sh mac [--no-open]` |
 | Build Linux deb and checksum | `scripts/build.sh deb` (set `SWIFT` on the Paseo host) |
+| Build Flatpak and checksum, building the deb once | `scripts/build.sh flatpak` (x86_64 Linux, Flatpak/flatpak-builder, GNOME Platform/SDK 50) |
 | Use the app-only shared build engine | `scripts/build.sh app [lkm-build flags]` |
 | Build macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build` |
 | Test macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO clean test` |
@@ -63,7 +64,14 @@ Run these commands from the repository root:
 | Test server | `swift test --package-path server` |
 | Run server | `swift run --package-path server monkeyspaw-server serve` |
 | Check server health | `swift run --package-path server monkeyspaw-server healthcheck` |
-| Build server image | `docker build -f server/Dockerfile .` |
+| Build versioned local server image | `scripts/build.sh server-image` (Docker, git, reachable Linux Docker engine on Linux or macOS) |
+
+The default build skips unavailable targets; named unavailable targets fail.
+File artifacts stay in `dist/`. The server image stays in the active Docker
+engine's image store as `monkeyspaw-server:<committed-version>`, printed in the
+Summary. Its `VERSION`, `REVISION` and `CREATED` args match release metadata:
+committed version, HEAD SHA and HEAD's `%cI` commit timestamp. Registry
+publication and multiarch assembly run through the release workflow.
 
 On the Paseo implementation host, use `/home/paseo/.local/bin/swift64`
 instead of `swift` for every build/test command. This wrapper supplies
