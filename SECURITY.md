@@ -37,11 +37,13 @@ encryption. Passwords use bcrypt cost 12; device and invite tokens are hashed.
 
 Desktop Account, invite handling, sync status, groups and conflict resolution
 are available on main. Automated device-token privacy fixtures passed both
-native CI suites. The desktop sync guide and checks of deployed servers,
-signed installations, real keyrings and physical devices remain M6 Y34 work.
-Android's repository and background scheduling foundations are on main, but
-its connected sync UI is not yet integrated. Android sync acceptance remains
-M10 Z27 work; see the
+native CI suites. The [desktop sync guide](docs/platform/sync.md) records
+automated proof and open checks of deployed servers, signed installations,
+real keyrings and physical devices, which remain M6 Y34 work. Android's
+repository, background scheduling, Account/status screens, Library groups
+and role-aware Library, Editor and Assistant integration are on main;
+invite and conflict-resolution UI integration and Android sync acceptance
+remain M10 Z27 work; see the
 [milestone record](docs/plan/15-milestones.md).
 
 ## Credentials

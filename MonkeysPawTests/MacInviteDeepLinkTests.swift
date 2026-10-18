@@ -97,11 +97,16 @@ final class MacInviteDeepLinkTests: XCTestCase {
         makeDelegate()
         route(link())
         start()
-        delegate.startSync() // Match production's startup admission after load.
+        delegate.startSync() // Preserve the failing hosted route-before-startup order.
         let view = try stagedView()
+        XCTAssertTrue(Thread.isMainThread, "Capture cold invite readiness in one UI turn")
+        let diagnostic = coldInviteDiagnostic(view)
         XCTAssertTrue(view.state?.destination?.currentAccount?.userID == MacInviteHTTP.userID)
-        XCTAssertTrue(view.canJoin)
+        XCTAssertTrue(view.canJoin, diagnostic)
         XCTAssertEqual(transport.redemptions, 0)
+        let attachment = XCTAttachment(string: diagnostic)
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     func testURLTextReachesCoreWithoutAnExtraPercentDecode() throws {
@@ -651,6 +656,52 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertTrue(spin { view.canAccept }, "The native invite did not finish staging")
         XCTAssertTrue(spin { self.delegate.groupManagementModel?.state.isBusy != true })
         return view
+    }
+
+    /// Read without a UI hop or wait. Only fixed labels and booleans may escape.
+    private func coldInviteDiagnostic(_ view: InviteViewState) -> String {
+        let canAccept = view.canAccept
+        let canJoin = view.canJoin
+        let destination = view.state?.destination
+        let account = delegate.accountModel?.state
+        let connection = account?.connection
+        let graph = delegate.syncComposition
+        let groupBusy = delegate.groupManagementModel?.state.isBusy == true
+        let renderedAccountBusy = delegate.settingsWindow?.presentation.account.state?.isBusy == true
+        let operation: String
+        switch account?.operation {
+        case nil: operation = "none"
+        case .loading: operation = "loading"
+        case .signingIn: operation = "signingIn"
+        case .refreshing: operation = "refreshing"
+        case .revokingDevice: operation = "revokingDevice"
+        case .signingOut: operation = "signingOut"
+        case .includingHeld: operation = "includingHeld"
+        }
+        let issue: String
+        switch account?.error {
+        case nil: issue = "none"
+        case .busy: issue = "busy"
+        default: issue = "other"
+        }
+        let destinationServer = destination.flatMap { try? SyncServerURL($0.serverURL.absoluteString) }
+        let accountServer = connection.flatMap { try? SyncServerURL($0.serverURL.absoluteString) }
+        let serversEqual = destinationServer != nil && accountServer != nil && destinationServer == accountServer
+        // This compares public connection metadata, not the private credential binding.
+        let connectionsEqual = connection != nil && destination?.currentAccount == connection
+        let fields: [String] = [
+            "coldInviteReadiness",
+            "canAccept=\(canAccept)", "canJoin=\(canJoin)",
+            "destinationPresent=\(destination != nil)", "capturedCanJoin=\(destination?.canJoin == true)",
+            "accountPresent=\(connection != nil)", "accountEnabled=\(account?.enabled == true)",
+            "accountBusy=\(account?.isBusy == true)", "accountOperation=\(operation)", "accountIssue=\(issue)",
+            "renderedAccountBusy=\(renderedAccountBusy)", "groupBusy=\(groupBusy)",
+            "graphPresent=\(graph != nil)", "rootIssuePresent=\(graph?.rootIssue != nil)",
+            "blockingIssuePresent=\(graph?.sync.report.blockingIssue != nil)",
+            "destinationServerValid=\(destinationServer != nil)", "accountServerValid=\(accountServer != nil)",
+            "normalizedServersEqual=\(serversEqual)", "connectionMetadataEqual=\(connectionsEqual)"
+        ]
+        return fields.joined(separator: " ")
     }
 
     private func secureField(_ title: String) throws -> NSSecureTextField {
