@@ -14,6 +14,10 @@ import ch.lkmc.monkeyspaw.core.services.ProviderSettingsService
 import ch.lkmc.monkeyspaw.core.services.ProviderStateStore
 import ch.lkmc.monkeyspaw.core.services.AssistantConnectionService
 import ch.lkmc.monkeyspaw.core.services.AssistantAccess
+import ch.lkmc.monkeyspaw.core.services.AssistantAccessState
+import ch.lkmc.monkeyspaw.core.services.PromptAccessState
+import ch.lkmc.monkeyspaw.core.services.PromptIdentity
+import ch.lkmc.monkeyspaw.core.syncapi.Role
 import ch.lkmc.monkeyspaw.core.services.AssistantService
 import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
 import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
@@ -119,10 +123,25 @@ internal object AppModule {
     fun library(prompts: PromptStore, state: StateStore, clock: Clock, entropy: Entropy,
         access: AssistantAccess): LibraryService = LibraryService(prompts, state, clock, entropy, access)
 
-    // Z18 supplies live group roles through this same authority for context and publication.
+    // Defer the local library lookup to avoid a construction cycle; role reads perform no IO.
     @Provides
     @Singleton
-    fun assistantAccess(): AssistantAccess = AssistantAccess.LOCAL
+    fun assistantAccess(library: Lazy<LibraryService>): AssistantAccess = object : AssistantAccess {
+        override fun current(relativePath: String?): AssistantAccessState = current(relativePath, null)
+        override fun current(relativePath: String?, identity: PromptIdentity?): AssistantAccessState {
+            val snapshot = library.get().accessSnapshot
+            if (relativePath == null) return if (snapshot.isBlocked) AssistantAccessState.UNAVAILABLE else AssistantAccessState.PRIVATE_PROMPT
+            return when (val access = snapshot.access(relativePath, identity)) {
+                PromptAccessState.Local -> AssistantAccessState.PRIVATE_PROMPT
+                PromptAccessState.Unavailable -> AssistantAccessState.UNAVAILABLE
+                is PromptAccessState.Group -> when (access.group.role) {
+                    Role.OWNER -> AssistantAccessState.GROUP_OWNER
+                    Role.EDITOR -> AssistantAccessState.GROUP_EDITOR
+                    Role.VIEWER -> AssistantAccessState.GROUP_VIEWER
+                }
+            }
+        }
+    }
 
     @Provides
     @Singleton

@@ -10,10 +10,12 @@
     <string name="editor_unsaved">Unsaved changes</string>
     <string name="editor_guard_help">Save your changes before continuing, discard them, or cancel to keep editing.</string>
     <string name="editor_read_only">This file is read-only. Its original bytes are kept.</string>
+    <string name="editor_group_viewer">You can use and copy this group prompt. Your role does not allow edits. You can save a private copy of your draft.</string>
+    <string name="editor_group_unavailable">This group prompt is unavailable for editing. Your draft is kept and can be saved as a private copy.</string>
+    <string name="editor_access_changed">Access changed. Your draft is kept. Review the action and try again.</string>
     <string name="editor_read_only_failed">The submitted draft or destination is read-only. Your current draft is kept.</string>
     <string name="editor_path">Library path, including .md</string>
     <string name="editor_filename">Filename, including .md</string>
-    <string name="editor_folder">Folder path (empty for root)</string>
     <string name="editor_source">Front matter and body</string>
     <string name="editor_source_unavailable">A text preview is unavailable for these bytes.</string>
     <string name="editor_validating">Checking your draft…</string>
@@ -40,6 +42,13 @@
     <string name="editor_restore">Restore</string>
     <string name="editor_rename">Rename</string>
     <string name="editor_move">Move</string>
+    <string name="editor_destination">Move to</string>
+    <string name="editor_personal">Personal</string>
+    <string name="editor_subfolder">Subfolder in this destination (empty for root)</string>
+    <string name="editor_move_scope_help">Moving between Personal and groups changes sharing. The server checks transfer permissions when syncing.</string>
+    <string name="editor_private_copy">Save private copy</string>
+    <string name="editor_private_copy_filename">%1$s copy.md</string>
+    <string name="editor_private_copy_help">Save this draft in Personal with a new identity. The shared prompt stays as it is.</string>
     <string name="editor_delete">Delete</string>
     <string name="editor_delete_confirm">Delete this prompt? Existing history is kept.</string>
     <string name="editor_reload">Reload from disk</string>

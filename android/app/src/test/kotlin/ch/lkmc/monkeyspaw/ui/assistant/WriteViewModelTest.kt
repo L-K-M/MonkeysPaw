@@ -466,6 +466,7 @@ internal class WriteViewModelTest : TemporaryFiles() {
             h.editor.edit("Unsaved")
             h.ready()
             h.model.accept()
+            runCurrent()
             val decision = assertNotNull(h.editor.state.value.pendingDecision)
             h.editor.resolveDecision(decision.id, choice)
             runCurrent()

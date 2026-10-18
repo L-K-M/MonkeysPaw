@@ -1,7 +1,9 @@
 package ch.lkmc.monkeyspaw.ui.editor
 
 import ch.lkmc.monkeyspaw.core.domain.format.*
+import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
+import ch.lkmc.monkeyspaw.core.syncapi.Role
 import ch.lkmc.monkeyspaw.core.ports.FileStamp
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
@@ -15,7 +17,13 @@ internal enum class EditorStatus { CLOSED, LOADING, READY, SAVING, COMMAND }
 internal enum class EditorDecision { SAVE, DISCARD, CANCEL }
 internal enum class EditorConflictChoice { KEEP_MINE, TAKE_THEIRS, DISCARD, CANCEL, REVIEW }
 internal enum class EditorConflictPresentation { DIALOG, BANNER }
-internal enum class EditorFailure { DATA, INVALID, READ_ONLY, OCCUPIED, INVALID_PATH, IDENTITY, RECOVERY, UNVERIFIED, FORENSIC }
+internal enum class EditorFailure { DATA, INVALID, READ_ONLY, ACCESS_CHANGED, OCCUPIED, INVALID_PATH, IDENTITY, RECOVERY, UNVERIFIED, FORENSIC }
+
+internal data class EditorDestination(val group: GroupAccessGroup? = null) {
+    val canWrite: Boolean get() = group?.role != Role.VIEWER
+}
+
+internal data class EditorMoveTarget(val groupID: ULID?, val subfolder: String)
 
 internal sealed interface EditorAction {
     data class Open(val selection: LibrarySelection) : EditorAction
@@ -67,6 +75,8 @@ internal data class EditorUiState(
     val quoteSelection: ReviewQuoteSelection? = null,
     val validating: Boolean = false,
     val readOnlyReason: SourceReadOnlyReason? = null,
+    val access: PromptAccessState = PromptAccessState.Local,
+    val destinations: List<EditorDestination> = listOf(EditorDestination()),
     val failure: EditorFailure? = null,
     val saveIssues: List<PromptIssue> = emptyList(),
     val conflict: EditorConflict? = null,
@@ -85,6 +95,9 @@ internal data class EditorUiState(
     val canSave: Boolean get() = canEdit && !writing && conflict == null && (isNew || stamp != null)
     val canCommand: Boolean get() = !isNew && stamp != null && readOnlyReason == null &&
         !writing && status != EditorStatus.LOADING && conflict == null
+    val canPrivateCopy: Boolean get() = !isNew && source != null && previewAvailable && !validating &&
+        !writing && status == EditorStatus.READY && pendingDecision == null
+    val group: GroupAccessGroup? get() = (access as? PromptAccessState.Group)?.group
 
     override fun toString(): String = "<editor state redacted>"
 }

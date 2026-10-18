@@ -26,8 +26,9 @@ internal class LibraryScreenBoundaryTest {
     @Test
     fun `library exposes completed controls and Ready routes to the browser with a foreground rescan`() {
         val screen = packageRoot.resolve("ui/library/LibraryScreen.kt").readText()
-        val unfinished = Regex("\\b(?:Groups?|Conflicts?)\\b", RegexOption.IGNORE_CASE)
-        assertFalse(unfinished.containsMatchIn(screen))
+        assertTrue(screen.contains("LibraryFilter.Group"))
+        assertTrue(screen.contains("LibraryFilter.Conflicts"))
+        assertTrue(screen.contains("row.canFavorite"))
         val activity = packageRoot.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("val ready = !setupState.loading && !setupState.visible &&"))
         assertTrue(activity.contains("setupState.error != KeyboardTileSetupError.LOAD && !setupState.settingsOpen"))
@@ -38,7 +39,7 @@ internal class LibraryScreenBoundaryTest {
         val seeds = packageRoot.resolve("ui/locallibrary/SeedOfferScreen.kt").readText()
         assertTrue(seeds.contains("SeedOfferUiState.Ready -> Unit"))
         val resources = sources.resolve("res/values/strings.xml").readText()
-        assertFalse(Regex("name=\"library_(?:account|group|conflict|fill|editor|copy)").containsMatchIn(resources))
+        assertTrue(resources.contains("name=\"library_conflicts\""))
     }
 
     @Test
@@ -67,6 +68,7 @@ internal class LibraryScreenBoundaryTest {
             it == "ch.lkmc.monkeyspaw.R" || it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
                 "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview",
                 "ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance",
+                "ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason",
                 "ch.lkmc.monkeyspaw.core.ports.DeliveryMode",
                 "ch.lkmc.monkeyspaw.core.domain.llm.ConnectionTestResult", "ch.lkmc.monkeyspaw.core.domain.llm.ProviderKind",
                 "ch.lkmc.monkeyspaw.core.domain.llm.AssistantEffort",

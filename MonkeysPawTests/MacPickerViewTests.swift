@@ -296,10 +296,13 @@ final class MacPickerViewTests: XCTestCase {
     func testRootRemovalKeepsCacheAndRequiresRestart() throws {
         try files.write(Data("Cached".utf8), at: "cached.md")
         let picker = try open()
+        let observationTimeout: TimeInterval = 3
         // Keep an independent stream alive to prove FSEvents saw restoration.
-        let restored = expectation(description: "FSEvents observed the restored prompt")
+        let rootLost = XCTestExpectation(description: "Independent FSEvents stream acknowledged root loss")
+        let restored = XCTestExpectation(description: "FSEvents observed the restored prompt")
         let observer = try RootedFileWatcher(root: root, log: OSLogSink())
         try observer.start { event in
+            if event == .rootUnavailable(.notFound) { rootLost.fulfill() }
             if event == .file(FileStoreEvent(relativePath: "restored.md", kind: .created)) { restored.fulfill() }
         }
         defer { observer.stop() }
@@ -308,8 +311,13 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.results.count, 1)
         XCTAssertEqual(picker.selectedPreview, .body("Cached"))
         XCTAssertTrue(try XCTUnwrap(delegate.pickerPresentation).status.contains(Strings.libraryUnavailable))
+        // The app's watcher has its own queue; this stream must rearm before restoration.
+        guard XCTWaiter.wait(for: [rootLost], timeout: observationTimeout) == .completed else {
+            XCTFail("Independent FSEvents stream did not acknowledge root loss before restoration")
+            return
+        }
         try files.write(Data("Restored".utf8), at: "restored.md")
-        wait(for: [restored], timeout: 3)
+        wait(for: [restored], timeout: observationTimeout)
         XCTAssertFalse(picker.libraryAvailable)
         XCTAssertEqual(picker.results.map(\.relativePath), ["cached.md"])
         picker.dismiss()
