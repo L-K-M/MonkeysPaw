@@ -6,6 +6,8 @@ import XCTest
 @testable import MonkeysPawLinux
 
 final class LinuxConflictViewTests: XCTestCase {
+    private static let syncIOTimeout: Duration = .seconds(15)
+
     private var application: UnsafeMutablePointer<GtkApplication>!
     private var tools: FakeLinuxTools!
     private var environment: LinuxEnvironment!
@@ -36,7 +38,7 @@ final class LinuxConflictViewTests: XCTestCase {
             environment.shutdown()
             let done = ConflictViewFlag()
             Task.detached { await environment.drainSync(); done.set() }
-            XCTAssertTrue(GTKTestSupport.spin { done.value })
+            XCTAssertTrue(GTKTestSupport.spin(until: { done.value }, timeout: Self.syncIOTimeout))
         }
         environment = nil
         if let application { GTKTestSupport.destroy(application) }
@@ -354,6 +356,36 @@ final class LinuxConflictViewTests: XCTestCase {
         try resolved(.keepBoth)
     }
 
+    func testReindexDuringResolutionKeepsOutcomeUntilCompletion() throws {
+        try open()
+        let preview = try XCTUnwrap(environment.conflictModel?.state.preview)
+        let gate = ConflictViewResolutionGate(preview: preview)
+        let model = ConflictModel(service: gate, mainThread: GLibMainThread())
+        let view = LinuxConflictView()
+        _ = g_object_ref_sink(view.widget)
+        defer {
+            view.unbind()
+            model.retire()
+            g_object_unref(view.widget)
+        }
+        var outcome: ConflictResolutionAction?
+        _ = model.addObserver { if let action = $0.resolved { outcome = action } }
+        view.bind(model: model, selection: preview.copy, stamp: environment.editorModel.state.stamp, available: true)
+        let button = try settingsWidget("conflict-keep-both", in: view.widget)
+        XCTAssertTrue(GTKTestSupport.spin { model.state.preview != nil && gtk_widget_get_sensitive(button) != 0 })
+        view.resolve(.keepBoth)
+        XCTAssertTrue(GTKTestSupport.spin { gate.entered.value })
+
+        // The index removes the conflict marker before the worker's reply.
+        view.bind(model: model, selection: nil, stamp: nil, available: true)
+        drain()
+        XCTAssertEqual(model.state.operation, .resolving)
+        Task.detached { await gate.finish() }
+        XCTAssertTrue(GTKTestSupport.spin { outcome == .keepBoth })
+        view.bind(model: model, selection: nil, stamp: nil, available: true)
+        XCTAssertEqual(gtk_widget_get_visible(view.widget), 0)
+    }
+
     private func open() throws {
         compose()
         try signInAndSelectCopy()
@@ -370,7 +402,9 @@ final class LinuxConflictViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !account.state.isBusy })
         var password = "test-password"
         account.login(server: "https://sync.example.test", username: "person", password: &password, deviceName: "Linux")
-        XCTAssertTrue(GTKTestSupport.spin { account.state.enabled && self.environment.syncService?.report.lastSuccess != nil })
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            account.state.enabled && self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: Self.syncIOTimeout))
         environment.showLibrary()
         XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.library) != nil })
         window = try XCTUnwrap(nativeWindow(LinuxStrings.library))
@@ -382,6 +416,12 @@ final class LinuxConflictViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { browser.rows.contains { $0.relativePath.string == ConflictViewTransport.copyPath } })
         let index = try XCTUnwrap(browser.rows.firstIndex { $0.relativePath.string == ConflictViewTransport.copyPath })
         let list = try widget("library-list")
+        // Model rows can precede the existing window's native list render.
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let row = gtk_list_box_get_row_at_index(mp_list_box(list), Int32(index)),
+                  let content = gtk_list_box_row_get_child(row) else { return false }
+            return self.labels(content).contains(ConflictViewTransport.copyPath)
+        }, "Conflict copy did not appear in the native Library list")
         gtk_list_box_select_row(mp_list_box(list), gtk_list_box_get_row_at_index(mp_list_box(list), Int32(index)))
         try ready()
     }
@@ -468,6 +508,19 @@ private final class ConflictViewFlag: @unchecked Sendable {
     private var stored = false
     var value: Bool { lock.lock(); defer { lock.unlock() }; return stored }
     func set() { lock.lock(); stored = true; lock.unlock() }
+}
+
+private actor ConflictViewResolutionGate: ConflictResolving {
+    nonisolated let entered = ConflictViewFlag()
+    private let value: ConflictPreview
+    private var completion: CheckedContinuation<ConflictResolutionResult, Never>?
+
+    init(preview: ConflictPreview) { value = preview }
+    func preview(_ copy: LibraryPromptSelection) async throws -> ConflictPreview { value }
+    func resolve(_ action: ConflictResolutionAction, preview: ConflictPreview) async throws -> ConflictResolutionResult {
+        await withCheckedContinuation { completion = $0; entered.set() }
+    }
+    func finish() { completion?.resume(returning: .resolved(.keepBoth)); completion = nil }
 }
 
 private final class ConflictViewIdleTimer: Scheduler {
