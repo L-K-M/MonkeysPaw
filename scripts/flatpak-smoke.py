@@ -8,6 +8,7 @@ Never print subprocess arguments, invite input or accessibility tree contents.
 
 import configparser
 from contextlib import closing
+from enum import Enum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
@@ -25,6 +26,71 @@ APP_ID = "ch.lkmc.monkeyspaw"
 ATSPI_ERROR_APPLICATION_GONE = 0
 
 
+class _Operation(Enum):
+    DISPLAY_INFO = "display-info"
+    TOGGLE = "toggle"
+    REPEAT = "repeat"
+    NAME_HAS_OWNER = "name-has-owner"
+    GET_NAME_OWNER = "get-name-owner"
+    QUIT = "quit"
+    INVITE_OPEN = "invite-open"
+    INSTANCE_COUNT = "instance-count"
+    SETTINGS_RESIZE = "settings-resize"
+    SANDBOX_KILL = "sandbox-kill"
+    UNCLASSIFIED = "unclassified"
+
+
+class _Phase(Enum):
+    PREFLIGHT = "preflight"
+    COLD_TOGGLE = "cold-toggle"
+    RESIDENT_TOGGLE = "resident-toggle"
+    COLD_REPEAT = "cold-repeat"
+    REPEAT_DISMISS = "repeat-dismiss"
+    RESIDENT_REPEAT = "resident-repeat"
+    COLD_OPEN = "cold-open"
+    RESIDENT_OPEN = "resident-open"
+    RESIDENT_LAUNCHER = "resident-launcher"
+    COLD_LAUNCHER = "cold-launcher"
+    FINALIZE = "finalize"
+    CLEANUP = "cleanup"
+
+
+class _FailureKind(Enum):
+    EXIT = "exit"
+    SIGNAL = "signal"
+
+
+# Commands run on the proof thread; the HTTP recorder never issues commands.
+_phase = _Phase.PREFLIGHT
+
+
+def _command_operation(args):
+    for prefix, operation in (
+        (("xdpyinfo",), _Operation.DISPLAY_INFO),
+        (("gapplication", "action", APP_ID, "toggle"), _Operation.TOGGLE),
+        (("gapplication", "action", APP_ID, "repeat"), _Operation.REPEAT),
+        (("flatpak", "ps", "--columns=application"), _Operation.INSTANCE_COUNT),
+        (("xdotool", "windowsize"), _Operation.SETTINGS_RESIZE),
+        (("flatpak", "kill", APP_ID), _Operation.SANDBOX_KILL),
+    ):
+        if args[:len(prefix)] == prefix:
+            return operation
+    if args[:2] == ("gdbus", "call") and args[7:8] == ("--method",) and len(args) > 8:
+        return {
+            "org.freedesktop.DBus.NameHasOwner": _Operation.NAME_HAS_OWNER,
+            "org.freedesktop.DBus.GetNameOwner": _Operation.GET_NAME_OWNER,
+            "org.gtk.Actions.Activate": _Operation.QUIT,
+            "org.freedesktop.Application.Open": _Operation.INVITE_OPEN,
+        }.get(args[8], _Operation.UNCLASSIFIED)
+    return _Operation.UNCLASSIFIED
+
+
+def _command_failure(args, status):
+    kind = _FailureKind.SIGNAL if status < 0 else _FailureKind.EXIT
+    return (f"Installed application command failed (phase={_phase.value}; "
+            f"operation={_command_operation(args).value}; kind={kind.value}; code={abs(status)})")
+
+
 class NameHasNoOwner(RuntimeError):
     """The bus replied that the queried name has no current owner."""
 
@@ -32,10 +98,11 @@ class NameHasNoOwner(RuntimeError):
 def command(*args, allowed=(0,)):
     result = subprocess.run(args, capture_output=True, text=True, timeout=15)
     if result.returncode not in allowed:
+        message = _command_failure(args, result.returncode)
         if (result.returncode == 1 and args[:2] == ("gdbus", "call")
                 and result.stderr.startswith("Error: GDBus.Error:org.freedesktop.DBus.Error.NameHasNoOwner: ")):
-            raise NameHasNoOwner("Installed application command failed")
-        raise RuntimeError("Installed application command failed")
+            raise NameHasNoOwner(message)
+        raise RuntimeError(message)
     return result.stdout.strip()
 
 
@@ -147,6 +214,8 @@ def invite_is_staged(nodes, destination, atspi):
 
 
 def main():
+    global _phase
+    _phase = _Phase.PREFLIGHT
     import pyatspi
     from gi.repository import GLib
     from Xlib.display import Display
@@ -222,21 +291,26 @@ def main():
     try:
         if owner() is not None:
             raise RuntimeError("Proof requires a cold installed application")
+        _phase = _Phase.COLD_TOGGLE
         action("toggle")
         wait_for(picker_visible, "Cold toggle did not show the picker")
         primary = owner()
         # The action debounce must settle before the resident toggle.
         time.sleep(1)
+        _phase = _Phase.RESIDENT_TOGGLE
         action("toggle")
         wait_for(lambda: not picker_visible(), "Resident toggle did not hide the picker")
         singleton(primary)
         stop()
+        _phase = _Phase.COLD_REPEAT
         action("repeat")
         wait_for_accessibility(lambda: label_visible("Nothing to repeat"), "Cold repeat did not show its empty-record result")
         primary = owner()
+        _phase = _Phase.REPEAT_DISMISS
         wait_for(dismiss_repeat_result, "Cold repeat result could not be dismissed")
         wait_for_accessibility(lambda: not repeat_windows() and not label_visible("Nothing to repeat"),
                                "Cold repeat result did not dismiss")
+        _phase = _Phase.RESIDENT_REPEAT
         action("repeat")
         wait_for_accessibility(lambda: repeat_windows() and label_visible("Nothing to repeat"),
                                "Resident repeat did not show its empty-record result")
@@ -250,6 +324,7 @@ def main():
             raise RuntimeError("Installed launcher does not forward an invite URI")
 
         for route in ("cold-open", "resident-open", "resident-launcher", "cold-launcher"):
+            _phase = _Phase(route)
             if route.startswith("cold"):
                 stop()
             primary = owner()
@@ -274,6 +349,7 @@ def main():
                 raise RuntimeError("Invite activation toggled the picker")
             if Recorder.requests:
                 raise RuntimeError("Invite activation made an HTTP request before Accept")
+        _phase = _Phase.FINALIZE
         # Give any wrongly scheduled redemption time to reach the recorder.
         time.sleep(1)
         if Recorder.requests:
@@ -289,6 +365,7 @@ def main():
                 if any(token in data for token in bearers):
                     raise RuntimeError("Invite bearer was persisted")
     finally:
+        _phase = _Phase.CLEANUP
         proof_failed = sys.exc_info()[0] is not None
         cleanup_error = None
         try:
