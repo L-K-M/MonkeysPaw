@@ -21,7 +21,7 @@ internal class SyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result = syncWorkerResult(inputData, scheduler)
 }
 
-/** Keep validation, dispatch and returned Data on one JVM-testable production path. */
+/** Keep validation, dispatch and the returned Result on one JVM-testable production path. */
 internal suspend fun syncWorkerResult(input: Data, scheduler: Lazy<SyncWorkScheduler>): Result {
     val generation = input.getString(AndroidSyncWorkQueue.GENERATION) ?: return Result.failure()
     val version = if (input.keyValueMap.containsKey(AndroidSyncWorkQueue.VERSION))

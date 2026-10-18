@@ -68,10 +68,10 @@ interpret a failed Clear as successful deletion. See the
 
 Assistant endpoints require HTTPS except for literal loopback destinations.
 Desktop and Android sync require HTTPS except for localhost, loopback and
-literal private IP ranges. An HTTP exception sends credentials and content without TLS;
-use HTTPS on networks you do not control. The clients refuse redirects and
-do not use browser cookies or ambient credential storage. Keep normal TLS
-certificate validation enabled.
+literal private IP ranges. An HTTP exception sends credentials and content
+without TLS; use HTTPS on networks you do not control. The clients refuse
+redirects and do not use browser cookies or ambient credential storage. Keep
+normal TLS certificate validation enabled.
 
 Run one server process per SQLite database on local storage. Keep the default
 HTTP host binding on loopback; use the documented HTTPS reverse proxy for
