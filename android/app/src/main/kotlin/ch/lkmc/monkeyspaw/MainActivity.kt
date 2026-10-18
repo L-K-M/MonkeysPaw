@@ -63,7 +63,8 @@ class MainActivity : ComponentActivity() {
     private val assistantWrite: WriteViewModel by viewModels()
     private val assistantReview: ReviewViewModel by viewModels()
     private val assistantImprove: ImproveViewModel by viewModels()
-    private val account: AccountViewModel by viewModels()
+    private val accountDelegate = viewModels<AccountViewModel>()
+    private val account by accountDelegate
     private val resolver: ResolveViewModel by viewModels()
     private var destination by mutableStateOf(MainDestination.LIBRARY)
     private var foreground by mutableStateOf(false)
@@ -98,7 +99,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         foreground = false
-        if (ownsSync) account.setForeground(null)
+        stopAccountPresentation(accountDelegate,
+            if (ownsSync) AccountStopMode.RELEASE_FOREGROUND else AccountStopMode.CLEAR_PRESENTATION)
         super.onStop()
     }
 

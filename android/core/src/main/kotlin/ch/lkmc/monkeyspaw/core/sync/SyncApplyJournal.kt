@@ -99,13 +99,13 @@ internal class SyncApplyJournal(
             return@withLock SyncApplyOutcome.Committed
         }
         mutations.resume(record.id, record.nextState)
-        states.recover(record.nextState.binding)
         record.bindingChange?.let { change ->
             val accounts = accounts ?: throw SyncError.InvalidState
             accounts.recoverBinding(change.next.root) { actual ->
                 if (actual != change.expected && actual != change.next) throw LibraryError.RecoveryRequired
             }
         }
+        states.recover(record.nextState.binding)
         run()
     }
 

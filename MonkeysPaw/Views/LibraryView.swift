@@ -15,6 +15,9 @@ struct LibraryView: View {
                 sidebar.frame(minWidth: 140, idealWidth: 180, maxWidth: 260)
                 importablePrompts.frame(minWidth: 180, idealWidth: 240)
                 editor.frame(minWidth: 240, maxWidth: .infinity)
+                if let conflict = presentation.conflict {
+                    LibraryConflictView(presentation: conflict).frame(minWidth: 520, idealWidth: 560)
+                }
                 if presentation.isAssistantVisible, let assistant = presentation.assistant {
                     LibraryAssistantView(presentation: assistant, close: presentation.closeAssistant)
                         .frame(minWidth: 320, idealWidth: 420)
@@ -37,6 +40,10 @@ struct LibraryView: View {
                     .accessibilityIdentifier("library-favorite-message")
             }
             Divider()
+            if let syncStatus = presentation.syncStatus {
+                SyncStatusView(presentation: syncStatus)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }
             Text(LibraryStrings.keyboardHint).font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(8)
         }
@@ -79,6 +86,11 @@ struct LibraryView: View {
         List(selection: Binding<LibrarySectionID?>(get: { presentation.snapshot.selectedSection },
             set: { if let section = $0 { presentation.selectSection(section) } })) {
             ForEach(standardSections, id: \.id, content: sectionRow)
+            if !groupSections.isEmpty {
+                Section(LibraryStrings.groups) {
+                    ForEach(groupSections, id: \.id, content: sectionRow)
+                }
+            }
             if !folderSections.isEmpty {
                 Section(LibraryStrings.folders) {
                     ForEach(folderSections, id: \.id, content: sectionRow)
@@ -98,7 +110,7 @@ struct LibraryView: View {
 
     private var standardSections: [LibraryBrowserSection] {
         presentation.snapshot.sections.filter { section in
-            switch section.id { case .all, .favourites, .recent: return true; default: return false }
+            switch section.id { case .all, .favourites, .recent, .conflicts: return true; default: return false }
         }
     }
 
@@ -106,18 +118,35 @@ struct LibraryView: View {
         presentation.snapshot.sections.filter { if case .folder = $0.id { return true }; return false }
     }
 
+    private var groupSections: [LibraryBrowserSection] {
+        presentation.snapshot.sections.filter { if case .group = $0.id { return true }; return false }
+    }
+
     private var tagSections: [LibraryBrowserSection] {
         presentation.snapshot.sections.filter { if case .tag = $0.id { return true }; return false }
     }
 
+    @ViewBuilder
     private func sectionRow(_ section: LibraryBrowserSection) -> some View {
+        let epoch = presentation.scopeDragEpoch
+        if presentation.canDropScopeRow(onto: section.id) {
+            sectionLabel(section).onDrop(of: [LibraryViewState.scopeDragTypeIdentifier],
+                delegate: LibraryScopeDropTarget(presentation: presentation, section: section.id, epoch: epoch))
+        } else { sectionLabel(section) }
+    }
+
+    private func sectionLabel(_ section: LibraryBrowserSection) -> some View {
         HStack {
             Text(section.title).padding(.leading, CGFloat(section.depth) * 12)
+            if let role = section.role {
+                Text(LibraryStrings.role(role)).font(.caption).foregroundStyle(.secondary)
+            }
             Spacer()
             Text(String(section.count)).foregroundStyle(.secondary)
         }
+        .contentShape(Rectangle())
         .tag(section.id)
-        .accessibilityLabel(section.title + ", " + String(section.count) + (section.count == 1 ? " prompt" : " prompts"))
+        .accessibilityLabel(LibraryStrings.sectionLabel(title: section.title, role: section.role, count: section.count))
     }
 
     @ViewBuilder
@@ -129,11 +158,16 @@ struct LibraryView: View {
 
     private var prompts: some View {
         VStack(spacing: 0) {
+            // List selection arrives on mouse-down. Activate on click release
+            // so a row drag reaches its drop guard before any draft sheet opens.
             List(selection: Binding<RelativePath?>(get: { presentation.snapshot.selection?.relativePath },
-                set: presentation.selectPath)) {
+                set: { _ in })) {
                 ForEach(presentation.snapshot.rows, id: \.relativePath) { row in
-                    LibraryRowView(row: row, showsLastUse: presentation.snapshot.selectedSection == .recent)
-                        .tag(row.relativePath)
+                    promptRow(row).tag(row.relativePath)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { presentation.selectPath(row.relativePath) }
+                        .accessibilityAction { presentation.selectPath(row.relativePath) }
                 }
             }
             .focused($focusedPane, equals: .prompts)
@@ -146,6 +180,15 @@ struct LibraryView: View {
                 Text(LibraryStrings.noRows).foregroundStyle(.secondary).padding(12)
             }
         }
+    }
+
+    @ViewBuilder
+    private func promptRow(_ row: LibraryBrowserRow) -> some View {
+        let epoch = presentation.scopeDragEpoch
+        let content = LibraryRowView(row: row, showsLastUse: presentation.snapshot.selectedSection == .recent)
+        if presentation.canStartScopeDrag && !row.isReadOnly {
+            content.onDrag { presentation.scopeDragProvider(for: row.selection, epoch: epoch) ?? NSItemProvider() }
+        } else { content }
     }
 
     private var editor: some View {
@@ -163,7 +206,7 @@ struct LibraryView: View {
                         .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("library-save")
                     Button(EditorStrings.revert, action: presentation.revert).disabled(!presentation.canRevert)
                         .accessibilityIdentifier("library-revert")
-                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSave)
+                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSaveAsCopy)
                         .accessibilityIdentifier("library-save-copy")
                 }
                 HStack {
@@ -198,7 +241,7 @@ struct LibraryView: View {
             LibrarySourceEditor(source: presentation.editorState.source ?? "",
                 path: presentation.editorState.prompt?.relativePath,
                 revision: presentation.sourceRevision,
-                isEditable: presentation.libraryAvailable && presentation.editorState.canEdit,
+                isEditable: presentation.canEditSource,
                 onEdit: presentation.edit, highlight: presentation.quoteHighlight)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
@@ -270,6 +313,24 @@ struct LibraryView: View {
         .focused($focusedPane, equals: .preview)
         .accessibilityLabel(LibraryStrings.preview)
         .accessibilityIdentifier("library-preview")
+    }
+}
+
+private struct LibraryScopeDropTarget: DropDelegate {
+    let presentation: LibraryViewState
+    let section: LibrarySectionID
+    let epoch: UUID
+
+    func validateDrop(info: DropInfo) -> Bool {
+        presentation.scopeDragEpoch == epoch && presentation.canDropScopeRow(onto: section)
+            && info.hasItemsConforming(to: [LibraryViewState.scopeDragTypeIdentifier])
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        presentation.acceptScopeDrop(info.itemProviders(for: [LibraryViewState.scopeDragTypeIdentifier]),
+            onto: section, epoch: epoch)
     }
 }
 

@@ -235,6 +235,51 @@ class SyncApplyJournalTest {
         h.local.library.entries()
     }
 
+    @Test fun bindingMismatchBlocksUncertainStateRecoveryBeforeAcknowledgement() {
+        for (flush in listOf("file:sync/state.json", "directory:sync", "directory:<root>")) {
+            val h = SyncJournalHarness()
+            val owned = SyncLibraryBinding(h.binding.root, h.binding.account)
+            val plan = h.plan(listOf(h.replacement()), change = SyncBindingChange(null, owned))
+            var writingState = false
+            h.local.state.onWrite = { if (it == "sync/state.json") writingState = true }
+            h.dataOperations.onOperation = { name ->
+                if (writingState && name == flush) h.dataOperations.failAt = h.dataOperations.calls.size
+            }
+            assertFailsWith<SyncError.DurabilityUncertain>(flush) { h.journal.apply(plan) }
+            assertEquals(plan.expectedState, h.states.snapshot.value, flush)
+            assertEquals(SyncError.DurabilityUncertain, h.states.snapshot.error, flush)
+            assertEquals(owned, h.accounts.binding(owned.root), flush)
+            h.local.state.onWrite = null
+            h.dataOperations.onOperation = null
+            h.dataOperations.failAt = null
+
+            // Ownership may change on disk while the state publication awaits recovery.
+            val bindingBytes = h.local.state.read("sync/binding.json")
+            val unexpected = SyncLibraryBinding(owned.root, v.accountIdentity(userID = v.otherUser))
+            v.put(h.local.state, "sync/binding.json", syncObject("version" to wireLong(Limits.syncBindingVersion.toLong()),
+                "libraries" to WireValue.ArrayValue(listOf(SyncAccountJson.binding(unexpected)))))
+            val journalBytes = h.local.state.read("sync/apply.json")
+            val stateBytes = h.local.state.read("sync/state.json")
+            val operations = h.dataOperations.calls.size
+            assertFailsWith<LibraryError.RecoveryRequired>(flush) { h.journal.replay() }
+            assertEquals(operations, h.dataOperations.calls.size, flush)
+            assertEquals(plan.expectedState, h.states.snapshot.value, flush)
+            assertEquals(SyncError.DurabilityUncertain, h.states.snapshot.error, flush)
+            assertContentEquals(stateBytes, h.local.state.read("sync/state.json"), flush)
+            assertContentEquals(journalBytes, h.local.state.read("sync/apply.json"), flush)
+            assertEquals(plan.id, h.journal.pending?.id, flush)
+            assertFailsWith<LibraryError.RecoveryRequired>(flush) { h.local.library.entries() }
+
+            h.local.state.writePrivate(bindingBytes, "sync/binding.json")
+            assertEquals(SyncApplyOutcome.Committed, h.journal.replay(), flush)
+            assertEquals(SyncApplyOutcome.Committed, h.journal.replay(), flush)
+            assertEquals(plan.nextState, h.states.snapshot.value, flush)
+            assertNull(h.states.snapshot.error, flush)
+            assertNull(h.journal.pending, flush)
+            h.local.library.entries()
+        }
+    }
+
     @Test fun missingPreparationIntentCannotInferCommitFromAnUnchangedState() {
         val h = SyncJournalHarness()
         val edit = h.replacement()

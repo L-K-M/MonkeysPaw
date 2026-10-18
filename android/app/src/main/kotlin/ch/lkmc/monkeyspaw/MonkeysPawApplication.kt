@@ -24,6 +24,7 @@ class MonkeysPawApplication : Application(), Configuration.Provider {
     // Local journals recover before index reads. Authentication requires an explicit entry intent.
     override fun onCreate() {
         super.onCreate()
+        // The repository recovers local journals before this read. Authentication is an explicit entry intent.
         scope.launch { library.refresh() }
     }
 }

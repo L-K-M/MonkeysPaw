@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Repack an explicit tested amd64 deb into a GNOME 50 x86_64 Flatpak.
-# Usage: scripts/build-flatpak.sh <path/to.deb> <[v]X.Y.Z[-prerelease]>
+# Usage: scripts/build-flatpak.sh <path/to.deb> [expected-app-version]
+# Without an expected version, derive it from this deb's control metadata.
 # Requires flatpak, flatpak-builder, dpkg-deb, python3 and the user-installed
 # org.gnome.Platform//50 and org.gnome.Sdk//50 from Flathub. Never builds Swift
 # or installs runtimes. Relative deb paths are relative to the caller.
@@ -12,19 +13,19 @@ APP_ID=ch.lkmc.monkeyspaw
 FLATHUB_REPO=https://dl.flathub.org/repo/flathub.flatpakrepo
 die() { printf 'build-flatpak.sh: %s\n' "$*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die 'Usage: scripts/build-flatpak.sh <path/to.deb> <version>'
+[[ $# -ge 1 && $# -le 2 ]] || die 'Usage: scripts/build-flatpak.sh <path/to.deb> [expected-app-version]'
 [[ -f "$1" && -r "$1" ]] || die "Deb is not a readable file: $1"
 DEB="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
-VERSION="$(python3 "$ROOT/scripts/check-version.py" --app-version "$2")"
-[[ "$VERSION" != *+* ]] || die 'Build metadata (+...) is not supported for release artifacts'
-DEB_VERSION="$(python3 "$ROOT/scripts/check-version.py" --deb-version "$VERSION")"
-
-for tool in dpkg-deb flatpak flatpak-builder sha256sum; do
+for tool in python3 dpkg-deb flatpak flatpak-builder sha256sum; do
     command -v "$tool" >/dev/null 2>&1 || die "Required tool is missing: $tool"
 done
 [[ "$(dpkg-deb --field "$DEB" Package)" == monkeyspaw ]] || die 'Expected a monkeyspaw deb'
 [[ "$(dpkg-deb --field "$DEB" Architecture)" == amd64 ]] || die 'Only amd64 debs can be repacked as x86_64'
-[[ "$(dpkg-deb --field "$DEB" Version)" == "$DEB_VERSION" ]] || die 'Deb version does not match the requested app version'
+INPUT_VERSION="$(dpkg-deb --field "$DEB" Version)"
+VERSION="$(python3 "$ROOT/scripts/check-version.py" --app-version "${2:-${INPUT_VERSION//\~/-}}")"
+[[ "$VERSION" != *+* ]] || die 'Build metadata (+...) is not supported for release artifacts'
+DEB_VERSION="$(python3 "$ROOT/scripts/check-version.py" --deb-version "$VERSION")"
+[[ "$INPUT_VERSION" == "$DEB_VERSION" ]] || die 'Deb version does not match the requested app version'
 for runtime in org.gnome.Platform org.gnome.Sdk; do
     flatpak info --user "$runtime/x86_64/50" >/dev/null 2>&1 || \
         die "Missing $runtime/x86_64/50; install GNOME 50 from Flathub with flatpak install --user"
@@ -74,6 +75,8 @@ grep -Fxq 'Exec=/usr/bin/monkeyspaw --gapplication-service' "$service" || die 'D
 sed -i -e 's@^Exec=/usr/bin/monkeyspaw\([[:space:]]\|$\)@Exec=monkeyspaw\1@' \
     -e 's|^TryExec=/usr/bin/monkeyspaw$|TryExec=monkeyspaw|' "$desktop"
 sed -i 's|^Exec=/usr/bin/monkeyspaw --gapplication-service$|Exec=/app/bin/monkeyspaw --gapplication-service|' "$service"
+grep -Fxq 'Exec=monkeyspaw %u' "$desktop" || die 'Deb desktop must forward one URI with %u'
+grep -Fxq 'MimeType=x-scheme-handler/monkeyspaw;' "$desktop" || die 'Deb desktop has no invite URI handler'
 cp "$ROOT/flatpak/$APP_ID.yml" "$WORK/$APP_ID.yml"
 
 flatpak-builder --user --arch=x86_64 --disable-rofiles-fuse \
