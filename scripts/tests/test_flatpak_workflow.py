@@ -2,11 +2,14 @@
 
 import hashlib
 import importlib.util
+import io
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -21,6 +24,8 @@ CI_JOBS = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)",
 spec = importlib.util.spec_from_file_location("flatpak_smoke", ROOT / "scripts/flatpak-smoke.py")
 smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
+COMMAND_FAILURE = (r"^Installed application command failed \(phase=[a-z-]+; operation=[a-z-]+; "
+                   r"kind=exit; code=[0-9]+\)$")
 
 
 class FlatpakWorkflowTests(unittest.TestCase):
@@ -199,7 +204,7 @@ class OwnerQueryTests(unittest.TestCase):
                     if method == "GetNameOwner":
                         replies.append(self.reply("NameHasOwner", "(true,)"))
                     replies.append(self.reply(method, status=1, error=error))
-                    with self.assertRaisesRegex(RuntimeError, "^Installed application command failed$"):
+                    with self.assertRaisesRegex(RuntimeError, COMMAND_FAILURE):
                         self.run_calls(smoke.stop, replies)
 
     def test_singleton_rejects_absent_or_replaced_owner_through_real_queries(self):
@@ -212,11 +217,11 @@ class OwnerQueryTests(unittest.TestCase):
                     self.run_calls(lambda: smoke.singleton("(':1.42',)"), replies)
 
     def test_no_owner_error_outside_get_name_owner_is_still_a_failure(self):
-        with self.assertRaisesRegex(RuntimeError, "^Installed application command failed$"):
+        with self.assertRaisesRegex(RuntimeError, COMMAND_FAILURE):
             self.run_calls(smoke.stop, [self.reply("NameHasOwner", status=1, error=self.no_owner)])
 
     def test_other_exit_status_with_no_owner_text_is_not_absence(self):
-        with self.assertRaisesRegex(RuntimeError, "^Installed application command failed$"):
+        with self.assertRaisesRegex(RuntimeError, COMMAND_FAILURE):
             self.run_calls(smoke.owner, [self.reply("NameHasOwner", "(true,)"),
                            self.reply("GetNameOwner", status=2, error=self.no_owner)])
 
@@ -380,16 +385,20 @@ class RepeatProofTests(unittest.TestCase):
 
 
 class CleanupProofTests(unittest.TestCase):
-    def run_proof(self, *, proof_fails=True, kill_error=None, child_timeout=False):
+    def run_proof(self, *, proof_fails=True, kill_error=None, child_timeout=False, command_failure=None):
         self.server = Mock(server_port=1234)
         self.thread = Mock()
         child = Mock()
+        self.child = child
         child.poll.return_value = None
         launcher = Mock(return_value=child)
         config = smoke.configparser.ConfigParser(interpolation=None)
         config["Desktop Entry"] = {"Exec": "flatpak run " + smoke.APP_ID + " %u"}
+        real_command = smoke.command
 
         def command(*args, **_kwargs):
+            if command_failure is not None and args[:len(command_failure)] == command_failure:
+                return real_command(*args, **_kwargs)
             if args[:2] == ("flatpak", "kill") and kill_error is not None:
                 raise kill_error
             return ""
@@ -667,6 +676,141 @@ class AccessibilityPollingTests(unittest.TestCase):
                     else:
                         self.assertIs(raised.exception, error)
                     self.assertEqual(self.snapshots, 1)
+
+
+class CommandDiagnosticTests(unittest.TestCase):
+    private = "PRIVATE_COMMAND_SENTINEL"
+
+    def fresh_script(self):
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def message(self, operation, *, phase="preflight", status=23):
+        kind = "signal" if status < 0 else "exit"
+        return (f"Installed application command failed (phase={phase}; operation={operation}; "
+                f"kind={kind}; code={abs(status)})")
+
+    def assert_safe(self, value):
+        self.assertNotIn(self.private, value)
+        self.assertNotIn("monkeyspaw://", value)
+
+    def test_all_command_producers_have_fixed_labels_without_argument_or_error_text(self):
+        for args, operation in (
+            (("xdpyinfo", self.private), "display-info"),
+            (("gapplication", "action", smoke.APP_ID, "toggle", self.private), "toggle"),
+            (("gapplication", "action", smoke.APP_ID, "repeat", self.private), "repeat"),
+            (("flatpak", "ps", "--columns=application", self.private), "instance-count"),
+            (("flatpak", "kill", smoke.APP_ID, self.private), "sandbox-kill"),
+            (("xdotool", "windowsize", self.private), "settings-resize"),
+            ((self.private, self.private), "unclassified"),
+        ):
+            with self.subTest(operation=operation):
+                module = self.fresh_script()
+                result = subprocess.CompletedProcess(args, 23, self.private, self.private)
+                with (patch.object(module.subprocess, "run", return_value=result) as run,
+                      self.assertRaises(RuntimeError) as raised):
+                    module.command(*args)
+                self.assertEqual(str(raised.exception), self.message(operation))
+                self.assert_safe(str(raised.exception))
+                run.assert_called_once_with(args, capture_output=True, text=True, timeout=15)
+        for method, operation in (("NameHasOwner", "name-has-owner"), ("GetNameOwner", "get-name-owner"),
+                                  ("Activate", "quit"), ("Open", "invite-open"), (self.private, "unclassified")):
+            with self.subTest(operation=operation):
+                module = self.fresh_script()
+                full_method = ("org.gtk.Actions." if method == "Activate" else
+                               "org.freedesktop.Application." if method == "Open" else
+                               "org.freedesktop.DBus.") + method
+                args = ("gdbus", "call", "--session", "--dest", self.private, "--object-path", self.private,
+                        "--method", full_method, self.private)
+                result = subprocess.CompletedProcess(args, 23, self.private, self.private)
+                with (patch.object(module.subprocess, "run", return_value=result),
+                      self.assertRaises(RuntimeError) as raised):
+                    module.command(*args)
+                self.assertEqual(str(raised.exception), self.message(operation))
+                self.assert_safe(str(raised.exception))
+
+    def test_exit_and_signal_classes_are_numeric_and_still_fail(self):
+        for status in (1, 23, -9):
+            with self.subTest(status=status):
+                module = self.fresh_script()
+                result = subprocess.CompletedProcess(self.private, status, self.private, self.private)
+                with (patch.object(module.subprocess, "run", return_value=result),
+                      self.assertRaises(RuntimeError) as raised):
+                    module.command(self.private)
+                self.assertEqual(str(raised.exception), self.message("unclassified", status=status))
+                self.assert_safe(str(raised.exception))
+
+    def test_allowed_status_and_success_output_are_unchanged_and_silent(self):
+        for status in (0, 1):
+            module = self.fresh_script()
+            output, errors = io.StringIO(), io.StringIO()
+            result = subprocess.CompletedProcess(self.private, status, "  unchanged\n", self.private)
+            with (patch.object(module.subprocess, "run", return_value=result),
+                  redirect_stdout(output), redirect_stderr(errors)):
+                self.assertEqual(module.command("flatpak", "kill", smoke.APP_ID, allowed=(0, 1)), "unchanged")
+            self.assertEqual(output.getvalue() + errors.getvalue(), "")
+
+    def test_timeout_and_os_failures_keep_the_original_exception_and_single_attempt(self):
+        for error in (subprocess.TimeoutExpired(self.private, 15, output=self.private, stderr=self.private),
+                      OSError(2, self.private, self.private)):
+            module = self.fresh_script()
+            with (patch.object(module.subprocess, "run", side_effect=error) as run,
+                  self.assertRaises(type(error)) as raised):
+                module.command(self.private)
+            self.assertIs(raised.exception, error)
+            self.assertEqual(run.call_count, 1)
+
+    def run_cli(self, result):
+        output, errors = io.StringIO(), io.StringIO()
+        with (patch.dict("sys.modules", {"pyatspi": Mock(), "gi.repository": Mock(),
+                                        "Xlib.display": Mock(), "Xlib.protocol.event": Mock()}),
+              patch.dict(os.environ, DISPLAY=self.private, DBUS_SESSION_BUS_ADDRESS=self.private),
+              patch.object(subprocess, "run", **({"side_effect": result} if isinstance(result, Exception) else {"return_value": result})),
+              redirect_stdout(output), redirect_stderr(errors), self.assertRaises(SystemExit) as raised):
+            runpy.run_path(str(ROOT / "scripts/flatpak-smoke.py"), run_name="__main__")
+        self.assertEqual(raised.exception.code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assert_safe(errors.getvalue())
+        return errors.getvalue()
+
+    def test_cli_emits_only_safe_actionable_command_metadata(self):
+        result = subprocess.CompletedProcess(self.private, 23, self.private, self.private)
+        self.assertEqual(self.run_cli(result), self.message("display-info") + "\n")
+
+    def test_cli_never_renders_unexpected_exception_messages(self):
+        for error in (subprocess.TimeoutExpired(self.private, 15, output=self.private, stderr=self.private),
+                      OSError(2, self.private, self.private)):
+            self.assertEqual(self.run_cli(error), "Installed Flatpak proof failed (no invite data is logged)\n")
+
+    def test_cold_open_command_failure_keeps_its_phase_through_cleanup(self):
+        fixture = CleanupProofTests()
+        result = subprocess.CompletedProcess(self.private, 23, self.private, self.private)
+        with (patch.object(smoke.subprocess, "run", return_value=result) as run,
+              self.assertRaises(RuntimeError) as raised):
+            fixture.run_proof(proof_fails=False, command_failure=("gdbus", "call"))
+        self.assertEqual(str(raised.exception), self.message("invite-open", phase="cold-open"))
+        self.assert_safe(str(raised.exception))
+        self.assertEqual(run.call_count, 1)
+        fixture.assert_server_closed()
+        fixture.output.assert_not_called()
+
+    def test_cleanup_command_failure_cannot_replace_proof_error_or_print_success(self):
+        for proof_fails in (True, False):
+            with self.subTest(proof_fails=proof_fails):
+                fixture = CleanupProofTests()
+                result = subprocess.CompletedProcess(self.private, 23, self.private, self.private)
+                with (patch.object(smoke.subprocess, "run", return_value=result) as run,
+                      self.assertRaises(RuntimeError) as raised):
+                    fixture.run_proof(proof_fails=proof_fails, command_failure=("flatpak", "kill"))
+                expected = "Installed invite review did not appear" if proof_fails else self.message("sandbox-kill", phase="cleanup")
+                self.assertEqual(str(raised.exception), expected)
+                self.assert_safe(str(raised.exception))
+                self.assertEqual(run.call_count, 1)
+                fixture.assert_server_closed()
+                fixture.child.kill.assert_called()
+                fixture.child.wait.assert_any_call(timeout=5)
+                fixture.output.assert_not_called()
 
 
 if __name__ == "__main__":
