@@ -20,6 +20,7 @@ import ch.lkmc.monkeyspaw.data.SyncForegroundOwner
 import ch.lkmc.monkeyspaw.ui.account.*
 import ch.lkmc.monkeyspaw.entry.FillActivity
 import ch.lkmc.monkeyspaw.entry.FillLauncher
+import ch.lkmc.monkeyspaw.entry.InviteIntentDecoder
 import ch.lkmc.monkeyspaw.ui.editor.EditorScreen
 import ch.lkmc.monkeyspaw.ui.editor.EditorDecisionDialogs
 import ch.lkmc.monkeyspaw.ui.editor.EditorViewModel
@@ -60,7 +61,8 @@ class MainActivity : ComponentActivity() {
     private val assistantWrite: WriteViewModel by viewModels()
     private val assistantReview: ReviewViewModel by viewModels()
     private val assistantImprove: ImproveViewModel by viewModels()
-    private val account: AccountViewModel by viewModels()
+    private val accountDelegate = viewModels<AccountViewModel>()
+    private val account by accountDelegate
     private var destination by mutableStateOf(MainDestination.LIBRARY)
     private var foreground by mutableStateOf(false)
     private var ownsSync = false
@@ -94,7 +96,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         foreground = false
-        if (ownsSync) account.setForeground(null)
+        stopAccountPresentation(accountDelegate,
+            if (ownsSync) AccountStopMode.RELEASE_FOREGROUND else AccountStopMode.CLEAR_PRESENTATION)
         super.onStop()
     }
 
@@ -102,6 +105,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         profiles.initialize()
         title = AppIdentity.displayName
+        routeInvite(intent, restored = savedInstanceState != null)
         editor.onSelectionChanged = library::selectFromEditor
         assistantWrite.bind(editor)
         assistantReview.bind(editor)
@@ -152,7 +156,10 @@ class MainActivity : ComponentActivity() {
                             onSelectHold = account::selectHold, onRequestInclude = account::requestInclude,
                             onInclude = account::includeSelected, onDismissConfirmation = account::dismissConfirmation,
                             onSyncNow = account::syncNow, onSyncDetails = { navigate(MainDestination.SYNC_DETAILS) },
-                            onRecover = account::recover, modifier = Modifier.padding(padding))
+                            onRecover = account::recover, modifier = Modifier.padding(padding),
+                            onInviteDraft = account::setInviteDraft, onStageInvite = { account.stageInvite() },
+                            onInviteMode = account::setInviteMode, onAcceptInvite = account::acceptInvite,
+                            onDismissInvite = account::dismissInvite)
                     } else if (destination == MainDestination.SYNC_DETAILS) {
                         SyncStatusScreen(state = checkNotNull(sync), onSyncNow = account::syncNow, onAccount = ::openAccount,
                             onBack = { navigate(MainDestination.LIBRARY) }, onRecover = account::recover,
@@ -235,6 +242,20 @@ class MainActivity : ComponentActivity() {
     }
 
     internal fun openAccount() = navigate(MainDestination.ACCOUNT)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        routeInvite(intent)
+    }
+
+    private fun routeInvite(incoming: Intent, restored: Boolean = false) {
+        val invite = InviteIntentDecoder.consume(incoming, restored)
+        setIntent(Intent())
+        if (invite != null) {
+            openAccount()
+            invite.withValue { account.stageInvite(it) }
+        }
+    }
 
     private fun navigate(next: MainDestination) {
         if (destination == MainDestination.ACCOUNT && next != destination) account.hide()

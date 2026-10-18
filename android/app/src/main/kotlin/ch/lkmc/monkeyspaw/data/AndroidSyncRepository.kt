@@ -134,6 +134,28 @@ internal class AndroidSyncRepository(
         }.also { snapshot -> snapshot.account?.let { work.authenticated(it.connectionID.toString()) } }
     }
 
+    suspend fun stageInvite(input: String, server: String?): StagedInvite = accountOperation {
+        InviteAcceptanceService(it.account).stage(input, server)
+    }
+
+    suspend fun acceptInvite(invite: StagedInvite, mode: InviteAcceptance, username: String,
+                             password: SecretValue, deviceName: String): InviteAcceptanceResult {
+        val result = accountOperation {
+            if (mode == InviteAcceptance.NEW_ACCOUNT) settings.selectSyncServer(SyncServerURL(invite.destination.serverURL))
+            InviteAcceptanceService(it.account).accept(invite, mode, username, password, deviceName)
+        }
+        if (mode == InviteAcceptance.NEW_ACCOUNT && result.issue == null && result.snapshot.enabled) {
+            try { result.snapshot.account?.let { work.authenticated(it.connectionID.toString()) } }
+            catch (error: Exception) {
+                if (error is CancellationException) throw error
+                // Registration already committed; scheduling failure cannot invite another redemption.
+                return result.copy(issue = InviteAcceptanceIssue.RegistrationIncomplete(
+                    SyncAccountServiceError(SyncAccountIssue.RecoveryRequired, result.cleanup, registrationCommitted = true)))
+            }
+        }
+        return result
+    }
+
     suspend fun selectServer(server: SyncServerURL?): SyncTlsSettings? = withContext(io) {
         synchronized(lifecycleLock) { checkActive() }
         settings.selectSyncServer(server).syncTls

@@ -31,6 +31,7 @@ internal class AccountViewModel @Inject constructor(
     val state = mutableState.asStateFlow()
     private val settingsMutex = Mutex()
     private var command: Job? = null
+    private var signOutCommand: Job? = null
     private var commandVersion = 0L
     private var draftVersion = 0L
     private var serverVersion = 0L
@@ -38,10 +39,14 @@ internal class AccountViewModel @Inject constructor(
     private var foreground: SyncForegroundOwner? = null
     private var foregroundJob: Job? = null
     private var failureCondition: AccountCondition? = null
+    private var stagedInvite: StagedInvite? = null
+    private var inviteVersion = 0L
 
     init {
         viewModelScope.launch { repository.accounts.collect { snapshot ->
             if (snapshot != null) {
+                if (state.value.inviteReady && stagedInvite?.destination?.currentAccount != snapshot.account)
+                    clearInvite(R.string.invite_account_changed)
                 mutableState.value = state.value.copy(account = snapshot, cleanup = snapshot.cleanup)
                 projectCondition()
             }
@@ -64,12 +69,122 @@ internal class AccountViewModel @Inject constructor(
     }
 
     fun hide() {
+        clearInvite()
         mutableState.value = state.value.copy(draft = state.value.draft.copy(password = ""),
             revokeConfirmation = null, signOutConfirmation = false, includeConfirmation = false)
-        if (state.value.busy != AccountAction.SIGN_OUT) command?.cancel()
+        cancelCommand()
     }
 
     fun cancel() { hide() }
+
+    fun setInviteDraft(value: String) {
+        if (state.value.busy != null) return
+        clearInvite()
+        mutableState.value = state.value.copy(inviteDraft = value)
+    }
+
+    fun setInviteMode(mode: InviteAcceptance) {
+        if (state.value.busy != null) return
+        mutableState.value = state.value.copy(inviteMode = mode, draft = state.value.draft.copy(password = ""))
+    }
+
+    fun stageInvite(input: String = state.value.inviteDraft) {
+        val previous = command
+        val signOut = signOutCommand
+        if (previous !== signOut) previous?.cancel()
+        val server = state.value.server?.baseURL
+        clearInvite()
+        val version = inviteVersion
+        run(AccountAction.STAGE_INVITE, replace = true) {
+            // Replacement links still wait for the separately retained, confirmed sign-out.
+            signOut?.join()
+            previous?.join()
+            try {
+                // Account entry may restore its own session; an invite never redeems during this refresh.
+                try { repository.resume() }
+                catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    if (version == inviteVersion) showFailure(error)
+                }
+                val invite = repository.stageInvite(input, server)
+                if (version != inviteVersion) { invite.clear(); return@run }
+                stagedInvite = invite
+                setServer(invite.destination.serverURL)
+                mutableState.value = state.value.copy(invite = invite.destination, inviteReady = true,
+                    inviteMode = InviteAcceptance.EXISTING_ACCOUNT, inviteMessage = null)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (version == inviteVersion) showInviteFailure(error)
+            }
+        }
+    }
+
+    fun acceptInvite() {
+        if (!state.value.canAcceptInvite) return
+        val invite = stagedInvite ?: return
+        val mode = state.value.inviteMode
+        val draft = state.value.draft
+        val password = SecretValue(draft.password)
+        val version = inviteVersion
+        mutableState.value = state.value.copy(inviteDraft = "", inviteReady = false, draft = draft.copy(password = ""))
+        run(AccountAction.ACCEPT_INVITE) {
+            val result = try {
+                settingsMutex.withLock {
+                    repository.acceptInvite(invite, mode, draft.username, password, draft.deviceName)
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (version == inviteVersion) showInviteFailure(error)
+                return@run
+            } finally {
+                invite.clear()
+                if (stagedInvite === invite) stagedInvite = null
+            }
+            if (version != inviteVersion) return@run
+            mutableState.value = state.value.copy(cleanup = result.cleanup, inviteMessage = when (result.issue) {
+                is InviteAcceptanceIssue.RegistrationIncomplete -> R.string.invite_registration_incomplete
+                is InviteAcceptanceIssue.RefreshIncomplete -> R.string.invite_refresh_incomplete
+                else -> R.string.invite_accepted
+            })
+            // A later local read failure cannot turn known redemption into a retry invitation.
+            try { loadLocal() }
+            catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (version == inviteVersion) showFailure(error)
+            }
+        }
+    }
+
+    fun dismissInvite() {
+        clearInvite()
+        if (state.value.busy == AccountAction.STAGE_INVITE || state.value.busy == AccountAction.ACCEPT_INVITE) cancelCommand()
+    }
+
+    private fun clearInvite(message: Int? = null) {
+        inviteVersion++
+        stagedInvite?.clear()
+        stagedInvite = null
+        mutableState.value = state.value.copy(inviteDraft = "", invite = null, inviteReady = false, inviteMessage = message,
+            draft = state.value.draft.copy(password = ""))
+    }
+
+    private fun showInviteFailure(error: Exception) {
+        val message = when (error) {
+            InviteAcceptanceIssue.InvalidLink -> R.string.invite_invalid
+            InviteAcceptanceIssue.ServerRequired -> R.string.invite_server_required
+            InviteAcceptanceIssue.AccountChanged -> R.string.invite_account_changed
+            InviteAcceptanceIssue.WrongServer -> R.string.invite_authenticate
+            InviteAcceptanceIssue.UnavailableInvite -> R.string.invite_unavailable
+            InviteAcceptanceIssue.NoInvite -> R.string.invite_reopen
+            is InviteAcceptanceIssue.Account -> { showFailure(error.failure); R.string.invite_reopen }
+            else -> { showFailure(error); R.string.invite_reopen }
+        }
+        mutableState.value = state.value.copy(inviteReady = false, inviteMessage = message)
+    }
+
+    override fun onCleared() {
+        clearInvite()
+    }
 
     fun setServer(value: String) {
         if (value == state.value.draft.server) return
@@ -176,6 +291,7 @@ internal class AccountViewModel @Inject constructor(
             val cleanup = repository.signOut()
             mutableState.value = state.value.copy(cleanup = cleanup, holds = emptyList(), selectedHolds = emptySet())
         }
+        signOutCommand = command
     }
 
     fun requestRevoke(id: String) {
@@ -227,6 +343,16 @@ internal class AccountViewModel @Inject constructor(
         val settings = settingsMutex.withLock { repository.tlsSettings() }
         mutableState.value = state.value.copy(holds = holds, selectedHolds = state.value.selectedHolds.intersect(holds.map { it.identity }.toSet()),
             trust = settings?.takeIf { it.server == state.value.server }?.trust ?: SyncTLSTrust.SYSTEM)
+    }
+
+    private fun cancelCommand() {
+        if (state.value.busy == null || state.value.busy == AccountAction.SIGN_OUT) return
+        // A job cancelled before first dispatch never enters run's finally.
+        ++commandVersion
+        command?.cancel()
+        mutableState.value = state.value.copy(busy = null)
+        projectCondition()
+        if (repository.reports.value?.enabled == true) updateForeground()
     }
 
     private fun run(action: AccountAction, replace: Boolean = false, body: suspend () -> Unit) {

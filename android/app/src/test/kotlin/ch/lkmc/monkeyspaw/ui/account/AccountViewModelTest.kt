@@ -3,7 +3,11 @@
 package ch.lkmc.monkeyspaw.ui.account
 
 import androidx.datastore.core.DataStoreFactory
+import androidx.datastore.core.DataStore
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelLazy
+import androidx.lifecycle.ViewModelProvider
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.llm.*
@@ -14,8 +18,12 @@ import ch.lkmc.monkeyspaw.core.sync.SyncServerURL
 import ch.lkmc.monkeyspaw.core.syncapi.*
 import ch.lkmc.monkeyspaw.data.*
 import ch.lkmc.monkeyspaw.di.AppModule
+import ch.lkmc.monkeyspaw.entry.InviteIntentDecoder
+import android.content.Intent
 import dagger.Lazy
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.test.*
 import java.nio.file.Files
 import java.time.Instant
@@ -58,12 +66,22 @@ internal class AccountViewModelTest : TemporaryFiles() {
         val library = library(files, prompts)
         val startup = AndroidSyncStartup(library, prompts, files, libraryDir.toFile().absolutePath, dispatcher)
         val local = LibraryRepository(library, EditingService(library), prompts, dispatcher) { startup.ready() }
-        val settings = AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
-            produceFile = { filesDir.resolve("datastore/settings.json").toFile() }))
+        var failSettingsRead = false
+        var failAuthenticationScheduling = false
+        var signOutRelease: CompletableDeferred<Unit>? = null
+        private val settingsData = DataStoreFactory.create(serializer = SettingsSerializer, scope = scope,
+            produceFile = { filesDir.resolve("datastore/settings.json").toFile() })
+        val settings = AndroidSettingsStore(object : DataStore<AndroidSettings> by settingsData {
+            override val data = flow {
+                if (failSettingsRead) throw java.io.IOException("Synthetic settings failure")
+                emitAll(settingsData.data)
+            }
+        })
         val secrets = Secrets()
         val requests = mutableListOf<HttpRequest>()
         val enqueued = mutableListOf<SyncWorkRequest>()
         val canceled = mutableListOf<String>()
+        val modes = mutableListOf<SyncExecutionMode>()
         var userID = userA
         var memberships = emptyList<GroupMembership>()
         var handler: (suspend (HttpRequest) -> HttpResponse?)? = null
@@ -71,6 +89,13 @@ internal class AccountViewModelTest : TemporaryFiles() {
             requests.add(request)
             handler?.invoke(request) ?: when {
                 request.url.endsWith("/auth/login") -> HttpResponse(200, body = AuthResponse.codec.encode(AuthResponse("A".repeat(43), user())))
+                request.url.endsWith("/auth/register") -> HttpResponse(200,
+                    body = AuthResponse.codec.encode(AuthResponse("C".repeat(42) + "A", user())))
+                request.url.endsWith("/groups/join") -> {
+                    val joined = GroupMembership("01ARZ3NDEKTSV4RRFFQ69G5FAZ", "Team", Role.VIEWER)
+                    if (memberships.none { it.groupID == joined.groupID }) memberships = memberships + joined
+                    HttpResponse(200, body = GroupMembership.codec.encode(joined))
+                }
                 request.url.endsWith("/me") -> HttpResponse(200, body = MeResponse.codec.encode(MeResponse(user(), memberships, listOf(
                     Device(deviceA, "Android", time, time, null, true), Device(deviceB, "Desktop", time, null, null, false)))))
                 request.url.endsWith("/sync/pull") -> HttpResponse(200, body = PullResponse.codec.encode(PullResponse(databaseID,
@@ -82,16 +107,22 @@ internal class AccountViewModelTest : TemporaryFiles() {
             }
         }
         val scheduler: SyncWorkScheduler by lazy {
+            val session = AndroidSyncWorkSession(startup, Lazy { sync })
             SyncWorkScheduler(SyncWorkPolicy(SyncWorkStateStore(files, files.syncOperations), object : SyncWorkQueue {
                 override suspend fun periodic(generation: String, intervalMillis: Long) {}
                 override suspend fun once(request: SyncWorkRequest) { enqueued.add(request) }
                 override suspend fun cancel(generation: String) { canceled.add(generation) }
-            }, AndroidSyncWorkSession(startup, Lazy { sync }), { Instant.parse(time).toEpochMilli() }, 31), dispatcher)
+            }, object : SyncWorkSession by session {
+                override suspend fun mode(value: SyncExecutionMode) { session.mode(value); modes.add(value) }
+            }, { Instant.parse(time).toEpochMilli() }, 31), dispatcher)
         }
         private val hooks = object : SyncWorkHooks {
             override suspend fun authenticationStopped() = scheduler.authenticationStopped()
-            override suspend fun authenticated(connection: String) { scheduler.authenticated(connection) }
-            override suspend fun signedOut() { scheduler.signedOut() }
+            override suspend fun authenticated(connection: String) {
+                if (failAuthenticationScheduling) throw java.io.IOException("Synthetic scheduling failure")
+                scheduler.authenticated(connection)
+            }
+            override suspend fun signedOut() { signOutRelease?.await(); scheduler.signedOut() }
             override suspend fun saved() { scheduler.saved() }
             override suspend fun changed() { scheduler.changed() }
         }
@@ -105,6 +136,12 @@ internal class AccountViewModelTest : TemporaryFiles() {
 
     private fun rig() = Rig().also { rigs.add(it) }
     private fun model(rig: Rig) = AccountViewModel(rig.sync, rig.scheduler).also { models.put("model-${rigs.size}", it) }
+    private fun accountDelegate(createModel: () -> AccountViewModel) = ViewModelLazy(AccountViewModel::class, { models }, {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = createModel() as T
+        }
+    })
     private fun credentials(model: AccountViewModel, selectedServer: String = server) {
         model.setServer(selectedServer)
         model.setUsername("person")
@@ -521,6 +558,629 @@ internal class AccountViewModelTest : TemporaryFiles() {
         assertTrue(m.state.value.canSync)
     }
 
+    private fun route(m: AccountViewModel, data: String?, action: String? = Intent.ACTION_VIEW, restored: Boolean = false) {
+        InviteIntentDecoder.decode(action, data, restored)?.withValue { m.stageInvite(it) }
+    }
+
+    @Test fun `cold and repeated warm view snapshots stage destination without automatically redeeming`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        for (delivery in 1..3) {
+            route(m, inviteLink)
+            runCurrent()
+            assertEquals(server, m.state.value.invite?.serverURL)
+            assertNull(m.state.value.invite?.currentAccount)
+            assertTrue(m.state.value.inviteReady)
+            assertFalse(m.state.value.canAcceptInvite)
+            assertEquals(InviteAcceptance.EXISTING_ACCOUNT, m.state.value.inviteMode)
+        }
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertEquals("", m.state.value.inviteDraft)
+    }
+
+    @Test fun `warm route shows bound account and server and repeated Accept sends one join`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        assertEquals("person", m.state.value.invite?.currentAccount?.username)
+        assertEquals(server, m.state.value.invite?.currentAccount?.identity?.serverURL)
+        assertEquals(server, m.state.value.invite?.serverURL)
+        assertTrue(m.state.value.canAcceptInvite)
+        assertEquals(0, count(r, "/groups/join"))
+        m.acceptInvite(); m.acceptInvite()
+        assertFalse(m.state.value.inviteReady)
+        runCurrent()
+        assertEquals(1, count(r, "/groups/join"))
+        assertEquals(0, count(r, "/auth/register"))
+        assertEquals(R.string.invite_accepted, m.state.value.inviteMessage)
+        assertEquals(r.memberships, m.state.value.account.me?.groups)
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/groups/join"))
+    }
+
+    @Test fun `cold persisted account is verified before presenting the acceptance account`() = runTest(dispatcher) {
+        val first = rig()
+        first.login(); first.close()
+        val r = rig()
+        r.secrets.values.putAll(first.secrets.values)
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        assertEquals("person", m.state.value.invite?.currentAccount?.username)
+        assertTrue(m.state.value.canAcceptInvite)
+        assertEquals(1, count(r, "/me"))
+        assertEquals(0, count(r, "/groups/join"))
+        assertEquals(0, count(r, "/auth/register"))
+    }
+
+    @Test fun `malformed view snapshots discard prior invite and never redeem`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        val malformed = listOf(null, "", "https://example.test/", "monkeyspaw://join/?server=https%3A%2F%2Fexample.test&token=$inviteToken",
+            "$inviteLink&token=$inviteToken", "$inviteLink&extra=1", "$inviteLink#fragment",
+            inviteLink.replace(inviteToken, "%2541".repeat(43)), inviteLink.replace("%2Fpaw", "%2F..%2Fpaw"))
+        for (link in malformed) {
+            route(m, inviteLink); runCurrent()
+            route(m, link); runCurrent()
+            assertFalse(m.state.value.inviteReady)
+            assertNull(m.state.value.invite)
+            assertEquals(R.string.invite_invalid, m.state.value.inviteMessage)
+        }
+        m.setServer(server)
+        route(m, inviteToken); runCurrent()
+        assertFalse(m.state.value.inviteReady)
+        assertEquals(R.string.invite_invalid, m.state.value.inviteMessage)
+        assertTrue(r.requests.isEmpty())
+        assertTrue(r.secrets.values.isEmpty())
+    }
+
+    @Test fun `only view data is admitted and restored launch snapshots never replay`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        for (action in listOf(null, Intent.ACTION_MAIN, Intent.ACTION_SEND, Intent.ACTION_PROCESS_TEXT))
+            route(m, inviteLink, action)
+        route(m, inviteLink, restored = true)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertNull(m.state.value.busy)
+        assertTrue(r.requests.isEmpty())
+        val secret = InviteIntentDecoder.decode(Intent.ACTION_VIEW, inviteLink)!!
+        assertFalse(secret.toString().contains(inviteToken))
+    }
+
+    @Test fun `different server blocks current credentials until explicit sign in and reopening`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        val other = "https://other.test/team"
+        route(m, "monkeyspaw://join?server=https%3A%2F%2Fother.test%2Fteam&token=$inviteToken"); runCurrent()
+        assertEquals(other, m.state.value.invite?.serverURL)
+        assertEquals(server, m.state.value.invite?.currentAccount?.identity?.serverURL)
+        assertFalse(m.state.value.canAcceptInvite)
+        assertEquals(other, m.state.value.server?.baseURL)
+        val requests = r.requests.size
+        val reads = r.secrets.reads
+        m.acceptInvite(); runCurrent()
+        assertEquals(requests, r.requests.size)
+        assertEquals(reads, r.secrets.reads)
+        credentials(m, other); m.signIn(); runCurrent()
+        assertEquals(R.string.invite_account_changed, m.state.value.inviteMessage)
+        assertNull(m.state.value.invite)
+        val login = r.requests.single { it.url.startsWith(other) && it.url.endsWith("/auth/login") }
+        assertFalse(login.headers.keys.any { it.equals("Authorization", true) })
+        assertEquals(0, count(r, "/groups/join"))
+        route(m, "monkeyspaw://join?server=https%3A%2F%2Fother.test%2Fteam&token=$inviteToken"); runCurrent()
+        assertTrue(m.state.value.canAcceptInvite)
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/groups/join"))
+        assertTrue(r.requests.filter { it.url.endsWith("/groups/join") }.all { it.url.startsWith(other + "/api/v1/") })
+    }
+
+    @Test fun `cancel hide and process loss discard invite and password without redemption`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        m.setPassword(password)
+        m.cancel(); runCurrent()
+        assertNull(m.state.value.invite)
+        assertEquals("", m.state.value.inviteDraft)
+        assertEquals("", m.state.value.draft.password)
+        m.acceptInvite(); runCurrent()
+        route(m, inviteLink); m.hide(); runCurrent()
+        assertNull(m.state.value.invite)
+        val fresh = model(r)
+        route(fresh, inviteLink, restored = true); runCurrent()
+        assertNull(fresh.state.value.invite)
+        assertTrue(r.requests.isEmpty())
+    }
+
+    @Test fun `new account requires an explicit mode and Accept and keeps successful scheduling hook`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        credentials(m)
+        assertFalse(m.state.value.canAcceptInvite)
+        m.acceptInvite(); runCurrent()
+        assertTrue(r.requests.isEmpty())
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        assertEquals("", m.state.value.draft.password)
+        m.setPassword(password)
+        assertTrue(m.state.value.canAcceptInvite)
+        assertEquals("person", m.state.value.draft.username)
+        assertEquals(server, m.state.value.invite?.serverURL)
+        assertTrue(r.requests.isEmpty())
+        m.acceptInvite(); m.acceptInvite()
+        assertEquals("", m.state.value.draft.password)
+        runCurrent()
+        assertEquals(1, count(r, "/auth/register"))
+        assertEquals(0, count(r, "/groups/join"))
+        assertEquals(AccountCondition.ACTIVE, m.state.value.condition)
+        assertEquals(R.string.invite_accepted, m.state.value.inviteMessage)
+        val request = r.requests.single { it.url.endsWith("/auth/register") }
+        assertFalse(request.headers.keys.any { it.equals("Authorization", true) })
+        val registration = RegisterRequest.codec.decode(request.body!!)
+        assertTrue(registration.inviteToken == inviteToken)
+        assertTrue(registration.password == password)
+        assertTrue(r.enqueued.isNotEmpty())
+        assertFalse(r.scheduler.authenticationStopped())
+        val disk = Files.walk(filesDir).use { paths -> paths.filter { Files.isRegularFile(it) }.map { Files.readString(it) }.toList().joinToString() }
+        assertFalse(disk.contains(inviteToken))
+        assertFalse(disk.contains(password))
+        assertFalse(m.state.value.toString().contains(inviteToken))
+        assertFalse(m.state.value.invite.toString().contains(inviteToken))
+    }
+
+    @Test fun `bare token needs explicitly selected server and HTTP destination warns`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        m.setInviteDraft(inviteToken); m.stageInvite(); runCurrent()
+        assertEquals(R.string.invite_server_required, m.state.value.inviteMessage)
+        assertEquals("", m.state.value.inviteDraft)
+        m.setServer("http://192.168.1.2/paw")
+        m.setInviteDraft(inviteToken); m.stageInvite(); runCurrent()
+        assertEquals("http://192.168.1.2/paw", m.state.value.invite?.serverURL)
+        assertTrue(m.state.value.invite?.usesHTTP == true)
+        assertTrue(r.requests.isEmpty())
+    }
+
+    @Test fun `new account on another server registers anonymously and activates only its returned credential`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        val other = "https://other.test/team"
+        route(m, "monkeyspaw://join?server=https%3A%2F%2Fother.test%2Fteam&token=$inviteToken"); runCurrent()
+        assertEquals(server, m.state.value.invite?.currentAccount?.identity?.serverURL)
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m, other)
+        r.userID = userB
+        m.acceptInvite(); runCurrent()
+        assertEquals(R.string.invite_accepted, m.state.value.inviteMessage)
+        assertEquals(other, m.state.value.account.account?.identity?.serverURL)
+        assertEquals(ULID.parse(userB), m.state.value.account.account?.identity?.userID)
+        assertEquals(1, count(r, "/auth/register"))
+        val foreign = r.requests.filter { it.url.startsWith(other) }
+        assertTrue(foreign.isNotEmpty())
+        assertTrue(foreign.filter { it.url.endsWith("/auth/register") }.all {
+            it.headers.keys.none { name -> name.equals("Authorization", true) }
+        })
+        assertTrue(foreign.none { request -> request.headers.values.any { it.contains("A".repeat(43)) } })
+        assertEquals(0, count(r, "/groups/join"))
+    }
+
+    @Test fun `rapid warm snapshots keep only the newest staged destination`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink)
+        route(m, "monkeyspaw://join?server=https%3A%2F%2Fother.test%2Fteam&token=$inviteToken")
+        runCurrent()
+        assertEquals("https://other.test/team", m.state.value.invite?.serverURL)
+        assertTrue(m.state.value.inviteReady)
+        assertTrue(r.requests.isEmpty())
+    }
+
+    @Test fun `warm invite arriving before confirmed sign out runs waits for credential cleanup`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        runCurrent()
+        m.requestSignOut(); m.signOut()
+        assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
+        route(m, inviteLink)
+        runCurrent()
+        assertEquals(1, count(r, "/auth/logout"))
+        assertNull(m.state.value.account.account)
+        assertTrue(r.secrets.values.isEmpty())
+        assertTrue(m.state.value.inviteReady)
+        assertNull(m.state.value.invite?.currentAccount)
+        assertFalse(m.state.value.canAcceptInvite)
+        assertEquals(0, count(r, "/groups/join"))
+        assertEquals(0, count(r, "/auth/register"))
+    }
+
+    @Test fun `repeated warm invites cannot bypass a draining confirmed sign out`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        runCurrent()
+        val release = CompletableDeferred<Unit>()
+        r.signOutRelease = release
+        m.requestSignOut(); m.signOut(); runCurrent()
+        try {
+            route(m, inviteLink); runCurrent()
+            route(m, inviteLink); runCurrent()
+            assertFalse(m.state.value.inviteReady)
+            assertEquals(0, count(r, "/groups/join"))
+            assertEquals(0, count(r, "/auth/register"))
+        } finally {
+            release.complete(Unit)
+            runCurrent()
+        }
+        assertEquals(1, count(r, "/auth/logout"))
+        assertNull(m.state.value.account.account)
+        assertTrue(r.secrets.values.isEmpty())
+        assertTrue(m.state.value.inviteReady)
+        assertNull(m.state.value.invite?.currentAccount)
+    }
+
+    @Test fun `accepted join with refresh failure reports commitment and never retries on refresh`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        r.handler = { if (it.url.endsWith("/me")) throw HttpTransportError.NetworkFailure else null }
+        m.acceptInvite(); runCurrent()
+        assertEquals(R.string.invite_refresh_incomplete, m.state.value.inviteMessage)
+        assertNull(m.state.value.account.me)
+        assertFalse(m.state.value.inviteReady)
+        r.handler = null
+        m.refresh(); runCurrent()
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/groups/join"))
+        assertNotNull(m.state.value.account.me)
+    }
+
+    @Test fun `failure to load local account details after a committed invite preserves accepted status`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        r.handler = { if (it.url.endsWith("/groups/join")) r.failSettingsRead = true; null }
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/groups/join"))
+        assertTrue(m.state.value.inviteMessage in setOf(R.string.invite_accepted, R.string.invite_refresh_incomplete))
+        assertFalse(m.state.value.inviteReady)
+        assertNotNull(m.state.value.failure)
+    }
+
+    @Test fun `scheduling failure after committed registration still reports account created`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m)
+        r.failAuthenticationScheduling = true
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/auth/register"))
+        assertEquals(R.string.invite_registration_incomplete, m.state.value.inviteMessage)
+        assertFalse(m.state.value.inviteReady)
+        assertEquals("", m.state.value.draft.password)
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/auth/register"))
+        r.failAuthenticationScheduling = false
+        credentials(m); m.signIn(); runCurrent()
+        assertEquals(1, count(r, "/auth/login"))
+        assertEquals(1, count(r, "/auth/register"))
+    }
+
+    @Test fun `unavailable invite is consumed and fixed messages never contain server response secrets`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        r.handler = { if (it.url.endsWith("/groups/join")) HttpResponse(400,
+            body = ErrorResponse.codec.encode(ErrorResponse.Failure(FailureCode.MALFORMED_REQUEST))) else null }
+        m.acceptInvite(); runCurrent()
+        assertEquals(R.string.invite_unavailable, m.state.value.inviteMessage)
+        assertFalse(m.state.value.inviteReady)
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/groups/join"))
+    }
+
+    @Test fun `remote registration with failed local activation offers sign in without repeat redemption`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        put(libraryDir.resolve("Groups/keep.md"), "preserve".encodeToByteArray())
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m)
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/auth/register"))
+        assertEquals(R.string.invite_registration_incomplete, m.state.value.inviteMessage)
+        assertFalse(m.state.value.inviteReady)
+        assertEquals("", m.state.value.draft.password)
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/auth/register"))
+        Files.delete(libraryDir.resolve("Groups/keep.md"))
+        Files.delete(libraryDir.resolve("Groups"))
+        credentials(m); m.signIn(); runCurrent()
+        assertEquals(1, count(r, "/auth/login"))
+        assertEquals(1, count(r, "/auth/register"))
+        assertEquals(AccountCondition.ACTIVE, m.state.value.condition)
+    }
+
+    @Test fun `cancelling registration during verification drops secret drafts and fences a late result`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink); runCurrent()
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m)
+        val entered = CompletableDeferred<Unit>()
+        r.handler = { if (it.url.endsWith("/me")) { entered.complete(Unit); awaitCancellation() } else null }
+        m.acceptInvite(); runCurrent(); entered.await()
+        m.setPassword("new synthetic secret")
+        m.hide(); runCurrent()
+        assertNull(m.state.value.invite)
+        assertNull(m.state.value.inviteMessage)
+        assertEquals("", m.state.value.draft.password)
+        assertTrue(r.secrets.values.isEmpty())
+        assertEquals(1, count(r, "/auth/register"))
+        assertEquals(1, count(r, "/auth/logout"))
+        m.acceptInvite(); runCurrent()
+        assertEquals(1, count(r, "/auth/register"))
+    }
+
+    @Test fun `unleased stop leaves an unused AndroidX delegate and authenticated graph unconstructed`() = runTest(dispatcher) {
+        var constructions = 0
+        val account = accountDelegate {
+            constructions++
+            val r = rig()
+            AccountViewModel(r.sync, r.scheduler)
+        }
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertEquals(0, constructions)
+        assertFalse(account.isInitialized())
+        assertTrue(rigs.isEmpty())
+    }
+
+    @Test fun `unleased stop clears a settled invite and password without replacing the retained model`() = runTest(dispatcher) {
+        val r = rig()
+        var constructions = 0
+        val account = accountDelegate { constructions++; AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink); runCurrent()
+        assertTrue(m.state.value.inviteReady)
+        m.setPassword(password)
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertFalse(m.state.value.inviteReady)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        m.acceptInvite(); runCurrent()
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        val recreated = accountDelegate { constructions++; AccountViewModel(r.sync, r.scheduler) }
+        assertSame(m, recreated.value)
+        assertEquals(1, constructions)
+    }
+
+    @Test fun `unleased stop cancels queued staging before it can publish a late invite`() = runTest(dispatcher) {
+        val r = rig()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink)
+        assertEquals(AccountAction.STAGE_INVITE, m.state.value.busy)
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertFalse(m.state.value.inviteReady)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertNull(r.sync.accounts.value)
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
+        assertNull(m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
+        runCurrent()
+        assertNull(m.state.value.busy)
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
+    }
+
+    @Test fun `unleased stop cancels accepted registration before HTTP admission`() = runTest(dispatcher) {
+        val r = rig()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink); runCurrent()
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m)
+        m.acceptInvite()
+        assertEquals(AccountAction.ACCEPT_INVITE, m.state.value.busy)
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.invite)
+        assertFalse(m.state.value.inviteReady)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        m.acceptInvite(); runCurrent()
+        assertEquals(0, count(r, "/auth/register"))
+        assertEquals(0, count(r, "/groups/join"))
+        assertTrue(r.secrets.values.isEmpty())
+        assertNull(m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
+        runCurrent()
+        assertNull(m.state.value.busy)
+        assertTrue(r.requests.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
+    }
+
+    @Test fun `owned stop clears presentation and releases foreground exactly once`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        m.setForeground(SyncForegroundOwner.ACCOUNT); runCurrent()
+        assertEquals(listOf(SyncExecutionMode.FOREGROUND), r.modes)
+        route(m, inviteLink); runCurrent()
+        m.setPassword(password)
+        val modes = r.modes.toList()
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
+
+        repeat(2) { stopAccountPresentation(account, AccountStopMode.RELEASE_FOREGROUND); runCurrent() }
+        assertNull(m.state.value.busy)
+        assertNull(m.state.value.invite)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertEquals(modes + SyncExecutionMode.BACKGROUND, r.modes)
+        assertEquals(r.modes.count { it == SyncExecutionMode.FOREGROUND }, r.modes.count { it == SyncExecutionMode.BACKGROUND })
+        val requests = r.requests.size
+        advanceTimeBy(61_000); runCurrent()
+        assertEquals(requests, r.requests.size)
+        assertEquals(0, count(r, "/groups/join"))
+    }
+
+    @Test fun `unleased clearing preserves another owners foreground admission`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        r.scheduler.enter(SyncForegroundOwner.LIBRARY)
+        runCurrent()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        route(m, inviteLink); runCurrent()
+        val modes = r.modes.toList()
+        route(m, inviteLink)
+        assertEquals(AccountAction.STAGE_INVITE, m.state.value.busy)
+
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        runCurrent()
+        assertNull(m.state.value.busy)
+        assertNull(m.state.value.invite)
+        assertEquals(modes, r.modes)
+        val pulls = count(r, "/sync/pull")
+        advanceTimeBy(61_000); runCurrent()
+        assertTrue(count(r, "/sync/pull") > pulls)
+        r.scheduler.leave(SyncForegroundOwner.LIBRARY)
+        assertEquals(listOf(SyncExecutionMode.FOREGROUND, SyncExecutionMode.BACKGROUND), r.modes)
+    }
+
+    @Test fun `unleased stop retains confirmed sign out while clearing held passwords`() = runTest(dispatcher) {
+        val r = rig()
+        r.login()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        runCurrent()
+        val release = CompletableDeferred<Unit>()
+        r.signOutRelease = release
+        m.requestSignOut(); m.signOut()
+        m.setPassword(password)
+        stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+        assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
+        runCurrent()
+        try {
+            assertEquals(AccountAction.SIGN_OUT, m.state.value.busy)
+            assertTrue(m.state.value.draft.password.isEmpty())
+        } finally { release.complete(Unit); runCurrent() }
+        assertNull(m.state.value.busy)
+        assertNull(m.state.value.account.account)
+        assertTrue(r.secrets.values.isEmpty())
+        assertEquals(1, count(r, "/auth/logout"))
+        assertEquals(0, count(r, "/groups/join"))
+        assertEquals(0, count(r, "/auth/register"))
+    }
+
+    @Test fun `dismissing queued invite commands releases busy for the next intended operation`() = runTest(dispatcher) {
+        val r = rig()
+        val m = model(r)
+        route(m, inviteLink)
+        m.dismissInvite()
+        assertNull(m.state.value.busy)
+        route(m, inviteLink)
+        assertEquals(AccountAction.STAGE_INVITE, m.state.value.busy)
+        runCurrent()
+        assertTrue(m.state.value.inviteReady)
+        assertNull(m.state.value.busy)
+
+        m.setInviteMode(InviteAcceptance.NEW_ACCOUNT)
+        credentials(m)
+        m.acceptInvite()
+        m.dismissInvite()
+        assertNull(m.state.value.busy)
+        m.refresh()
+        assertEquals(AccountAction.REFRESH, m.state.value.busy)
+        runCurrent()
+        assertNull(m.state.value.busy)
+        assertNull(m.state.value.invite)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertTrue(r.requests.isEmpty())
+        assertTrue(r.secrets.values.isEmpty())
+        assertEquals(0, r.secrets.reads)
+        assertTrue(r.modes.isEmpty())
+    }
+
+    @Test fun `cancelled command draining cleanup cannot reset a newer commands busy or password`() = runTest(dispatcher) {
+        val r = rig()
+        val account = accountDelegate { AccountViewModel(r.sync, r.scheduler) }
+        val m = account.value
+        val firstEntered = CompletableDeferred<Unit>()
+        val cleanupEntered = CompletableDeferred<Unit>()
+        val cleanupRelease = CompletableDeferred<Unit>()
+        val nextEntered = CompletableDeferred<Unit>()
+        val nextRelease = CompletableDeferred<Unit>()
+        var verifications = 0
+        r.handler = { request ->
+            when {
+                request.url.endsWith("/me") -> {
+                    if (++verifications == 1) { firstEntered.complete(Unit); awaitCancellation() }
+                    nextEntered.complete(Unit)
+                    nextRelease.await()
+                }
+                request.url.endsWith("/auth/logout") -> { cleanupEntered.complete(Unit); cleanupRelease.await() }
+            }
+            null
+        }
+        try {
+            credentials(m)
+            m.signIn(); runCurrent()
+            assertTrue(firstEntered.isCompleted)
+            stopAccountPresentation(account, AccountStopMode.CLEAR_PRESENTATION)
+            assertNull(m.state.value.busy)
+            runCurrent()
+            assertTrue(cleanupEntered.isCompleted)
+            assertTrue(m.state.value.draft.password.isEmpty())
+
+            credentials(m)
+            m.signIn()
+            assertEquals(AccountAction.SIGN_IN, m.state.value.busy)
+            m.setPassword("new synthetic secret")
+            runCurrent()
+            assertEquals(1, count(r, "/auth/login"))
+            cleanupRelease.complete(Unit); runCurrent()
+            assertTrue(nextEntered.isCompleted)
+            assertEquals(AccountAction.SIGN_IN, m.state.value.busy)
+            assertEquals("new synthetic secret", m.state.value.draft.password)
+        } finally {
+            cleanupRelease.complete(Unit)
+            nextRelease.complete(Unit)
+            runCurrent()
+        }
+        assertNull(m.state.value.busy)
+        assertTrue(m.state.value.draft.password.isEmpty())
+        assertEquals(AccountCondition.ACTIVE, m.state.value.condition)
+        assertEquals(2, count(r, "/auth/login"))
+        assertEquals(1, count(r, "/auth/logout"))
+        assertEquals(0, count(r, "/auth/register"))
+        assertEquals(0, count(r, "/groups/join"))
+    }
+
     private companion object {
         const val server = "https://example.test/paw"
         const val time = "2026-10-15T00:00:00.000Z"
@@ -530,5 +1190,7 @@ internal class AccountViewModelTest : TemporaryFiles() {
         const val deviceA = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
         const val deviceB = "01ARZ3NDEKTSV4RRFFQ69G5FAY"
         const val databaseID = "11111111-1111-4111-8111-111111111111"
+        val inviteToken = "B".repeat(42) + "A"
+        val inviteLink = "monkeyspaw://join?server=https%3A%2F%2Fexample.test%2Fpaw&token=$inviteToken"
     }
 }

@@ -117,10 +117,18 @@ internal class AppGraphTest {
     }
 
     @Test
-    fun `manifest disables backups and permits only declared local entries in one process`() {
+    fun `manifest disables backups and permits declared entries including launcher join links in one process`() {
         val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
         val document = factory.newDocumentBuilder().parse(File(sources, "AndroidManifest.xml"))
         validateManifest(document)
+        val activities = document.getElementsByTagName("activity")
+        val viewers = (0 until activities.length).map { activities.item(it) as org.w3c.dom.Element }.filter { activity ->
+            val actions = activity.getElementsByTagName("action")
+            (0 until actions.length).any {
+                (actions.item(it) as org.w3c.dom.Element).getAttributeNS(androidNamespace, "name") == "android.intent.action.VIEW"
+            }
+        }
+        assertEquals(listOf(".MainActivity"), viewers.map { it.getAttributeNS(androidNamespace, "name") })
     }
 
     @Test
