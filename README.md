@@ -56,11 +56,11 @@ resolution are available on main. Automated device-token privacy fixtures
 passed native CI. The [desktop sync guide](docs/platform/sync.md) records the
 automated proof and open checks of deployed servers, signed installations,
 real keyrings and physical devices, which remain M6 Y34 work.
-Android's repository, background scheduling, Account/status screens, Library
-groups and role-aware Library, Editor and Assistant integration are on main;
-invite and conflict-resolution UI integration and phone/desktop acceptance
-remain M10 Z27 work, tracked in
-[PLAN.md](PLAN.md).
+Android implements optional server sign-in, explicit-consent invite
+acceptance, groups with viewer read-only access, conflict resolution and
+WorkManager background sync. Phone/desktop acceptance remains open in the
+[M10 checklist](docs/platform/android.md#android-sync-m10-not-run-owner),
+tracked in [PLAN.md](PLAN.md).
 
 ## Troubleshooting
 
