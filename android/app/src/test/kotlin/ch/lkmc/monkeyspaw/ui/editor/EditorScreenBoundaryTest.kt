@@ -26,7 +26,7 @@ internal class EditorScreenBoundaryTest {
     @Test
     fun `editor screens render completed intents and library selection goes through the guard`() {
         val screen = packageRoot.resolve("ui/editor/EditorScreen.kt").readText()
-        for (intent in listOf("onEdit", "onSave", "onRename", "onMove", "onDelete", "onRestore", "onDecision", "onConflict")) {
+        for (intent in listOf("onEdit", "onSave", "onRename", "onMove", "onPrivateCopy", "onDelete", "onRestore", "onDecision", "onConflict")) {
             assertTrue(screen.contains(intent), intent)
         }
         assertTrue(screen.contains("EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)"))
@@ -34,6 +34,9 @@ internal class EditorScreenBoundaryTest {
         assertTrue(field.contains("readOnly = !editable"))
         assertTrue(field.contains("editorSourceValue(field, source, quote)"))
         assertTrue(screen.contains("selected.canRestore && state.canCommand"))
+        assertTrue(screen.contains("EditorMoveTarget(moveDestination.group?.id, destination)"))
+        assertTrue(screen.contains("state.canPrivateCopy"))
+        assertFalse(screen.contains("rememberSaveable"))
         val activity = packageRoot.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("editor.onSelectionChanged = library::selectFromEditor"))
         assertTrue(activity.contains("onEdit = { assistantImprove.close(); assistantReview.close(); editor.open(it) }"))

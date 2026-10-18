@@ -56,9 +56,10 @@ resolution are available on main. Automated device-token privacy fixtures
 passed native CI. The [desktop sync guide](docs/platform/sync.md) records the
 automated proof and open checks of deployed servers, signed installations,
 real keyrings and physical devices, which remain M6 Y34 work.
-Android's repository, background scheduling and Account/status screens are
-on main; Library sync, group, invite and conflict-resolution UI integration
-and phone/desktop acceptance remain M10 Z27 work, tracked in
+Android's repository, background scheduling, Account/status screens, Library
+groups and role-aware Library, Editor and Assistant integration are on main;
+invite and conflict-resolution UI integration and phone/desktop acceptance
+remain M10 Z27 work, tracked in
 [PLAN.md](PLAN.md).
 
 ## Troubleshooting

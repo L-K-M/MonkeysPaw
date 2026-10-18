@@ -42,9 +42,10 @@ resolution are available on main. Automated device-token privacy fixtures
 passed both native CI suites. The [desktop sync guide](docs/platform/sync.md)
 records automated proof and open checks of deployed servers, signed
 installations, real keyrings and physical devices, which remain M6 Y34 work.
-Android's sync repository, background scheduling and Account/status screens
-are on main; Library sync, group, invite and conflict-resolution UI integration
-and Android sync acceptance remain M10 Z27 work. No Android
+Android's sync repository, background scheduling, Account/status screens,
+Library groups and role-aware Library, Editor and Assistant integration are
+on main; invite and conflict-resolution UI integration and Android sync
+acceptance remain M10 Z27 work. No Android
 desktop-style update checker is claimed. See
 [Android usage](README.android.md) and [security boundaries](SECURITY.md).
 

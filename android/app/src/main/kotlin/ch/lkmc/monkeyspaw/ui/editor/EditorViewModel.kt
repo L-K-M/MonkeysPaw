@@ -32,7 +32,7 @@ internal class EditorViewModel @Inject constructor(
     private data class Baseline(val entry: LibraryEntry, val source: String?,
         val readOnlyReason: SourceReadOnlyReason?, val projection: EditorDocumentState)
     private enum class GuardMode { UNSAVED_EDITS, PREVIEWED_BUFFER }
-    private data class Request(val decision: EditorPendingDecision, val session: Long,
+    private data class Request(val decision: EditorPendingDecision, val session: Long, val accessGeneration: Long,
         val mode: GuardMode = GuardMode.UNSAVED_EDITS, val operation: (() -> Unit)? = null,
         val cancelled: (() -> Unit)? = null)
     private data class Observation(val load: PromptLoadResult, val projection: EditorDocumentState?)
@@ -65,6 +65,10 @@ internal class EditorViewModel @Inject constructor(
     private var loadJob: Job? = null
     private var historyRequested = false
     private var assistantPermit: AssistantSavePermit? = null
+    private var assistantWritePermit: LibraryWritePermit? = null
+    private var assistantWriteOwner: CompletableJob? = null
+    private var assistantPreparing = false
+    private var observedAccessGeneration = repository.accessSnapshot.generation
     private var assistantSource: AssistantEditorSnapshot? = null
     private var assistantDecision: Long? = null
     private var adoptingAssistant = false
@@ -73,12 +77,23 @@ internal class EditorViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             repository.state.collect { library ->
+                updateAccess(repository.accessSnapshot)
                 if (library.refreshing || library.snapshot.version == 0L || state.value.writing ||
                     state.value.status == EditorStatus.LOADING || state.value.isNew) return@collect
                 val path = state.value.relativePath ?: return@collect
                 val stamp = baseline?.entry?.stamp ?: return@collect
-                val current = library.snapshot.prompts.firstOrNull { it.entry.relativePath == path }?.entry
-                if (current?.stamp != stamp) refresh()
+                val identity = state.value.selection?.identity
+                var current = library.snapshot.prompts.firstOrNull { it.entry.relativePath == path }?.entry
+                if (current?.identity != identity) {
+                    val moved = library.snapshot.prompts.filter { it.entry.identity == identity }.singleOrNull()?.entry
+                    if (moved != null) {
+                        current = moved
+                        currentState = state.value.copy(relativePath = current.relativePath, selection = selection(current))
+                        onSelectionChanged?.invoke(selection(current))
+                        updateAccess(repository.accessSnapshot)
+                    }
+                }
+                if (current?.stamp != stamp || current.relativePath != path) refresh()
             }
         }
     }
@@ -88,6 +103,8 @@ internal class EditorViewModel @Inject constructor(
         return EditorSnapshot(session, revision, current.relativePath ?: return null,
             current.source ?: return null, current.stamp, current.selection?.identity, current.isNew)
     }
+
+    val assistantAccessGeneration: Long get() = repository.accessSnapshot.generation
 
     /** Capture on the UI thread. Parsing, merge and diff belong to AssistantService's worker. */
     val assistantSnapshot: AssistantEditorSnapshot? get() {
@@ -101,7 +118,8 @@ internal class EditorViewModel @Inject constructor(
             else -> AssistantEditorAvailability.AVAILABLE
         }
         return AssistantEditorSnapshot(current.source, path, revision, session, current.stamp,
-            baseline?.entry?.document?.frontMatter?.id, availability, current.readOnlyReason, current.isNew)
+            baseline?.entry?.document?.frontMatter?.id, availability,
+            current.readOnlyReason?.takeUnless { it == SourceReadOnlyReason.GROUP_VIEWER }, current.isNew)
     }
 
     /** Synchronous notifications preserve away-and-back transitions that StateFlow can conflate. */
@@ -159,6 +177,10 @@ internal class EditorViewModel @Inject constructor(
         assistantPermit = permit
         assistantSource = acceptance.candidate.context.editor
         val epoch = session
+        val accessGeneration = repository.accessSnapshot.generation
+        val owner = SupervisorJob(applicationScope.coroutineContext[Job])
+        assistantWriteOwner = owner
+        assistantPreparing = true
         var completed = false
         val finish: (AssistantAcceptanceOutcome) -> Unit = { outcome ->
             if (!completed) {
@@ -169,6 +191,7 @@ internal class EditorViewModel @Inject constructor(
         }
         val start = {
             assistantDecision = null
+            val writePermit = checkNotNull(assistantWritePermit)
             val refusal = permit.refusal ?: validate() ?: when {
                 !active || epoch != session -> AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Inactive)
                 reading || state.value.writing || state.value.status == EditorStatus.LOADING || state.value.conflict != null ->
@@ -179,20 +202,41 @@ internal class EditorViewModel @Inject constructor(
                 else -> null
             }
             if (refusal != null) { permit.invalidate(refusal); finish(refusal) }
-            else startAssistantSave(acceptance, permit, epoch, finish)
+            else startAssistantSave(acceptance, permit, writePermit, epoch, finish)
         }
         val source = acceptance.candidate.context.editor
-        val path = PromptCreation.relativePath(
-            acceptance.candidate.content.document.frontMatter.title, clock.now())
+        val path = PromptCreation.relativePath(acceptance.candidate.content.document.frontMatter.title, clock.now())
         val action = if (acceptance.destination == AssistantSaveDestination.IMPROVE && state.value.selection != null) {
             EditorAction.Open(checkNotNull(state.value.selection))
         } else EditorAction.New(path)
         val id = ++nextDecision
         assistantDecision = id
-        requests.addLast(Request(EditorPendingDecision(id, action), source?.session ?: epoch,
+        // Reserve ordering now; drain cannot expose the decision until IO captures its permit.
+        requests.addLast(Request(EditorPendingDecision(id, action), source?.session ?: epoch, accessGeneration,
             if (acceptance.destination == AssistantSaveDestination.IMPROVE) GuardMode.PREVIEWED_BUFFER else GuardMode.UNSAVED_EDITS,
             start, { finish(permit.refusal ?: AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.Cancelled)) }))
         drain()
+        applicationScope.launch(owner + Dispatchers.Main.immediate) {
+            try {
+                val writePermit = repository.withLibrary { _, editing -> editing.captureWritePermit(owner) }
+                if (assistantPermit !== permit) { writePermit.cancel(); return@launch }
+                assistantWritePermit = writePermit
+                if (writePermit.accessGeneration != accessGeneration ||
+                    acceptance.candidate.context.accessGeneration != accessGeneration) {
+                    permit.invalidate(AssistantAcceptanceOutcome.Failed(AssistantAcceptanceFailure.StaleContext))
+                    cancelAssistantAcceptance(permit)
+                    return@launch
+                }
+                assistantPreparing = false
+                drain()
+            } catch (error: Exception) {
+                val refusal = permit.refusal ?: AssistantAcceptanceOutcome.Failed(if (error is CancellationException)
+                    AssistantAcceptanceFailure.Cancelled else AssistantAcceptanceFailure.Editing(error))
+                permit.invalidate(refusal)
+                cancelAssistantAcceptance(permit)
+                finish(refusal)
+            }
+        }
     }
 
     override fun cancelAssistantAcceptance(permit: AssistantSavePermit) {
@@ -212,12 +256,17 @@ internal class EditorViewModel @Inject constructor(
 
     private fun releaseAssistantPermit(permit: AssistantSavePermit) {
         if (assistantPermit !== permit) return
+        assistantWritePermit?.cancel()
+        assistantWritePermit = null
+        assistantWriteOwner?.cancel()
+        assistantWriteOwner = null
+        assistantPreparing = false
         assistantPermit = null
         assistantSource = null
         assistantDecision = null
     }
 
-    private fun startAssistantSave(acceptance: AssistantAcceptance, permit: AssistantSavePermit, epoch: Long,
+    private fun startAssistantSave(acceptance: AssistantAcceptance, permit: AssistantSavePermit, writePermit: LibraryWritePermit, epoch: Long,
         completion: (AssistantAcceptanceOutcome) -> Unit) {
         loadGeneration++
         historyGeneration++
@@ -229,7 +278,7 @@ internal class EditorViewModel @Inject constructor(
             var projection: EditorDocumentState? = null
             val outcome = try {
                 repository.withLibrary { _, editing ->
-                    editing.accept(acceptance, permit).also { result ->
+                    editing.accept(acceptance, permit, writePermit).also { result ->
                         projection = result.committed?.entry?.document?.let(::project)
                     }
                 }
@@ -283,6 +332,27 @@ internal class EditorViewModel @Inject constructor(
     fun reload() = request(EditorAction.Reload)
     fun rename(filename: String) = request(EditorAction.Rename(filename))
     fun move(folder: String) = request(EditorAction.Move(folder))
+    fun move(target: EditorMoveTarget) {
+        val access = repository.accessSnapshot
+        val group = target.groupID?.let { access.groups[it] }
+        if (target.groupID != null && group == null) {
+            currentState = state.value.copy(failure = EditorFailure.ACCESS_CHANGED)
+            return
+        }
+        val folder = if (group == null) target.subfolder else
+            "Groups/${group.folder}" + if (target.subfolder.isEmpty()) "" else "/${target.subfolder}"
+        val destination = (if (folder.isEmpty()) "" else "$folder/") + state.value.relativePath.orEmpty().substringAfterLast('/')
+        if (access.access(destination).readOnlyReason != null) {
+            currentState = state.value.copy(failure = EditorFailure.READ_ONLY)
+            return
+        }
+        // A Personal subfolder must not silently select a managed group instead.
+        if (group == null && access.access(destination) != PromptAccessState.Local) {
+            currentState = state.value.copy(failure = EditorFailure.INVALID_PATH)
+            return
+        }
+        move(folder)
+    }
     fun delete() = request(EditorAction.Delete)
     fun restore(revision: HistoryRevision) = request(EditorAction.Restore(revision))
 
@@ -299,6 +369,7 @@ internal class EditorViewModel @Inject constructor(
         if (!active || !state.value.isNew || state.value.writing || state.value.relativePath == path) return
         revision++
         currentState = state.value.copy(relativePath = path, dirty = true, failure = null, saveIssues = emptyList(), validating = true)
+        updateAccess(repository.accessSnapshot)
         validate()
     }
 
@@ -327,14 +398,15 @@ internal class EditorViewModel @Inject constructor(
     private fun startSave(stamp: FileStamp?) {
         if (!active || !state.value.canEdit || state.value.writing || state.value.status == EditorStatus.LOADING) return
         val captured = snapshot() ?: return
+        val accessGeneration = repository.accessSnapshot.generation
         loadGeneration++
         loadJob?.cancel()
         reading = false
         currentState = state.value.copy(status = EditorStatus.SAVING, failure = null, saveIssues = emptyList())
         viewModelScope.launch {
-            val completed = command(captured) { editing ->
-                if (captured.isNew) editing.create(captured.source, captured.relativePath)
-                else editing.save(captured.source, captured.relativePath, stamp)
+            val completed = command(captured, accessGeneration) { editing, permit ->
+                if (captured.isNew) editing.create(captured.source, captured.relativePath, permit)
+                else editing.save(captured.source, captured.relativePath, stamp, permit)
             }
             if (!current(captured)) return@launch
             currentState = state.value.copy(status = EditorStatus.READY)
@@ -349,8 +421,35 @@ internal class EditorViewModel @Inject constructor(
         }
     }
 
+    fun privateCopy(destination: String) {
+        if (!active || !state.value.canPrivateCopy) return
+        val original = baseline?.entry ?: return
+        val captured = snapshot() ?: return
+        val accessGeneration = repository.accessSnapshot.generation
+        loadGeneration++
+        loadJob?.cancel()
+        historyGeneration++
+        currentState = state.value.copy(status = EditorStatus.COMMAND, failure = null,
+            history = state.value.history.copy(loading = false))
+        viewModelScope.launch {
+            val completed = command(captured, accessGeneration) { editing, permit ->
+                editing.createPrivateCopy(captured.source, original, destination, permit)
+            }
+            if (!current(captured)) return@launch
+            currentState = state.value.copy(status = EditorStatus.READY)
+            if (completed.result is EditResult.Saved) {
+                // Retire source-bound commands when adopting a new private identity.
+                session++
+                acceptCommit(completed, DraftAcceptance.REPLACE)
+            } else applyFailure(completed.result)
+            drain()
+        }
+    }
+
     fun resolveDecision(id: Long, decision: EditorDecision) {
         if (!active || state.value.writing || pending?.decision?.id != id) return
+        updateAccess(repository.accessSnapshot)
+        if (pending?.decision?.id != id) return
         when (decision) {
             EditorDecision.SAVE -> {
                 if (state.value.conflict != null) return
@@ -358,12 +457,15 @@ internal class EditorViewModel @Inject constructor(
                 save()
             }
             EditorDecision.DISCARD -> {
-                if (baseline != null) acceptBaseline(checkNotNull(baseline)) else {
-                    revision++
-                    currentState = state.value.copy(source = "", validating = true)
-                    validate()
+                // A refused file command retains the draft until it commits.
+                if (pending?.decision?.action?.let(::isCommand) != true) {
+                    if (baseline != null) acceptBaseline(checkNotNull(baseline)) else {
+                        revision++
+                        currentState = state.value.copy(source = "", validating = true)
+                        validate()
+                    }
+                    currentState = state.value.copy(dirty = false, conflict = null, failure = null)
                 }
-                currentState = state.value.copy(dirty = false, conflict = null, failure = null)
                 finishDecision()
             }
             EditorDecision.CANCEL -> {
@@ -414,7 +516,7 @@ internal class EditorViewModel @Inject constructor(
         if (action == runningCommand) return
         if (pending?.let { it.session == session && it.decision.action == action } == true ||
             requests.any { it.session == session && it.decision.action == action }) return
-        requests.addLast(Request(EditorPendingDecision(++nextDecision, action), session))
+        requests.addLast(Request(EditorPendingDecision(++nextDecision, action), session, repository.accessSnapshot.generation))
         drain()
     }
 
@@ -424,6 +526,7 @@ internal class EditorViewModel @Inject constructor(
         while (active && !state.value.writing && pending == null && requests.isNotEmpty()) {
             val next = requests.first()
             val action = next.decision.action
+            if (next.decision.id == assistantDecision && assistantPreparing) break
             // File commands remain attached to the session requested, even behind queued navigation.
             if (isCommand(action) && next.session != session) {
                 requests.removeFirst()
@@ -437,7 +540,12 @@ internal class EditorViewModel @Inject constructor(
             }
             if (state.value.dirty && next.mode == GuardMode.UNSAVED_EDITS) {
                 pending = next
+                val previous = notifiedAssistantSnapshot
                 currentState = state.value.copy(pendingDecision = next.decision)
+                // Permit preparation already made the snapshot busy; publishing the guard still notifies.
+                if (pending != null && previous == notifiedAssistantSnapshot) {
+                    assistantObservers.values.toList().forEach { it() }
+                }
                 break
             }
             perform(next)
@@ -457,10 +565,10 @@ internal class EditorViewModel @Inject constructor(
     }
 
     private fun perform(request: Request) {
-        if (request.operation != null) request.operation.invoke() else perform(request.decision.action)
+        if (request.operation != null) request.operation.invoke() else perform(request.decision.action, request.accessGeneration)
     }
 
-    private fun perform(action: EditorAction) {
+    private fun perform(action: EditorAction, accessGeneration: Long) {
         when (action) {
             is EditorAction.Open -> {
                 reset()
@@ -474,6 +582,7 @@ internal class EditorViewModel @Inject constructor(
                 currentState = state.value.copy(relativePath = action.path, source = "",
                     isNew = true, dirty = true, status = EditorStatus.READY, validating = true)
                 onSelectionChanged?.invoke(null)
+                updateAccess(repository.accessSnapshot)
                 validate()
             }
             EditorAction.Close -> reset()
@@ -482,11 +591,15 @@ internal class EditorViewModel @Inject constructor(
                 currentState = state.value.copy(source = "", dirty = true, validating = true)
                 validate()
             } else load(LoadPurpose.REPLACE)
-            else -> startCommand(action)
+            else -> startCommand(action, accessGeneration)
         }
     }
 
-    private fun startCommand(action: EditorAction) {
+    private fun startCommand(action: EditorAction, accessGeneration: Long) {
+        if (accessGeneration != repository.accessSnapshot.generation) {
+            currentState = state.value.copy(failure = EditorFailure.ACCESS_CHANGED)
+            return
+        }
         if (!state.value.canCommand) {
             currentState = state.value.copy(failure = if (state.value.readOnlyReason != null) EditorFailure.READ_ONLY else EditorFailure.DATA)
             return
@@ -501,12 +614,12 @@ internal class EditorViewModel @Inject constructor(
         currentState = state.value.copy(status = EditorStatus.COMMAND, failure = null,
             history = state.value.history.copy(loading = false))
         viewModelScope.launch {
-            val completed = command(captured) { editing ->
+            val completed = command(captured, accessGeneration) { editing, permit ->
                 when (action) {
-                    is EditorAction.Rename -> editing.rename(captured.relativePath, action.filename, stamp)
-                    is EditorAction.Move -> editing.move(captured.relativePath, action.folder, stamp)
-                    EditorAction.Delete -> editing.delete(captured.relativePath, stamp)
-                    is EditorAction.Restore -> editing.restore(action.revision, captured.relativePath, stamp)
+                    is EditorAction.Rename -> editing.rename(captured.relativePath, action.filename, stamp, permit)
+                    is EditorAction.Move -> editing.move(captured.relativePath, action.folder, stamp, permit)
+                    EditorAction.Delete -> editing.delete(captured.relativePath, stamp, permit)
+                    is EditorAction.Restore -> editing.restore(action.revision, captured.relativePath, stamp, permit)
                     else -> error("Not a file command.")
                 }
             }
@@ -533,10 +646,14 @@ internal class EditorViewModel @Inject constructor(
         }
     }
 
-    private suspend fun command(captured: EditorSnapshot, work: (EditingService) -> EditResult): CommandResult = try {
+    private suspend fun command(captured: EditorSnapshot, accessGeneration: Long,
+                                work: (EditingService, LibraryWritePermit) -> EditResult): CommandResult = try {
+        val owner = currentCoroutineContext()[Job]
         repository.withLibrary { _, editing ->
             if (!current(captured)) return@withLibrary CommandResult(EditResult.Failed(LibraryError.OperationFailed), null)
-            val result = work(editing)
+            val permit = editing.captureWritePermit(owner)
+            if (permit.accessGeneration != accessGeneration) throw LibraryError.AccessChanged
+            val result = work(editing, permit)
             val document = when (result) {
                 is EditResult.Saved -> result.commit.entry.document
                 is EditResult.Relocated -> (result.current as? PromptLoadResult.Loaded)?.prompt?.entry?.document
@@ -625,9 +742,18 @@ internal class EditorViewModel @Inject constructor(
         when (val load = observed.load) {
             is PromptLoadResult.Loaded -> {
                 val loaded = load.prompt
+                updateAccess(repository.accessSnapshot)
+                // Folder renames and remodes can change stamps without changing the loaded source.
+                if (purpose == LoadPurpose.RECONCILE && state.value.dirty && state.value.conflict == null &&
+                    loaded.entry.identity == baseline?.entry?.identity && loaded.source == baseline?.source) {
+                    baseline = Baseline(loaded.entry, loaded.source, loaded.readOnlyReason, checkNotNull(observed.projection))
+                    currentState = state.value.copy(selection = selection(loaded.entry), stamp = loaded.entry.stamp)
+                    return
+                }
                 if (purpose == LoadPurpose.REPLACE || purpose == LoadPurpose.RECONCILE && !state.value.dirty && state.value.conflict == null) {
                     // Own-commit reconciliation must not erase a committed maintenance warning.
                     if (purpose != LoadPurpose.REPLACE && loaded.entry.stamp == state.value.stamp) {
+                        baseline = Baseline(loaded.entry, loaded.source, loaded.readOnlyReason, checkNotNull(observed.projection))
                         currentState = state.value.copy(failure = null, saveIssues = emptyList())
                         return
                     }
@@ -703,8 +829,38 @@ internal class EditorViewModel @Inject constructor(
                 readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
                 conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false,
                 provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null))
+            updateAccess(repository.accessSnapshot)
             applyProjection(loaded.projection)
         } finally { adoptingBaseline = previous }
+    }
+
+    private fun updateAccess(access: GroupAccessSnapshot) {
+        val changed = observedAccessGeneration != access.generation
+        observedAccessGeneration = access.generation
+        val path = state.value.relativePath
+        val policy = if (path == null) PromptAccessState.Local else access.access(path, state.value.selection?.identity)
+        val formatReason = state.value.readOnlyReason?.takeUnless {
+            it == SourceReadOnlyReason.GROUP_VIEWER || it == SourceReadOnlyReason.GROUP_UNAVAILABLE
+        }
+        val invalidPending = pending?.let { isCommand(it.decision.action) && it.accessGeneration != access.generation } == true
+        val invalidQueued = requests.removeAll { isCommand(it.decision.action) && it.accessGeneration != access.generation }
+        if (invalidPending) {
+            pending = null
+            savingDecision = null
+        }
+        mutableState.value = state.value.copy(access = policy, readOnlyReason = formatReason ?: policy.readOnlyReason,
+            destinations = listOf(EditorDestination()) + access.groups.values.sortedBy { it.name }.map(::EditorDestination),
+            pendingDecision = pending?.decision, queuedActions = requests.map { it.decision.action },
+            failure = if (invalidPending || invalidQueued) EditorFailure.ACCESS_CHANGED else state.value.failure)
+        if (changed) {
+            assistantPermit?.let { permit ->
+                permit.invalidate(AssistantAcceptanceOutcome.Failed(if (policy == PromptAccessState.Unavailable)
+                    AssistantAcceptanceFailure.AccessDenied else AssistantAcceptanceFailure.StaleContext))
+                cancelAssistantAcceptance(permit)
+            }
+            assistantObservers.values.toList().forEach { it() }
+        }
+        if (invalidPending || invalidQueued) drain()
     }
 
     private fun applyProjection(projection: EditorDocumentState) {
@@ -725,6 +881,8 @@ internal class EditorViewModel @Inject constructor(
         StoreError.InvalidPath, LibraryError.InvalidPromptPath -> EditorFailure.INVALID_PATH
         LibraryError.IdentityMismatch, LibraryError.KeyedStateConflict -> EditorFailure.IDENTITY
         LibraryError.RecoveryRequired -> EditorFailure.RECOVERY
+        LibraryError.AccessDenied -> EditorFailure.READ_ONLY
+        LibraryError.AccessChanged -> EditorFailure.ACCESS_CHANGED
         LibraryError.CommitUnverified -> EditorFailure.UNVERIFIED
         else -> EditorFailure.DATA
     }

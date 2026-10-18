@@ -9,6 +9,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.test.StandardTestDispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
 import mockwebserver3.SocketEffect
 import mockwebserver3.SocketHandler
 import okhttp3.Dispatcher
@@ -451,12 +452,19 @@ internal class OkHttpHttpTransportTest {
             }
             val closed = CountDownLatch(1)
             val server = server()
-            server.enqueue(when (fixture) {
+            val admitted = CountDownLatch(1)
+            val response = when (fixture) {
                 "advertised" -> stalled(closed, "65")
                 "chunked" -> chunkedOversize(closed)
                 "redirect" -> stalled(closed).newBuilder().code(302).build()
                 else -> stalled(closed)
-            })
+            }
+            server.dispatcher = object : mockwebserver3.Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    assertTrue(admitted.await(2, SECONDS), "Response admission for $fixture")
+                    return response
+                }
+            }
             val outcome = CompletableDeferred<Exception>()
             val unhandled = ConcurrentLinkedQueue<Throwable>()
             val callerScope = CoroutineScope(SupervisorJob() + ui +
@@ -466,9 +474,14 @@ internal class OkHttpHttpTransportTest {
                 catch (error: Exception) { outcome.complete(error); throw error }
             }
             try {
+                // The undispatched launch must suspend in send before the peer can respond.
+                assertTrue(caller.isActive, "Caller suspended for $fixture")
+                assertFalse(outcome.isCompleted, "No inline outcome for $fixture")
+                assertTrue(work.isEmpty(), "No receipt completion before admission for $fixture")
+                admitted.countDown()
                 // Hold the committed failure until the deadline passes and the caller cancels.
-                assertTrue(closed.await(2, SECONDS))
-                val resume = assertNotNull(work.poll(2, SECONDS))
+                assertTrue(closed.await(2, SECONDS), "Peer closed for $fixture")
+                val resume = assertNotNull(work.poll(2, SECONDS), "Queued receipt completion for $fixture")
                 delay(550) // Resume only after the original deadline, with a later caller cancel.
                 caller.cancel()
                 resume.run()
@@ -478,6 +491,7 @@ internal class OkHttpHttpTransportTest {
                 assertTrue(unhandled.isEmpty(), "Unhandled failures for $fixture: $unhandled")
             } finally {
                 callerScope.cancel()
+                admitted.countDown()
                 while (true) (work.poll() ?: break).run()
             }
         }
