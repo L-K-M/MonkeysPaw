@@ -39,10 +39,13 @@ Desktop Account, invite handling, sync status, groups and conflict resolution
 are available on main. Automated device-token privacy fixtures passed both
 native CI suites. The desktop sync guide and checks of deployed servers,
 signed installations, real keyrings and physical devices remain M6 Y34 work.
-Android's repository and background scheduling foundations are on main, but
-its connected sync UI is not yet integrated. Android sync acceptance remains
-M10 Z27 work; see the
-[milestone record](docs/plan/15-milestones.md).
+Android implements optional server sign-in, invite acceptance only on explicit
+consent, groups with viewer read-only access, conflict resolution and
+WorkManager background sync. Its device tokens use Keystore-backed AES-GCM;
+passwords and invite secrets are not persisted. The server/operator and
+no-end-to-end-encryption boundaries above also apply to Android. Physical
+acceptance remains open in the [M10 checklist](docs/platform/android.md#android-sync-m10-not-run-owner)
+and [milestone record](docs/plan/15-milestones.md).
 
 ## Credentials
 
@@ -64,8 +67,8 @@ interpret a failed Clear as successful deletion. See the
 ## Transport, hosting and backups
 
 Assistant endpoints require HTTPS except for literal loopback destinations.
-Desktop sync requires HTTPS except for localhost, loopback and literal private
-IP ranges. An HTTP exception sends credentials and content without TLS;
+Desktop and Android sync require HTTPS except for localhost, loopback and
+literal private IP ranges. An HTTP exception sends credentials and content without TLS;
 use HTTPS on networks you do not control. The clients refuse redirects and
 do not use browser cookies or ambient credential storage. Keep normal TLS
 certificate validation enabled.

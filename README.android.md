@@ -1,11 +1,9 @@
 # Android
 
 You need Android API 26 or later. This guide covers the Android app behavior
-already merged into main. Physical-device acceptance remains **NOT RUN
-(owner)** in the [Android record](docs/platform/android.md). Sync repository
-and background scheduling foundations are on main. The connected Account,
-groups, invites and conflict-resolution UI is not yet available. The sync
-guide and phone/desktop acceptance remain M10 Z27 work.
+implemented in this tree. Physical-device acceptance remains **NOT RUN
+(owner)** in the [Android record](docs/platform/android.md), including the
+[M10 phone/desktop checklist](docs/platform/android.md#android-sync-m10-not-run-owner).
 
 ## Install or update
 
@@ -51,6 +49,22 @@ to return to your previous keyboard after insertion; if switching is
 unavailable, use Android's keyboard picker. Check the actual target and clear
 harmless terminal test text without executing it. See the
 [IME procedures](docs/platform/android.md#m9-ime-insertion-and-switch-back-not-run).
+
+## Optional sync
+
+Settings → Account signs in to your self-hosted server, shows devices and
+group memberships, and offers Sync now and sign-out. Opening an invite only
+stages its server/account for review; you must explicitly choose **Accept**.
+Library shows groups, viewer read-only access and conflicts. Resolve offers
+Keep server, Keep mine and Keep both. Group administration stays on desktop.
+
+Authorized Library/Account sessions sync in the foreground. WorkManager
+handles background sync with connected-network periodic work at a minimum
+15-minute interval and coalesced saves; Doze, quotas and force-stop can delay
+it. Device tokens use Keystore-backed AES-GCM encryption. Prompt files and
+server copies are plaintext: there is no end-to-end encryption, and the
+server operator can read synced prompts. Device, TLS, scheduler and
+phone/desktop checks remain open in the M10 checklist above.
 
 ## Privacy and Assistant
 
