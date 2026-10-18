@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Build every Monkey's Paw artifact this host can produce, into dist/.
+# Build every Monkey's Paw artifact this host can produce.
 #
-# Usage: scripts/build.sh [mac|deb|flatpak|android ...] [--no-open]
+# Usage: scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--no-open]
 #   No targets: build every feasible target; skip unavailable toolchains.
 #   Named targets: an unavailable toolchain fails the run.
 #   mac        universal Release dmg, zip and .sha256 (macOS, Xcode, create-dmg)
 #   deb        Ubuntu 24.04+ deb and .deb.sha256 (Linux, Swift 6.4, GTK 4, dpkg-dev)
 #   flatpak    GNOME 50 x86_64 bundle and checksum, reusing this run's deb
 #   android    signed release APK and .apk.sha256 (wrapper, JDK 17+, Android SDK)
+#   server-image  versioned local server image (Docker with a Linux engine, git)
 #   --no-open  do not open dist/ in Finder after a successful macOS build
 #   --help     print this header
 #
 # Versions come from the committed Xcode settings; packaging needs no lkm-build.
+# Files go to dist/; server-image goes to Docker's image store and prints its tag.
 # Set SWIFT to another Swift executable for deb builds. Install Linux tooling
 # as described in docs/plan/14-repository-packaging-ci-release.md.
 # Set JAVA_HOME/ANDROID_HOME for Android, or configure android/local.properties.
@@ -48,7 +50,7 @@ explicit=false
 no_open=false
 for argument in "$@"; do
   case "$argument" in
-    mac|deb|flatpak|android)
+    mac|deb|flatpak|android|server-image)
       explicit=true
       case " ${targets[*]:-} " in
         *" $argument "*) ;;
@@ -63,7 +65,7 @@ for argument in "$@"; do
   esac
 done
 if [[ ${#targets[@]} -eq 0 ]]; then
-  targets=(mac deb flatpak android)
+  targets=(mac deb flatpak android server-image)
 fi
 
 repo_root="$(cd "$(dirname "$script_path")/.." && pwd)" || exit 1
@@ -72,10 +74,11 @@ host="$(uname -s)" || exit 1
 # check-version.py also rejects diverging Debug/Release or README versions.
 version="$(python3 scripts/check-version.py --committed-version)" || exit 1
 [[ -n "$version" ]] || { echo '!! Missing committed version' >&2; exit 1; }
+server_image="monkeyspaw-server:$version"
 
 reason=
 feasible() {
-  local target=$1 tool
+  local target=$1 tool docker_os
   case "$target" in
     mac)
       [[ "$host" == Darwin ]] || { reason='requires macOS'; return 1; }
@@ -112,6 +115,15 @@ feasible() {
         reason="${reason#!! }"; return 1;
       }
       ;;
+    server-image)
+      for tool in docker git; do
+        command -v "$tool" >/dev/null 2>&1 || { reason="missing $tool"; return 1; }
+      done
+      docker_os="$(docker info --format '{{.OSType}}' 2>/dev/null)" || {
+        reason='docker info failed; start Docker or check its context'; return 1;
+      }
+      [[ "$docker_os" == linux ]] || { reason='requires a Linux Docker engine'; return 1; }
+      ;;
   esac
 }
 
@@ -140,6 +152,16 @@ build_flatpak() {
   /bin/bash scripts/build-flatpak.sh "$deb_path" "$version"
 }
 
+build_server_image() {
+  local revision created
+  revision="$(git rev-parse HEAD)" || return 1
+  created="$(git show -s --format=%cI HEAD)" || return 1
+  # Custom builders may otherwise leave a successful build only in their cache.
+  docker build --load --tag "$server_image" \
+    --build-arg "VERSION=$version" --build-arg "REVISION=$revision" \
+    --build-arg "CREATED=$created" -f server/Dockerfile .
+}
+
 results=()
 failed=0
 built=0
@@ -160,10 +182,15 @@ for target in "${targets[@]}"; do
     deb) build_command=(build_deb) ;;
     flatpak) build_command=(build_flatpak) ;;
     android) build_command=(/bin/bash scripts/package-android.sh "$version") ;;
+    server-image) build_command=(build_server_image) ;;
   esac
   if "${build_command[@]}"; then
-    results+=("$target: ok (dist/)")
-    built=$((built + 1))
+    if [[ "$target" == server-image ]]; then
+      results+=("$target: ok (Docker image: $server_image)")
+    else
+      results+=("$target: ok (dist/)")
+      built=$((built + 1))
+    fi
   else
     results+=("$target: FAILED (packaging failed)")
     failed=1
