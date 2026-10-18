@@ -75,7 +75,12 @@ final class LinuxConflictView {
             }
         }
         self.available = available
-        guard let selection else { close(); return }
+        guard let selection else {
+            // Reindexing can clear the marker before resolution publishes its outcome.
+            if isResolving { render() }
+            else { close() }
+            return
+        }
         if self.selection != selection || self.stamp != stamp {
             self.selection = selection
             self.stamp = stamp
