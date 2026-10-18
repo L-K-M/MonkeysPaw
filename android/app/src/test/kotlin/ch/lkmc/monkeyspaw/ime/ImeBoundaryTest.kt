@@ -33,18 +33,49 @@ internal class ImeBoundaryTest {
         sources.flatMap { source ->
             val pkg = Regex("(?m)^package (\\S+)").find(source)!!.groupValues[1]
             // Follow local constructions and object calls that reflection cannot see.
-            // Same-line annotations with arguments and imported members still need semantic analysis.
+            // Imported members still need semantic analysis; unparsed declarations stay in file context.
             val modifiers = "(?:(?:@[\\w.]+|private|internal|public|expect|actual|external|infix|operator|suspend|inline|tailrec|sealed|data|abstract|open|value|enum|annotation|final)\\s+)*"
             val functions = Regex("(?m)^${modifiers}fun (?:<[^\\n>]+> )?(?:[^\\n(]+\\.)?(\\w+)\\(").findAll(source).toList()
             val types = Regex("(?m)^$modifiers(?:fun )?(?:class|interface|object) (\\w+)").findAll(source).toList()
-            val starts = (functions + types).map { it.range.first }.sorted()
-            val header = Regex("(?m)^(?:package|import) [^\\n]+").findAll(source).joinToString("\n") { it.value }
-            functions.asSequence().map { "$pkg.${it.groupValues[1]}" to source } + types.asSequence().map { type ->
-                // A shared file can contain an inert value alongside an unrelated capability.
-                val end = starts.firstOrNull { it > type.range.first } ?: source.length
-                "$pkg.${type.groupValues[1]}" to "$header\n${source.substring(type.range.first, end)}"
+            val properties = Regex("(?m)^${modifiers}(?:(?:const|lateinit)\\s+)?(?:val|var) \\w+").findAll(source).toList()
+            val starts = (functions + types + properties).map { it.range.first }.sorted()
+            fun body(start: Int): String = source.substring(start, starts.firstOrNull { it > start } ?: source.length)
+            // Remove only bounded declarations, retaining preamble, aliases, initializers and unparsed tails.
+            val context = (functions + types).sortedByDescending { it.range.first }.fold(source) { remaining, declaration ->
+                val limit = starts.firstOrNull { it > declaration.range.first } ?: source.length
+                remaining.replaceRange(declaration.range.first, declarationEnd(source, declaration, limit), "\n")
+            }
+            (functions + types).asSequence().map { declaration ->
+                // Follow each declaration's calls without pulling in unrelated siblings.
+                "$pkg.${declaration.groupValues[1]}" to "$context\n${body(declaration.range.first)}"
+            } + Regex("\\b(?:class|interface|object) (\\w+)").findAll(context).map {
+                // Reflection previously scanned whole files even for types the declaration index missed.
+                "$pkg.${it.groupValues[1]}" to context
             }
         }.groupBy({ it.first }, { it.second })
+
+    private fun declarationEnd(source: String, declaration: MatchResult, limit: Int): Int {
+        val start = declaration.range.first
+        val tokens = Regex("""//[^\n]*|/\*[\s\S]*?\*/|"{3}[\s\S]*?"{3}|"(?:\\.|[^"\\\n])*+"|'(?:\\.|[^'\\\n])*+'|`[^`\n]*`|[(){}\[\];\n]""")
+        val closing = mutableListOf<Char>()
+        for (token in tokens.findAll(source.substring(start, limit))) {
+            val value = token.value
+            // Ambiguous comment/string syntax keeps the entire span in the conservative context.
+            if (value.startsWith("/*") && value.drop(2).contains("/*") ||
+                value.startsWith("\"\"\"") || value.startsWith('"') && '$' in value) return start
+            if (value.length > 1) continue
+            val character = value.single()
+            when {
+                character in "({[" -> closing += ")}]"["({[".indexOf(character)]
+                character in ")}]" -> {
+                    if (closing.removeLastOrNull() != character) return start
+                    if (character == '}' && closing.isEmpty()) return start + token.range.last + 1
+                }
+                closing.isEmpty() && start + token.range.first > declaration.range.last -> return start + token.range.first
+            }
+        }
+        return if (closing.isEmpty()) limit else start
+    }
 
     @Test fun `IME is exported only behind system binding permission with exact filter and metadata in one process`() {
         val manifest = xml("AndroidManifest.xml")
@@ -79,6 +110,9 @@ internal class ImeBoundaryTest {
         assertTrue(reached.any { it.simpleName == "FillService" })
         assertTrue(reached.any { it.simpleName == "Clipboard" })
         assertTrue(reached.any { it.simpleName == "AndroidSettingsStore" })
+        assertTrue(reached.any { it.simpleName == "AndroidSyncStartup" })
+        assertTrue(reached.any { it.simpleName == "SyncLocalGraph" })
+        assertTrue(reached.any { it.simpleName == "SyncEngineGraph" })
         assertFalse(reached.any { it.simpleName == "CoroutineScope" })
         val graph = app.resolve("ime/ImeLocalGraph.kt").readText()
         assertTrue(graph.contains("ImeTextDelivery(gateway, session.isActive, copy)"))
@@ -256,6 +290,95 @@ internal class ImeBoundaryTest {
         }
     }
 
+    @Test fun `local helper declarations exclude siblings but retain actual forbidden calls`() {
+        val source = "package other\nclass Local { fun run() = prepare() }\n" +
+            "private fun prepare() = Unit\nclass Remote { fun run() = HttpTransport() }"
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        validateGraphSource(local, indexSources(sequenceOf(source)))
+        for (call in listOf("Remote()", "HttpTransport()", "SyncEngine()", "SecretStore()",
+            "WorkManager.getInstance()", "AppModule.applicationScope(io)")) {
+            val mutant = source.replace("prepare() = Unit", "prepare() = $call")
+            assertFailsWith<AssertionError>(call) {
+                validateGraphSource(local, indexSources(sequenceOf(mutant)))
+            }
+        }
+    }
+
+    @Test fun `declaration traversal retains file initializers around unrelated siblings`() {
+        for (initializer in listOf("private val eager = HttpTransport()", "val eager by lazy { SecretStore() }")) {
+            for (declarations in listOf("$initializer\nclass Unrelated\nfun prepare() = Unit",
+                "fun prepare() = Unit\nclass Unrelated\n$initializer")) {
+                val helpers = indexSources(sequenceOf("package other\n$declarations"))
+                assertFailsWith<AssertionError>(declarations) {
+                    validateGraphSource("package local\nimport other.prepare\nfun work() = prepare()", helpers)
+                }
+            }
+        }
+    }
+
+    @Test fun `declaration traversal retains aliases before the first indexed declaration`() {
+        val source = "package other\ntypealias Stealth = java.lang.StringBuilder\n" +
+            "class Unrelated { fun run() = java.net.Socket() }\n" +
+            "class Local { fun run() = prepare() }\nprivate fun prepare() = Stealth()"
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        validateGraphSource(local, indexSources(sequenceOf(source)))
+        val mutant = source.replace("java.lang.StringBuilder", "java.net.Socket")
+        val helpers = indexSources(sequenceOf(mutant))
+        assertTrue("other.prepare" in helpers)
+        assertFailsWith<AssertionError> { validateGraphSource(local, helpers) }
+    }
+
+    @Test fun `declaration traversal retains aliases around excluded siblings`() {
+        val alias = "typealias Stealth = java.lang.StringBuilder"
+        val reached = "class Local { fun run() = prepare() }\nprivate fun prepare() = Stealth()"
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        for (sibling in listOf("class Unrelated { fun run() = java.net.Socket() }",
+            "fun unrelated() = java.net.Socket()")) {
+            for (declarations in listOf("$sibling\n$alias\n$reached", "$reached\n$sibling\n$alias",
+                "$reached\n$alias\n$sibling")) {
+                val source = "package other\n$declarations"
+                validateGraphSource(local, indexSources(sequenceOf(source)))
+                val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+                assertFailsWith<AssertionError>(declarations) { validateGraphSource(local, helpers) }
+            }
+        }
+    }
+
+    @Test fun `declaration traversal retains unindexed annotated and semicolon helpers`() {
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        for (declarations in listOf("class Unrelated\n@Deprecated(\"legacy\") private fun prepare()",
+            "class Unrelated; private fun prepare()")) {
+            val source = "package other\n$declarations = java.lang.StringBuilder()\n" +
+                "class Local { fun run() = prepare() }"
+            validateGraphSource(local, indexSources(sequenceOf(source)))
+            val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+            assertFailsWith<AssertionError>(declarations) { validateGraphSource(local, helpers) }
+        }
+    }
+
+    @Test fun `declaration traversal retains directly reached unindexed annotated types`() {
+        val local = "package local\nimport other.Local\nfun work() = Local()"
+        for (prefix in listOf("@Deprecated(\"legacy\")", "class Unrelated;")) {
+            val source = "package other\n$prefix class Local { fun run() = java.lang.StringBuilder() }"
+            validateGraphSource(local, indexSources(sequenceOf(source)))
+            val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+            assertFailsWith<AssertionError>(prefix) { validateGraphSource(local, helpers) }
+        }
+    }
+
+    @Test fun `declaration context retains aliases around literal and comment delimiters`() {
+        val local = "package local\nimport other.prepare\nfun work() = prepare()"
+        for (contents in listOf("val text = \"}\\\";{\"", "val brace = '}' // {",
+            "val text = \"\"\"}\n{\"\"\"", "val text = \"${'$'}{listOf(\"}\")}\"",
+            "/* outer /* inner */ } */ val text = Unit")) {
+            val source = "package other\nclass Unrelated {\n    $contents\n}\n" +
+                "typealias Stealth = java.lang.StringBuilder\nfun prepare() = Stealth()"
+            validateGraphSource(local, indexSources(sequenceOf(source)))
+            val helpers = indexSources(sequenceOf(source.replace("java.lang.StringBuilder", "java.net.Socket")))
+            assertFailsWith<AssertionError>(contents) { validateGraphSource(local, helpers) }
+        }
+    }
+
     @Test fun `provider bodies resolve helper aliases without scanning unrelated module imports`() {
         val context = "package local\nimport other.Helper as Ready\nimport other.SecretStore"
         val helpers = indexSources(sequenceOf("package other\nclass Helper { fun run() = SyncScheduler() }"))
@@ -274,12 +397,7 @@ internal class ImeBoundaryTest {
 
     @Test fun `application startup only warms local index and service reads only allowed metadata without extracted UI`() {
         val application = app.resolve("MonkeysPawApplication.kt").readText()
-        validateLocal(application)
-        assertTrue(application.contains("scope.launch { library.refresh() }"))
-        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope", "workerFactory: Lazy<WorkerFactory>"),
-            Regex("lateinit var ([^\\n]+)").findAll(application).map { it.groupValues[1] }.toList())
-        val startup = application.substringAfter("override fun onCreate() {").substringBefore("\n    }").trim()
-        assertEquals("super.onCreate()\n        scope.launch { library.refresh() }", startup)
+        assertLocalStartup(application)
         val service = app.resolve("ime/MonkeysPawImeService.kt").readText()
         validateLocal(service)
         assertTrue(service.contains("onEvaluateFullscreenMode(): Boolean = false"))
@@ -298,6 +416,28 @@ internal class ImeBoundaryTest {
         assertTrue(service.contains("@AndroidEntryPoint"))
         assertEquals(1, Regex("@Inject").findAll(service).count())
         assertTrue(service.contains("lateinit var localGraph: ImeLocalGraph"))
+    }
+
+    @Test fun `startup comments preserve the exact local call boundary`() {
+        val application = app.resolve("MonkeysPawApplication.kt").readText()
+            .replace("scope.launch {", "// Warm the local index.\n        scope.launch {")
+        assertLocalStartup(application)
+        for (call in listOf("prepareBackground()", "HttpTransport()", "SyncEngine()",
+            "SecretStore()", "WorkManager.getInstance()")) {
+            assertFailsWith<AssertionError>(call) {
+                assertLocalStartup(application.replace("scope.launch {", "$call\n        scope.launch {"))
+            }
+        }
+    }
+
+    private fun assertLocalStartup(application: String) {
+        validateLocal(application)
+        assertTrue(application.contains("scope.launch { library.refresh() }"))
+        assertEquals(listOf("library: LibraryRepository", "scope: CoroutineScope", "workerFactory: Lazy<WorkerFactory>"),
+            Regex("lateinit var ([^\\n]+)").findAll(application).map { it.groupValues[1] }.toList())
+        val startup = application.substringAfter("override fun onCreate() {").substringBefore("\n    }")
+            .lineSequence().filterNot { it.trimStart().startsWith("//") }.joinToString("\n").trim()
+        assertEquals("super.onCreate()\n        scope.launch { library.refresh() }", startup)
     }
 
     @Test fun `password screen branches before reused controls and inline hosts request no software keyboard or own IME inset`() {

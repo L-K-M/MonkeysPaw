@@ -25,6 +25,7 @@ struct PickerView: View {
                 .font(.caption).foregroundStyle(.secondary)
             Text(Strings.pasteTarget(presentation.pasteTarget))
                 .font(.caption).foregroundStyle(.secondary)
+            if let syncStatus = presentation.syncStatus { SyncStatusView(presentation: syncStatus) }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -5,13 +5,16 @@ import MonkeysPawCore
 /// A reusable view over Settings presentation state.
 /// GTK owns the window and children; Swift keeps guarded borrowed pointers.
 final class LinuxSettingsWindow {
+    enum Page { case current, account }
     private let window: GTK.Widget
+    private let notebook: GTK.Widget
     private let general: GeneralSettingsModel
     private let shortcuts: ShortcutsSettingsModel
     private let rememberedValues: RememberedValuesSettingsModel
     private let assistant: LinuxAssistantSettingsPage
     private let delivery: LinuxSettingsDeliveryPage
     private let updates: LinuxSettingsUpdatePage
+    private let account: LinuxAccountSettingsPage
     private let chooser: LinuxFolderChoosing
     private let openSetup: () -> Void
     private let librarySwitchMessage: () -> String?
@@ -47,17 +50,24 @@ final class LinuxSettingsWindow {
          delivery: DeliverySettingsModel, updates: UpdateSettingsModel, session: DesktopSession,
          makeAssistant: @escaping () -> AssistantSettingsModel?,
          chooser: LinuxFolderChoosing, openSetup: @escaping () -> Void,
-         librarySwitchMessage: @escaping () -> String? = { nil }) {
+         librarySwitchMessage: @escaping () -> String? = { nil },
+         makeAccount: @escaping () -> AccountModel? = { nil },
+         makeInvite: @escaping () -> InviteModel? = { nil },
+         makeGroups: @escaping () -> GroupManagementModel? = { nil },
+         accountStartupPending: @escaping () -> Bool = { false }) {
         self.general = general
         self.shortcuts = shortcuts
         self.rememberedValues = rememberedValues
         assistant = LinuxAssistantSettingsPage(makeModel: makeAssistant)
         self.delivery = LinuxSettingsDeliveryPage(model: delivery, session: session)
         self.updates = LinuxSettingsUpdatePage(model: updates)
+        account = LinuxAccountSettingsPage(makeModel: makeAccount, makeInvite: makeInvite,
+            makeGroups: makeGroups, accountStartupPending: accountStartupPending)
         self.chooser = chooser
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
         window = gtk_application_window_new(application)!
+        notebook = gtk_notebook_new()!
         GTK.hideOnClose(window)
         gtk_window_set_title(mp_window(window), LinuxStrings.settings)
         gtk_window_set_default_size(mp_window(window), Int32(Limits.panelSize.width), Int32(Limits.panelSize.height))
@@ -72,6 +82,7 @@ final class LinuxSettingsWindow {
             self.assistant.retire(.destroyed)
             self.delivery.retire()
             self.updates.retire()
+            self.account.retire(.destroyed)
         }
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed, !self.isVisible else { return }
@@ -81,14 +92,17 @@ final class LinuxSettingsWindow {
             self.assistant.retire(.hidden)
             self.delivery.hide()
             self.updates.hide()
+            self.account.retire(.hidden)
         }
 
-        let notebook = gtk_notebook_new()!
         gtk_widget_set_name(notebook, "settings-tabs")
         gtk_notebook_append_page(mp_notebook(notebook), generalPage(), GTK.label(LinuxStrings.generalTab))
         gtk_notebook_append_page(mp_notebook(notebook), shortcutsPage(), GTK.label(LinuxStrings.shortcutsTab))
         gtk_notebook_append_page(mp_notebook(notebook), assistant.widget, GTK.label(LinuxAssistantSettingsStrings.tab))
         gtk_notebook_append_page(mp_notebook(notebook), self.delivery.widget, GTK.label(DeliverySettingsStrings.title))
+        gtk_notebook_append_page(mp_notebook(notebook), account.widget, GTK.label(LinuxAccountSettingsStrings.tab))
+        GTK.onSignal(account.widget, "map") { [weak self] in self?.account.show() }
+        GTK.onSignal(account.widget, "unmap") { [weak self] in self?.account.retire(.hidden) }
         gtk_window_set_child(mp_window(window), notebook)
         general.onChange = { [weak self] in self?.renderGeneral() }
         shortcuts.onChange = { [weak self] in self?.renderShortcuts() }
@@ -107,10 +121,14 @@ final class LinuxSettingsWindow {
         assistant.retire(isDestroyed ? .destroyed : .hidden)
         delivery.hide()
         updates.hide()
+        account.retire(isDestroyed ? .destroyed : .hidden)
     }
 
-    func show() {
+    func show(page: Page = .current) {
         guard !isDestroyed else { return }
+        if page == .account {
+            gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+        }
         general.refresh()
         renderGeneral()
         shortcuts.refresh()
@@ -125,6 +143,31 @@ final class LinuxSettingsWindow {
         gtk_widget_set_visible(window, 0)
         cancelFolderChoice()
         rememberedValues.cancelForgetAll()
+    }
+
+    func showInvite() {
+        guard !isDestroyed else { return }
+        gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+        show()
+        account.show()
+    }
+
+    func stageInvite(_ input: inout String) {
+        showInvite()
+        account.stageInvite(&input)
+    }
+
+    // Account follows the replaceable library graph, independently of General.
+    func suspendAccount() { account.retire(.hidden) }
+
+    func refreshLibrarySwitchMessage() { renderGeneral() }
+
+    func refreshAccountStartup() { account.refreshStartup() }
+
+    func rebindAccount() {
+        guard !isDestroyed else { return }
+        account.retire(.hidden)
+        if isVisible, gtk_widget_get_mapped(account.widget) != 0 { account.show() }
     }
 
     private func generalPage() -> GTK.Widget {

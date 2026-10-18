@@ -119,6 +119,10 @@ Rules:
   - `PromptEditingService` runs file and codec work through the serial,
     nonblocking `BackgroundWork` port and returns immutable results through
     `MainThread`.
+    Workers accept submissions from any thread. A drain succeeds only when
+    its queued barrier executes after earlier work. Releasing a rejected or
+    retired barrier cancels the wait; library replacement and quit must refuse
+    that cancellation rather than treating it as a completed drain.
   - Platform workers never use the dispatch main queue on Linux.
   - Paste injection runs off the UI thread and is never awaited inline by a
     view.

@@ -39,9 +39,13 @@ StartupWMClass=ch.lkmc.monkeyspaw
 DBusActivatable=true
 MimeType=x-scheme-handler/monkeyspaw;
 Comment=Keep /usr/share and URI/action fields unchanged
-Actions=toggle;
+Actions=toggle;repeat;
 [Desktop Action toggle]
+Name=Toggle Panel
 Exec=gapplication action ch.lkmc.monkeyspaw toggle
+[Desktop Action repeat]
+Name=Repeat Last Prompt
+Exec=gapplication action ch.lkmc.monkeyspaw repeat
 DESKTOP
 cat > "$fixture/expected.desktop" <<'DESKTOP'
 [Desktop Entry]
@@ -54,9 +58,13 @@ StartupWMClass=ch.lkmc.monkeyspaw
 DBusActivatable=true
 MimeType=x-scheme-handler/monkeyspaw;
 Comment=Keep /usr/share and URI/action fields unchanged
-Actions=toggle;
+Actions=toggle;repeat;
 [Desktop Action toggle]
+Name=Toggle Panel
 Exec=gapplication action ch.lkmc.monkeyspaw toggle
+[Desktop Action repeat]
+Name=Repeat Last Prompt
+Exec=gapplication action ch.lkmc.monkeyspaw repeat
 DESKTOP
 cat > "$fixture/payload/usr/share/dbus-1/services/$app_id.service" <<'SERVICE'
 [D-BUS Service]
@@ -102,6 +110,9 @@ mkdir "$build"
 cp -a "$(dirname "$manifest")/stage" "$build/files"
 cmp "$FAKE_FIXTURE/payload/usr/bin/monkeyspaw" "$build/files/bin/monkeyspaw"
 cmp "$FAKE_FIXTURE/expected.desktop" "$build/files/share/applications/ch.lkmc.monkeyspaw.desktop"
+if command -v desktop-file-validate >/dev/null; then
+    desktop-file-validate "$build/files/share/applications/ch.lkmc.monkeyspaw.desktop"
+fi
 grep -Fxq 'Exec=/app/bin/monkeyspaw --gapplication-service' \
     "$build/files/share/dbus-1/services/ch.lkmc.monkeyspaw.service"
 cmp "$FAKE_FIXTURE/payload/usr/share/doc/monkeyspaw/copyright" "$build/files/share/doc/monkeyspaw/copyright"
@@ -176,8 +187,7 @@ expect_failure() {
     printf 'PASS: %s\n' "$label"
 }
 
-expect_failure 'explicit deb and version required' bash "$builder"
-expect_failure 'version argument required' bash "$builder" "$deb"
+expect_failure 'explicit deb required' bash "$builder"
 expect_failure 'missing path never guesses another deb' bash "$builder" "$fixture/input/missing.deb" "$version"
 [[ ! -s "$fixture/invocations" ]] || fail 'Missing path consulted another deb or Flatpak'
 expect_failure 'directory is not a deb' bash "$builder" "$fixture/input" "$version"
@@ -204,6 +214,15 @@ mv "$fixture/payload/usr/bin/monkeyspaw" "$fixture/binary"
 make_deb "$fixture/input/missing-binary.deb"
 mv "$fixture/binary" "$fixture/payload/usr/bin/monkeyspaw"
 expect_failure 'wrong binary path' bash "$builder" "$fixture/input/missing-binary.deb" "$version"
+cp "$fixture/payload/usr/share/applications/$app_id.desktop" "$fixture/original.desktop"
+sed -i '/^MimeType=/d' "$fixture/payload/usr/share/applications/$app_id.desktop"
+make_deb "$fixture/input/missing-mime.deb"
+expect_failure 'missing invite MIME export' bash "$builder" "$fixture/input/missing-mime.deb" "$version"
+cp "$fixture/original.desktop" "$fixture/payload/usr/share/applications/$app_id.desktop"
+sed -i 's|^Exec=/usr/bin/monkeyspaw %u$|Exec=/usr/bin/monkeyspaw|' "$fixture/payload/usr/share/applications/$app_id.desktop"
+make_deb "$fixture/input/missing-uri.deb"
+expect_failure 'missing URI forwarding' bash "$builder" "$fixture/input/missing-uri.deb" "$version"
+cp "$fixture/original.desktop" "$fixture/payload/usr/share/applications/$app_id.desktop"
 
 for failure in extract builder changed-binary missing-library ldd bundle checksum signal; do
     case "$failure" in
@@ -224,7 +243,7 @@ expect_failure 'binary version differs from control metadata' env FAKE_BINARY_VE
 # spaces, may be opened; the hyphenated app version is the output name.
 make_deb "$fixture/input/newest.deb" amd64 9.9.9
 : > "$fixture/invocations"
-(cd "$fixture/input" && bash "$builder" './tested deb.deb' "v$version")
+(cd "$fixture/input" && bash "$builder" './tested deb.deb')
 bundle="monkeyspaw_${version}_x86_64.flatpak"
 [[ "$(cat "$fixture/repo/dist/$bundle")" == 'new bundle' ]] || fail 'Bundle was not generated'
 (cd "$fixture/repo/dist" && "$REAL_SHA256SUM" -c "$bundle.sha256")

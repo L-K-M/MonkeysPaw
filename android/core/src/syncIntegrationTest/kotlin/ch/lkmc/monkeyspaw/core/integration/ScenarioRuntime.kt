@@ -141,8 +141,11 @@ internal class ScenarioRuntime private constructor(val root: Path, private val t
             container?.let { command(listOf(findExecutable("docker"), "stop", "--time", "5", it)) }
         }
         private suspend fun restartServe() {
-            if (native != null) process = builder(listOf(native, "serve"), environment + ("MONKEYSPAW_HTTP_PORT" to port.toString()))
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+            if (native != null) {
+                // Retention can fail while serve is live; retain its handle for cleanup.
+                if (process?.isAlive != true) process = builder(listOf(native, "serve"), environment + ("MONKEYSPAW_HTTP_PORT" to port.toString()))
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD).start()
+            }
             else command(listOf(findExecutable("docker"), "start", container!!))
             waitHealthy("http://127.0.0.1:$port")
         }

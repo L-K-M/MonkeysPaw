@@ -126,12 +126,13 @@ The same jobs run [SyncPathConformanceTests](../../Tests/MonkeysPawCoreTests/Syn
 validator/canonicalizer result with the fixture's expected outcome/bytes
 and reject malformed or unconsumed corpus entries.
 
-[README hosting](../../README.md#host-the-sync-server) and
-[backup/restore](../../README.md#server-backup-and-restore) carry the minimum
+[Hosting](server.md#host-the-sync-server) and
+[backup/restore](server.md#server-backup-and-restore) carry the minimum
 §19 B33 server disclosures: plaintext prompts/history/backups, operator and
 password-reset admin access, one process/no replicas, TLS/proxy trust and
-stopped-server restore. These were inspected on main; M5-D1 records the
-absence of an automated README assertion, not missing disclosure text.
+stopped-server restore. The earlier inspection established these disclosures
+on main; M5-D1 records the absence of an automated README assertion, not
+missing disclosure text. D19 moved the walkthrough out of README.
 
 Owner-run gates (every step in each linked recording section):
 
