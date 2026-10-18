@@ -92,7 +92,8 @@ class ReleasePolicyTests(unittest.TestCase):
     def test_retained_failure_reports_do_not_join_release_assets_after_a_retry(self):
         names = re.findall(r"^          name: (.+)$", SOURCE, re.MULTILINE)
         selected = {name for name in names if fnmatch.fnmatchcase(name, "MonkeysPaw-release-*")}
-        self.assertEqual(selected, {"MonkeysPaw-release-deb", "MonkeysPaw-release-macos", "MonkeysPaw-release-android"})
+        self.assertEqual(selected, {"MonkeysPaw-release-deb", "MonkeysPaw-release-macos",
+                                    "MonkeysPaw-release-android", "MonkeysPaw-release-flatpak"})
         report_step = JOBS["android-build"].split("      - name: Upload Android reports on failure\n", 1)[1]
         self.assertIn("if: failure()", report_step)
         report = re.search(r"^          name: (.+)$", report_step, re.MULTILINE)[1]
@@ -161,11 +162,27 @@ class ReleaseAssetTests(unittest.TestCase):
         self.root = Path(directory.name)
         self.dist = self.root / "dist"
         self.dist.mkdir()
-        self.version = "0.1.0-beta.1"
-        self.deb = "monkeyspaw_0.1.0~beta.1_amd64.deb"
+        self.calls = self.root / "gh-calls"
+        gh = self.root / "bin/gh"
+        gh.parent.mkdir()
+        gh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$GH_CALLS"\n')
+        gh.chmod(0o755)
+        self.env = os.environ | {
+            "PATH": f"{gh.parent}:{os.environ['PATH']}", "GH_CALLS": str(self.calls),
+            "GH_REPO": "example/MonkeysPaw", "PRERELEASE": "true", "RUNNER_TEMP": str(self.root),
+        }
+        self.prepare_assets("0.1.0-beta.1")
+
+    def prepare_assets(self, version):
+        for file in self.dist.iterdir():
+            file.unlink()
+        self.version = version
+        self.deb = f"monkeyspaw_{version.replace('-', '~')}_amd64.deb"
+        self.bundle = f"monkeyspaw_{self.version}_x86_64.flatpak"
         self.apk = f"monkeyspaw-v{self.version}.apk"
         self.groups = {
             f"{self.deb}.sha256": [self.deb],
+            f"{self.bundle}.sha256": [self.bundle],
             f"MonkeysPaw-{self.version}.sha256": [f"MonkeysPaw-{self.version}.zip",
                                                     f"MonkeysPaw-{self.version}.dmg"],
             f"{self.apk}.sha256": [self.apk],
@@ -177,16 +194,10 @@ class ReleaseAssetTests(unittest.TestCase):
                 (self.dist / name).write_bytes(data)
                 lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
             (self.dist / manifest).write_text("".join(lines))
-        self.calls = self.root / "gh-calls"
-        gh = self.root / "bin/gh"
-        gh.parent.mkdir()
-        gh.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$GH_CALLS"\n')
-        gh.chmod(0o755)
-        self.env = os.environ | {
-            "PATH": f"{gh.parent}:{os.environ['PATH']}", "GH_CALLS": str(self.calls),
+        self.env.update({
             "VERSION": self.version, "RELEASE_TAG": f"v{self.version}", "DEB_FILE": self.deb,
-            "APK_FILE": self.apk, "PRERELEASE": "true", "RUNNER_TEMP": str(self.root),
-        }
+            "BUNDLE_FILE": self.bundle, "APK_FILE": self.apk,
+        })
 
     def run_step(self, job, name):
         return subprocess.run(["/bin/bash", "-e", "-o", "pipefail", "-c", step_script(job, name)],
@@ -200,7 +211,7 @@ class ReleaseAssetTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse(self.calls.exists(), "An invalid set reached draft creation")
 
-    def test_seven_assets_pass_assembly_and_draft_creation(self):
+    def test_seven_desktop_assets_plus_android_pair_pass_assembly_and_draft_creation(self):
         result = self.run_step("artifacts", "Require every asset and verify checksums")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         result = self.run_step("publish", "Create draft and attach every asset")
@@ -215,10 +226,61 @@ class ReleaseAssetTests(unittest.TestCase):
         for name in self.dist.iterdir():
             self.assertIn(f"dist/{name.name}", call)
 
+    def test_generated_notes_link_the_full_tag_and_keep_platform_guidance(self):
+        for repository, version, prerelease in (
+            ("example/StableRelease", "0.1.0", "false"),
+            ("another/Prerelease", "0.1.0-rc-1.2", "true"),
+        ):
+            with self.subTest(repository=repository, version=version):
+                self.prepare_assets(version)
+                self.calls.unlink(missing_ok=True)
+                self.env.update({"GH_REPO": repository, "PRERELEASE": prerelease})
+                assets = {file.name: file.read_bytes() for file in self.dist.iterdir()}
+                result = self.run_step("publish", "Create draft and attach every asset")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                notes = (self.root / "android-release-notes.md").read_text()
+                self.assertIn(f"[Release changelog](https://github.com/{repository}/blob/v{version}/CHANGELOG.md)",
+                              notes)
+                for guidance in (
+                    "Android requires API 26", "verify the checksum before sideloading",
+                    "signed and shrunk with R8", "Copy and paste manually", "public signing key",
+                    "signature does not establish publisher identity", "/docs/platform/android.md",
+                    "Linux x86_64", "GNOME Platform 50", ".flatpak.sha256",
+                    "sha256sum -c <bundle>.sha256", "flatpak install --user ./<bundle>",
+                    "one active native or Flatpak installation", "home directory", "copy fallback",
+                ):
+                    self.assertIn(guidance, notes)
+                create = self.calls.read_text().splitlines()
+                self.assertEqual(len(create), 1)
+                self.assertIn(f"release create v{version} ", create[0])
+                for flags in ("--verify-tag --draft", "--generate-notes", "--notes-file",
+                              f"--prerelease={prerelease} --latest=false"):
+                    self.assertIn(flags, create[0])
+                self.assertEqual(len(assets), 9)
+                self.assertEqual(sorted(arg for arg in create[0].split() if arg.startswith("dist/")),
+                                 sorted(f"dist/{name}" for name in assets))
+                self.assertEqual({file.name: file.read_bytes() for file in self.dist.iterdir()}, assets)
+                result = self.run_step("publish", "Publish only after every comparison passes")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                latest = "false" if prerelease == "true" else "true"
+                self.assertEqual(self.calls.read_text().splitlines()[1],
+                                 f"release edit v{version} --verify-tag --draft=false "
+                                 f"--prerelease={prerelease} --latest={latest}")
+
     def test_desktop_only_set_cannot_be_published(self):
         (self.dist / self.apk).unlink()
         (self.dist / f"{self.apk}.sha256").unlink()
         self.assert_blocked()
+
+    def test_pre_flatpak_asset_set_cannot_be_published(self):
+        (self.dist / self.bundle).unlink()
+        (self.dist / f"{self.bundle}.sha256").unlink()
+        self.assert_blocked()
+
+    def test_assembly_and_publication_asset_assertions_are_identical(self):
+        assembly = step_script("artifacts", "Require every asset and verify checksums").strip()
+        publish = step_script("publish", "Create draft and attach every asset").split("\ncat >", 1)[0].strip()
+        self.assertEqual(assembly, publish)
 
     def test_every_missing_or_empty_asset_blocks_publication(self):
         for file in list(self.dist.iterdir()):
@@ -267,7 +329,7 @@ class ReleaseAssetTests(unittest.TestCase):
                     self.assert_blocked()
                     file.write_text(original)
 
-    def test_draft_download_must_match_all_seven_files(self):
+    def test_draft_download_must_match_all_nine_files(self):
         downloaded = self.root / "release-assets"
         downloaded.mkdir()
         for file in self.dist.iterdir():

@@ -49,9 +49,10 @@ internal class SyncWorkPolicyTest {
         val modes = mutableListOf<SyncExecutionMode>()
         var onRun: suspend () -> Unit = {}
         var onResume: suspend () -> Unit = {}
+        var onStop: suspend () -> Unit = {}
         override suspend fun connection(): String? { connectionReads++; return connection.takeIf { connected } }
         override suspend fun resume() { resumes++; onResume() }
-        override suspend fun requireSignIn() { stops++; enabled = false; needsSignIn = true }
+        override suspend fun requireSignIn() { stops++; enabled = false; needsSignIn = true; onStop() }
         override suspend fun mode(value: SyncExecutionMode) { modes.add(value) }
         override fun facts() = SyncWorkFacts(SyncSchedulingState(epoch, trigger, consumed, retries,
             due?.let(Instant::ofEpochMilli), needsSignIn), SyncReport(enabled = enabled, needsSignIn = needsSignIn,
@@ -335,6 +336,67 @@ internal class SyncWorkPolicyTest {
         r.session.needsSignIn = true
         r.policy.changed()
         assertTrue(r.reconstruct().policy.authenticationStopped())
+    }
+
+    @Test fun `stopped Account entry releases admission so login queues runnable work without reentry`() = runTest {
+        val original = Rig()
+        original.authenticate()
+        original.session.needsSignIn = true
+        original.policy.changed()
+        val r = original.reconstruct()
+        r.policy.enter(SyncForegroundOwner.ACCOUNT)
+        assertTrue(r.session.modes.isEmpty())
+        r.session.needsSignIn = false
+        r.session.enabled = true
+        r.session.connection = UUID.randomUUID().toString()
+        r.authenticate()
+        assertFalse(r.store.value.needsSignIn)
+        assertTrue(r.store.value.pending)
+        assertEquals(1, r.queue.requests.size)
+        r.policy.dispatch(r.queue.requests.single())
+        assertEquals(1, r.session.runs)
+        assertFalse(r.store.value.pending)
+        r.policy.leave(SyncForegroundOwner.ACCOUNT)
+        assertTrue(r.session.modes.isEmpty(), "Paired leave of rejected admission is safe")
+    }
+
+    @Test fun `stopped Account entry preserves a different foreground owner`() = runTest {
+        val r = Rig()
+        r.initial()
+        r.policy.enter(SyncForegroundOwner.LIBRARY)
+        r.session.needsSignIn = true
+        r.policy.changed()
+        r.policy.enter(SyncForegroundOwner.ACCOUNT)
+        r.session.needsSignIn = false
+        r.session.enabled = true
+        r.authenticate()
+        r.policy.leave(SyncForegroundOwner.ACCOUNT)
+        assertEquals(listOf(SyncExecutionMode.FOREGROUND), r.session.modes)
+        assertEquals(1, r.queue.requests.size)
+        r.policy.leave(SyncForegroundOwner.LIBRARY)
+        assertEquals(SyncExecutionMode.BACKGROUND, r.session.modes.last())
+        assertEquals(2, r.queue.requests.size)
+    }
+
+    @Test fun `suspended rejected entry cannot release a newer admission for the same owner`() = runTest {
+        val r = Rig()
+        r.authenticate()
+        r.session.needsSignIn = true
+        r.policy.changed()
+        val stopped = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        r.session.onStop = { stopped.complete(Unit); release.await() }
+        val old = launch { r.policy.enter(SyncForegroundOwner.ACCOUNT) }
+        stopped.await()
+        r.policy.leave(SyncForegroundOwner.ACCOUNT)
+        r.session.needsSignIn = false
+        r.session.enabled = true
+        r.authenticate()
+        r.policy.enter(SyncForegroundOwner.ACCOUNT)
+        release.complete(Unit)
+        old.join()
+        r.policy.leave(SyncForegroundOwner.ACCOUNT)
+        assertEquals(listOf(SyncExecutionMode.BACKGROUND, SyncExecutionMode.FOREGROUND, SyncExecutionMode.BACKGROUND), r.session.modes)
     }
 
     @Test fun `an inactive connection after failed activation cannot clear a persisted 401`() = runTest {

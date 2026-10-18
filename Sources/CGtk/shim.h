@@ -30,6 +30,26 @@
 #define MONKEYSPAW_CGTK_SHIM_H
 
 #include <gtk/gtk.h>
+#include <fcntl.h>
+#include <linux/stat.h>
+#include <linux/fs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+/* Swift cannot call variadic syscall; never replace an occupied sync target. */
+static inline int mp_rename_exclusive(const char *source, const char *destination) {
+    return (int)syscall(SYS_renameat2, AT_FDCWD, source, AT_FDCWD, destination, RENAME_NOREPLACE);
+}
+
+/* Birth time distinguishes an immediately reused inode without using mtime. */
+static inline int mp_directory_birth(const char *path, int64_t *seconds, uint32_t *nanos) {
+    struct statx info;
+    if (syscall(SYS_statx, AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_BTIME, &info) != 0
+        || !(info.stx_mask & STATX_BTIME)) return -1;
+    *seconds = info.stx_btime.tv_sec;
+    *nanos = info.stx_btime.tv_nsec;
+    return 0;
+}
 
 /* GtkTextTag properties require a C variadic; the buffer's table owns the tag. */
 static inline GtkTextTag *mp_text_buffer_background_tag(GtkTextBuffer *buffer,
@@ -266,6 +286,13 @@ static inline void mp_command_line_print(GApplicationCommandLine *command, const
     g_application_command_line_print(command, "%s\n", text);
 }
 
+/* Preserve the URI's escaping; only Core decodes invite query values. */
+static inline void mp_application_open_uri(GApplication *application, const char *uri) {
+    GFile *file = g_file_new_for_uri(uri);
+    g_application_open(application, &file, 1, "");
+    g_object_unref(file);
+}
+
 /* Portal window identities, with runtime backend checks. */
 static inline char *mp_portal_x11_parent(GtkWindow *window) {
     GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));
@@ -296,6 +323,26 @@ static inline void mp_portal_unexport(GdkSurface *surface) {
 }
 
 /* ---- Signals (g_signal_connect is a macro; G_CALLBACK is another) ---------- */
+
+/* GTK-thread-only, with no serializer: row identities stay in this process.
+ * Look up the shared name because this header is imported by multiple modules. */
+static inline GType mp_library_row_type(void) {
+    GType type = g_type_from_name("MonkeysPawLibraryRow");
+    if (!type)
+        type = g_boxed_type_register_static("MonkeysPawLibraryRow", (GBoxedCopyFunc)g_strdup, g_free);
+    return type;
+}
+static inline GdkContentProvider *mp_library_row_provider(const char *payload) {
+    return gdk_content_provider_new_typed(mp_library_row_type(), payload);
+}
+static inline const char *mp_library_row_string(const GValue *value) {
+    return G_VALUE_HOLDS(value, mp_library_row_type()) ? g_value_get_boxed(value) : NULL;
+}
+
+static inline GType mp_string_type(void) { return G_TYPE_STRING; }
+static inline GtkEventController *mp_drag_source_controller(GtkDragSource *source) {
+    return GTK_EVENT_CONTROLLER(source);
+}
 
 static inline gulong mp_connect(gpointer instance,
                                 const char *signal,

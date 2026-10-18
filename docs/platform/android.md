@@ -1,5 +1,8 @@
 # Android acceptance
 
+For installation and merged app behavior, see [README.android.md](../../README.android.md).
+This link changes no acceptance result below; all earlier owner rows remain.
+
 ## M8 acceptance record
 
 **M8 is code-complete, but NOT closed.** K1–K19 are merged. K20's owner
@@ -938,5 +941,6 @@ PASS/FAIL/BLOCKED evidence. Never record an invite URL, token or password.
 | Open a `monkeyspaw://join` link from another app with Monkey’s Paw cold, foreground and background; Account shows destination server and account before Accept | NOT RUN |
 | Repeat or send a malformed link: no automatic join/register, no token in recents, descriptions or consumed Intent data/extras | NOT RUN |
 | Cancel, leave Account, background or kill/restart: invitation/password are lost and no redemption resumes | NOT RUN |
+| Cold invite during onboarding or settings loading: background, return and finish setup; the earlier invitation is gone without constructing Account on an ordinary local stop | NOT RUN |
 | Open an invite for another deployment: explicit sign-in there or explicit new-account acceptance; current bearer never crosses servers | NOT RUN |
 | Accept with an existing account and explicitly create a new account; remote registration followed by local failure offers sign-in without redeeming again | NOT RUN |

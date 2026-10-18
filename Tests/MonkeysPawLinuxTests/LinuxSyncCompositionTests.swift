@@ -1,0 +1,1307 @@
+#if os(Linux)
+import CGtk
+import Foundation
+import Glibc
+import XCTest
+@testable import MonkeysPawCore
+@testable import MonkeysPawLinux
+
+final class LinuxSyncCompositionTests: XCTestCase {
+    private var application: UnsafeMutablePointer<GtkApplication>!
+    private var tools: FakeLinuxTools!
+    private var environment: LinuxEnvironment!
+    private var paths: LinuxPaths!
+    private var transport: LinuxSyncTestTransport!
+    private var notifications: FakePortal!
+
+    override func setUpWithError() throws {
+        let address = try FakePortal.requirePrivateBus()
+        application = try GTKTestSupport.application()
+        tools = try FakeLinuxTools()
+        tools.environment["HOME"] = tools.directory.path
+        tools.environment["XDG_CONFIG_HOME"] = tools.directory.appendingPathComponent("config").path
+        tools.environment["XDG_DATA_HOME"] = tools.directory.appendingPathComponent("data").path
+        tools.environment["XDG_SESSION_TYPE"] = "wayland"
+        tools.environment["XDG_CURRENT_DESKTOP"] = "sway"
+        tools.environment["DBUS_SESSION_BUS_ADDRESS"] = address
+        paths = LinuxPaths(environment: tools.environment)
+        transport = LinuxSyncTestTransport()
+        notifications = try FakePortal(address: address)
+        try notifications.ownNotifications()
+    }
+
+    override func tearDown() {
+        transport?.releaseHeld()
+        if let environment {
+            environment.shutdown()
+            let done = LinuxSyncTestFlag()
+            Task.detached { await environment.drainSync(); done.set() }
+            XCTAssertTrue(GTKTestSupport.spin(until: { done.value }))
+        }
+        environment = nil
+        if let application { GTKTestSupport.destroy(application) }
+        application = nil
+        notifications?.shutdown()
+        notifications = nil
+        transport = nil
+        tools = nil
+    }
+
+    func testGLibTimersSendWorkToTheSharedWorkerAndRevokeQueuedCallbacks() throws {
+        let worker = LinuxBackgroundWork()
+        let timer = LinuxSyncScheduler(worker: worker)
+        let entered = LinuxSyncTestFlag()
+        let finished = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        timer.after(.milliseconds(10)) {
+            XCTAssertFalse(Thread.isMainThread)
+            entered.set()
+            release.wait()
+            finished.set()
+        }
+        defer { release.signal(); timer.retire() }
+        XCTAssertTrue(GTKTestSupport.spin { entered.value })
+        let heartbeat = LinuxSyncTestFlag()
+        GTK.onMainLoop { heartbeat.set() }
+        XCTAssertTrue(GTKTestSupport.spin { heartbeat.value })
+        let stale = LinuxSyncTestFlag()
+        timer.after(.milliseconds(10)) { stale.set() }
+        waitForGLib(.milliseconds(40))
+        timer.retire()
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin { finished.value })
+        waitForGLib(.milliseconds(40))
+        XCTAssertFalse(stale.value)
+        let never = LinuxSyncTestFlag()
+        timer.after(.milliseconds(1)) { never.set() }
+        waitForGLib(.milliseconds(20))
+        XCTAssertFalse(never.value)
+    }
+
+    func testDeviceEnvironmentIsReadOnlyAndPersistedReadsUseTheFileTier() throws {
+        let id = UUID()
+        let account = SecretAccount.device(id)
+        let variable = Self.deviceVariable(id)
+        let token = UUID().uuidString
+        tools.environment[variable] = token
+        let store = LinuxSecretStore(paths: paths, runner: tools.runner)
+        XCTAssertEqual(try store.read(account: account, source: .effective)?.tier, .environment)
+        onWorker {
+            XCTAssertNil(try store.read(account: account, source: .persisted))
+            XCTAssertEqual(try store.write(SecretValue("persisted-envelope"), account: account), .file)
+            let persisted = try XCTUnwrap(store.read(account: account, source: .persisted))
+            XCTAssertEqual(persisted.tier, .file)
+            XCTAssertTrue(persisted.value.withValue { $0 == "persisted-envelope" })
+            try store.delete(account: account)
+            XCTAssertNil(try store.read(account: account, source: .persisted))
+            XCTAssertEqual(try store.read(account: account, source: .effective)?.tier, .environment)
+        }
+        XCTAssertTrue(tools.runner.environment[variable] == token)
+    }
+
+    func testEveryToolStripsDeviceOverridesIncludingExplicitEnvironmentOverrides() throws {
+        let variable = Self.deviceVariable(UUID())
+        let token = UUID().uuidString
+        tools.environment[variable] = token
+        try tools.install("inspect", script: FakeLinuxTools.recordArguments + "\n/usr/bin/env")
+        let output = try tools.runner.run("inspect", arguments: ["separate", "arguments"],
+            environmentOverrides: [variable: token]).get()
+        XCTAssertFalse(output.text.contains(token), "Device token must stay in the parent")
+        XCTAssertFalse(output.text.contains(variable))
+        XCTAssertTrue(output.text.contains("DBUS_SESSION_BUS_ADDRESS="))
+        XCTAssertEqual(tools.arguments, [["separate", "arguments"]])
+    }
+
+    func testDeviceSecretToolReceivesOnlyStdinAndLockedServiceHasNoPlaintextFallback() throws {
+        let account = SecretAccount.device(UUID())
+        try tools.install("secret-tool", script: FakeLinuxTools.recordArguments + #"""
+
+        case "$1" in
+        lookup) exit 1;;
+        search) exit 0;;
+        store) bytes=$(/bin/cat); test -n "$bytes";;
+        clear) exit 0;;
+        esac
+        """#)
+        let token = UUID().uuidString
+        let store = LinuxSecretStore(paths: paths, runner: tools.runner)
+        onWorker { XCTAssertEqual(try store.write(SecretValue(token), account: account), .secretService) }
+        XCTAssertFalse(tools.log.joined().contains(token), "Secret must never enter argv")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.configDirectory.appendingPathComponent("secrets-unencrypted.json").path))
+        try tools.install("secret-tool", script: #"if [ "$1" = search ]; then printf '[locked item]'; exit 0; fi; exit 1"#)
+        onWorker {
+            XCTAssertThrowsError(try store.read(account: account, source: .effective)) { XCTAssertEqual($0 as? SecretStoreError, .locked) }
+            XCTAssertThrowsError(try store.write(SecretValue(token), account: account)) { XCTAssertEqual($0 as? SecretStoreError, .locked) }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.configDirectory.appendingPathComponent("secrets-unencrypted.json").path))
+    }
+
+    func testStartupVerifiesBoundEnvironmentAndSignOutCannotResumeIt() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        compose()
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.accountModel?.state.enabled == true && self.environment.syncService?.report.lastSuccess != nil })
+        XCTAssertEqual(environment.accountModel?.state.secretTier, .environment)
+        XCTAssertTrue(environment.accountModel?.state.secretStorageMessage.contains("read-only") == true)
+        XCTAssertFalse(transport.sentOnMain)
+        let model = try XCTUnwrap(environment.accountModel)
+        model.signOut()
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy && model.state.connection == nil })
+        XCTAssertFalse(environment.syncService?.report.enabled == true)
+        let requestCount = transport.requests.count
+        model.startup()
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy })
+        XCTAssertEqual(transport.requests.count, requestCount)
+        XCTAssertTrue(tools.environment[Self.deviceVariable(connection.connectionID)] == transport.token)
+    }
+
+    func testConfiguredLaunchBeforeInitialGLibLoadStartsSyncExactlyOnce() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        compose()
+        let model = try XCTUnwrap(environment.accountModel)
+        // No GLib iteration has admitted the model's initial read yet.
+        XCTAssertEqual(model.state.operation, .loading)
+        XCTAssertNil(model.state.connection)
+        XCTAssertTrue(transport.requests.isEmpty)
+        environment.start()
+        environment.start()
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin {
+            model.state.enabled && self.environment.syncService?.report.lastSuccess != nil
+        })
+        XCTAssertEqual(transport.requests.filter { $0.url.lastPathComponent == "me" }.count, 1)
+        XCTAssertEqual(transport.pullCount, 1)
+    }
+
+    func testConfiguredLaunchAfterInitialGLibLoadStartsSyncExactlyOnce() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        compose()
+        let model = try XCTUnwrap(environment.accountModel)
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy })
+        XCTAssertTrue(transport.requests.isEmpty)
+        environment.start()
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin {
+            model.state.enabled && self.environment.syncService?.report.lastSuccess != nil
+        })
+        XCTAssertEqual(transport.requests.filter { $0.url.lastPathComponent == "me" }.count, 1)
+        XCTAssertEqual(transport.pullCount, 1)
+    }
+
+    func testToolDeadlineReleasesSerialWorkerWithClosedOutputOrBlockedInput() throws {
+        let worker = LinuxBackgroundWork()
+        let cases: [(String, Data?)] = [
+            ("exec 1>&-\nexec /bin/sleep 10", nil),
+            ("exec /bin/sleep 10", Data(repeating: 1, count: 128 * 1_024))
+        ]
+        for (script, input) in cases {
+            try tools.install("blocked", script: script)
+            let runner = tools.runner
+            let drained = LinuxSyncTestFlag()
+            let started = ContinuousClock.now
+            worker.run {
+                let result = runner.run("blocked", arguments: [], timeout: .milliseconds(100), input: input)
+                guard case .failure(.timeout) = result else {
+                    XCTFail("A stalled child must return the deadline failure")
+                    return
+                }
+            }
+            // Graph replacement uses this same serial-worker barrier.
+            worker.run { drained.set() }
+            let heartbeat = LinuxSyncTestFlag()
+            GTK.onMainLoop { heartbeat.set() }
+            XCTAssertTrue(GTKTestSupport.spin { heartbeat.value })
+            XCTAssertTrue(GTKTestSupport.spin { drained.value })
+            XCTAssertLessThan(ContinuousClock.now - started, .seconds(2))
+        }
+    }
+
+    func testLockedConfiguredAccountSuppressesSeedsAndDoesNotSendHTTP() throws {
+        _ = try seedConnection()
+        try tools.install("secret-tool", script: #"if [ "$1" = search ]; then printf '[locked item]'; exit 0; fi; exit 1"#)
+        compose()
+        environment.start()
+        environment.settingsModel.markSetupPresented()
+        environment.onboardingModel.useDefaultFolder()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.accountModel?.state.error == .secret(.locked) })
+        XCTAssertNotNil(environment.accountModel?.state.connection)
+        environment.onboardingModel.refresh()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.onboardingModel.state.step == .tour })
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertTrue(try files().listFiles().isEmpty)
+    }
+
+    func testEnvironmentTokenForAnotherDeviceNeverEnablesSync() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        transport.wrongDevice = true
+        compose()
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.accountModel?.state.error == .needsSignIn })
+        XCTAssertFalse(environment.syncService?.report.enabled == true)
+        XCTAssertEqual(transport.requests.map { $0.url.lastPathComponent }, ["me"])
+    }
+
+    func testLoginComposesViewerModesStatusAndDirtyEditorPrivateCopy() throws {
+        transport.role = .editor
+        compose()
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)), String(describing: environment.syncService?.report))
+        environment.showLibrary()
+        let selection = LibraryPromptSelection(identity: .assigned(try XCTUnwrap(ULID(LinuxSyncTestTransport.groupPrompt))), relativePath: "Groups/Team/a.md")
+        environment.editorModel.open(selection)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source != nil })
+        environment.editorModel.edit("unsaved local draft")
+        let generation = environment.editorModel.assistantSnapshot?.accessGeneration
+        transport.role = .viewer
+        environment.syncService?.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin(until: { !self.environment.editorModel.state.canEdit }, timeout: .seconds(10)), String(describing: environment.syncService?.report))
+        XCTAssertEqual(environment.editorModel.state.source, "unsaved local draft")
+        XCTAssertTrue(environment.editorModel.state.isDirty)
+        XCTAssertTrue(environment.editorModel.state.canSaveAsCopy)
+        XCTAssertNotEqual(environment.editorModel.assistantSnapshot?.accessGeneration, generation)
+        XCTAssertEqual(try permissions("Groups/Team/a.md"), 0o444)
+        XCTAssertTrue(environment.syncStatusModel?.state.enabled == true)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let button = self.findWidget("library-save-copy") else { return false }
+            return gtk_widget_get_sensitive(button) != 0
+        })
+    }
+
+    func testFileCredentialRestartsThroughTheBoundAccountAndNeverEntersAppData() throws {
+        compose()
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)))
+        let data = try RootedFileStore(root: paths.dataDirectory)
+        for file in try data.listFiles() {
+            XCTAssertNil(try data.read(at: file.relativePath).range(of: Data(transport.token.utf8)), "App data must be credential-free")
+        }
+        environment.shutdown()
+        let previous = environment!
+        let done = LinuxSyncTestFlag()
+        Task.detached { await previous.drainSync(); done.set() }
+        XCTAssertTrue(GTKTestSupport.spin { done.value })
+        environment = nil
+        compose()
+        let model = try XCTUnwrap(environment.accountModel)
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy })
+        model.startup()
+        XCTAssertTrue(GTKTestSupport.spin(until: { !model.state.isBusy && model.state.enabled }, timeout: .seconds(10)))
+        XCTAssertEqual(model.state.secretTier, .file)
+        XCTAssertFalse(transport.sentOnMain)
+        XCTAssertFalse(tools.log.joined().contains(transport.token), "Device token must not enter argv")
+    }
+
+    func testOwnWatcherWritesNeverLoopAndLaterExternalEditStillPushes() throws {
+        compose()
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)))
+        let pulls = transport.pullCount
+        waitForGLib(.seconds(4))
+        XCTAssertEqual(transport.pullCount, pulls)
+        XCTAssertEqual(transport.requests.filter { $0.method == .put }.count, 0)
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nExternal edit\n"
+        try files().write(Data(source.utf8), at: "a.md")
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.transport.requests.contains { $0.method == .put } }, timeout: .seconds(6)))
+        XCTAssertEqual(transport.requests.filter { $0.method == .put }.count, 1)
+        let afterEdit = transport.pullCount
+        waitForGLib(.seconds(4))
+        XCTAssertEqual(transport.pullCount, afterEdit)
+        XCTAssertEqual(transport.requests.filter { $0.method == .put }.count, 1)
+    }
+
+    func testOneInvalidWatcherPathDoesNotDisableSyncForOtherChanges() throws {
+        let worker = LinuxBackgroundWork()
+        let raw = LinuxSyncTestWatcher()
+        compose(watcher: raw, backgroundWork: worker)
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+
+        let entered = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        worker.run { entered.set(); release.wait() }
+        defer { release.signal() }
+        XCTAssertTrue(GTKTestSupport.spin { entered.value })
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nExternal edit\n"
+        try files().write(Data(source.utf8), at: "a.md")
+        try files().write(Data("Temporary prompt\n".utf8), at: "transient.md")
+        raw.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .modified)))
+        raw.emit(.file(FileStoreEvent(relativePath: "transient.md", kind: .created)))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.pickerModel.results.contains { $0.relativePath == "transient.md" }
+        })
+
+        // The UI indexed this regular file, but the queued stamp must now
+        // reject its replacement without treating the healthy root as lost.
+        let outside = tools.directory.appendingPathComponent("outside.md")
+        try Data("Outside\n".utf8).write(to: outside)
+        try FileManager.default.removeItem(at: libraryRoot.appendingPathComponent("transient.md"))
+        try FileManager.default.createSymbolicLink(at: libraryRoot.appendingPathComponent("transient.md"), withDestinationURL: outside)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.blockingIssue == .rootUnavailable
+                || self.transport.requests.contains { $0.method == .put }
+        }, timeout: .seconds(6)))
+        XCTAssertNil(environment.syncService?.report.blockingIssue)
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(raw.stopCount, 0)
+        XCTAssertEqual(transport.requests.filter { $0.method == .put }.count, 1)
+        XCTAssertEqual(try Data(contentsOf: outside), Data("Outside\n".utf8))
+    }
+
+    func testRootReplacementDrainsHeldNetworkAndRejectsOldRepliesAndTimers() throws {
+        let timer = LinuxSyncTestTimer()
+        compose(timer: timer)
+        transport.holdPull = true
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let oldAccount = try XCTUnwrap(environment.accountModel)
+        let oldSync = try XCTUnwrap(environment.syncService)
+        let oldStatus = try XCTUnwrap(environment.syncStatusModel)
+        let oldStatusState = oldStatus.state
+        var statusNotifications = 0
+        oldStatus.onChange = { statusNotifications += 1 }
+        oldStatus.addObserver { _ in statusNotifications += 1 }
+        // Queue both UI intents and service-report publications before retirement.
+        oldStatus.showErrorDetails()
+        oldStatus.refresh()
+        oldStatus.syncNow()
+        let oldTimers = timer.take(.seconds(60))
+        let oldRoot = libraryRoot
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        XCTAssertEqual(environment.switchLibrary(to: target), .syncDraining)
+        let heartbeat = LinuxSyncTestFlag()
+        GTK.onMainLoop { heartbeat.set() }
+        XCTAssertTrue(GTKTestSupport.spin { heartbeat.value })
+        XCTAssertTrue(environment.syncService === oldSync)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncService !== oldSync && self.environment.syncService?.report.lastSuccess != nil })
+        let requestCount = transport.requests.count
+        oldTimers.forEach { $0() }
+        oldAccount.startup()
+        oldStatus.refresh()
+        oldStatus.syncNow()
+        oldSync.syncNow()
+        waitForGLib(.milliseconds(100))
+        XCTAssertEqual(transport.requests.count, requestCount)
+        XCTAssertEqual(oldStatus.state, oldStatusState)
+        XCTAssertEqual(statusNotifications, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldRoot.appendingPathComponent("late.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
+        XCTAssertEqual(environment.settingsModel.libraryFolderPath, target.path)
+    }
+
+    func testRecoveredVisibleAccountReservesBootstrapBeforeAutomaticGroups() throws {
+        try assertVisibleAccountBootstrap(target: .rejected)
+    }
+
+    func testSwitchedVisibleAccountReservesBootstrapBeforeAutomaticGroups() throws {
+        try assertVisibleAccountBootstrap(target: .valid)
+    }
+
+    func testFreshInviteSettingsDuringFailedBootstrapPreservesInputAndReleasesControls() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        transport.wrongDevice = true
+        compose()
+        let account = try XCTUnwrap(environment.accountModel)
+        let groups = try XCTUnwrap(environment.groupManagementModel)
+        let observation = LinuxSyncBootstrapObservation(account: account, groups: groups)
+        var opened = false
+        var wroteDraft = false
+        account.onChange = { [weak self, weak account] in
+            guard let self, let account, !opened, !account.state.isBusy,
+                  account.state.connection != nil, account.state.error == nil else { return }
+            opened = true
+            // The initial snapshot has arrived, but composition has not yet
+            // admitted startup. Open a fresh window through the real deep link.
+            var link = self.bootstrapInviteLink
+            self.environment.openInvite(&link)
+            XCTAssertTrue(link.isEmpty)
+            GTK.onMainLoop { [weak self] in
+                guard let entry = self?.findWidget("settings-account-username") else { return }
+                mp_entry_set_text(entry, "unsent draft")
+                wroteDraft = true
+            }
+        }
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin {
+            opened && wroteDraft && !account.state.isBusy && account.state.error == .needsSignIn
+                && self.environment.inviteModel?.state.destination != nil
+                && !groups.state.isBusy
+                && self.findWidget("settings-account-sign-in").map { gtk_widget_is_sensitive($0) != 0 } == true
+        })
+        XCTAssertEqual(observation.earlyRefreshes, 0, "Automatic groups entered before bootstrap settled")
+        XCTAssertGreaterThan(observation.settledSignedOutRefreshes, 0)
+        XCTAssertFalse(account.state.enabled)
+        XCTAssertNotEqual(account.state.error, .busy)
+        XCTAssertEqual(groups.state.error, .account(.signedOut))
+        for name in ["settings-account-sign-in", "settings-account-refresh", "settings-account-sign-out", "settings-groups-refresh"] {
+            XCTAssertTrue(findWidget(name).map { gtk_widget_is_sensitive($0) != 0 } == true, name)
+        }
+        let username = try XCTUnwrap(findWidget("settings-account-username"))
+        XCTAssertTrue(String(cString: mp_entry_text(username)) == "unsent draft", "Reservation release must preserve the editable draft")
+        let invite = try XCTUnwrap(environment.inviteModel)
+        XCTAssertNotNil(invite.state.destination)
+        XCTAssertFalse(invite.state.accepted)
+        XCTAssertFalse(transport.requests.contains { $0.url.path.hasSuffix("/groups/join") || $0.url.path.hasSuffix("/register") })
+        let signedOutRefreshes = observation.settledSignedOutRefreshes
+        let refresh = try XCTUnwrap(findWidget("settings-groups-refresh"))
+        XCTAssertNotEqual(gtk_widget_activate(refresh), 0)
+        XCTAssertTrue(GTKTestSupport.spin {
+            observation.settledSignedOutRefreshes > signedOutRefreshes && !groups.state.isBusy
+        }, "Failed bootstrap must leave manual refresh usable")
+        transport.wrongDevice = false
+        var password = "transient-password"
+        account.login(server: "https://sync.example.test", username: "person", password: &password, deviceName: "Linux")
+        XCTAssertTrue(password.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            account.state.enabled && !account.state.isBusy && !groups.state.isBusy
+                && observation.authenticatedRefreshes > 0
+                && self.findWidget("settings-groups-create-name").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, timeout: .seconds(10)))
+        XCTAssertNil(account.state.error)
+        XCTAssertFalse(invite.state.accepted, "Sign-in must not redeem staged consent")
+    }
+
+    private var bootstrapInviteLink: String {
+        "monkeyspaw://join?server=https%3A%2F%2Fsync.example.test&token=" + String(repeating: "b", count: 42) + "A"
+    }
+
+    private enum BootstrapTarget { case valid, rejected }
+
+    private func assertVisibleAccountBootstrap(target kind: BootstrapTarget) throws {
+        let rejectTarget = kind == .rejected
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        var watcherCount = 0
+        var observation: LinuxSyncBootstrapObservation?
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            libraryWatcherFactory: { [weak self] _ in
+                watcherCount += 1
+                if watcherCount == 2 {
+                    // Attach to the replacement's public models before its
+                    // queued initial snapshots, without delaying any service.
+                    GTK.onMainLoop {
+                        guard let account = self?.environment.accountModel,
+                              let groups = self?.environment.groupManagementModel else { return }
+                        observation = LinuxSyncBootstrapObservation(account: account, groups: groups)
+                    }
+                }
+                return LinuxSyncTestWatcher()
+            }, syncTransport: transport)
+        _ = environment.libraryStatusModel
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.accountModel?.state.enabled == true && self.environment.syncService?.report.lastSuccess != nil
+        })
+        environment.showSettings(page: .account)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.findWidget("settings-account-sign-out").map { gtk_widget_is_sensitive($0) != 0 } == true
+        })
+        let oldAccount = try XCTUnwrap(environment.accountModel)
+        let oldSync = try XCTUnwrap(environment.syncService)
+        let oldPicker = environment.pickerModel
+        transport.holdPull = true
+        defer { transport.releaseHeld() }
+        oldSync.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("bootstrap-target")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { !oldPicker.libraryAvailable })
+        if rejectTarget {
+            try FileManager.default.removeItem(at: target)
+            try Data("Not a directory\n".utf8).write(to: target)
+        }
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.accountModel !== oldAccount
+                && self.environment.accountModel?.state.enabled == true
+                && self.environment.accountModel?.state.isBusy == false
+                && (observation?.authenticatedRefreshes ?? 0) > 0
+                && self.findWidget("settings-groups-create-name").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, timeout: .seconds(10)))
+        let observed = try XCTUnwrap(observation)
+        XCTAssertEqual(observed.earlyRefreshes, 0, "Automatic groups entered before authenticated bootstrap readiness")
+        XCTAssertGreaterThan(observed.authenticatedRefreshes, 0)
+        XCTAssertNil(environment.accountModel?.state.error)
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertFalse(oldPicker.libraryAvailable)
+        XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, rejectTarget ? libraryRoot.path : target.path)
+        XCTAssertEqual(environment.settingsModel.libraryFolderPath, rejectTarget ? nil : target.path)
+        XCTAssertEqual(environment.syncReplacementIssue, rejectTarget ? .invalidTarget(.invalidRoot) : nil)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
+    }
+
+    func testFailedTargetReadmissionKeepsOldLibraryUsableAndRetryRecovers() throws {
+        var watchers: [LinuxSyncTestWatcher] = []
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            libraryWatcherFactory: { _ in
+                let watcher = LinuxSyncTestWatcher()
+                watchers.append(watcher)
+                return watcher
+            }, syncTransport: transport)
+        _ = environment.libraryStatusModel
+        defer { transport.releaseHeld() }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        environment.showLibrary()
+        let selection = LibraryPromptSelection(identity: .assigned(try XCTUnwrap(ULID(LinuxSyncTestTransport.personalPrompt))), relativePath: "a.md")
+        environment.libraryBrowserModel.selectPrompt(selection)
+        environment.libraryBrowserModel.setFilter("a")
+        environment.editorModel.open(selection)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source != nil })
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("library-save-copy") != nil })
+        let saveCopy = try XCTUnwrap(findWidget("library-save-copy"))
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_sensitive(saveCopy) != 0 })
+        let oldPicker = environment.pickerModel
+        let oldEditor = environment.editorModel
+        let oldSync = try XCTUnwrap(environment.syncService)
+        let oldAccount = try XCTUnwrap(environment.accountModel)
+        let oldGroups = try XCTUnwrap(environment.groupManagementModel)
+        let oldInvite = try XCTUnwrap(environment.inviteModel)
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("settings-library-message") != nil })
+        let inviteLink = "monkeyspaw://join?server=https%3A%2F%2Fsync.example.test&token=" + String(repeating: "b", count: 42) + "A"
+        var suppliedInvite = inviteLink
+        environment.openInvite(&suppliedInvite)
+        XCTAssertTrue(suppliedInvite.isEmpty, "Invite activation did not consume its input")
+        XCTAssertTrue(GTKTestSupport.spin {
+            oldInvite.state.canAccept
+                && self.findWidget("settings-invite-join").map { gtk_widget_is_sensitive($0) != 0 } == true
+                && self.findWidget("settings-account-sign-out").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, "The original Account page did not bind its invite")
+
+        transport.holdPull = true
+        oldSync.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        // The native chooser passes this same intent. Only the target's
+        // filesystem shape changes while the old request holds the drain.
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { !oldPicker.libraryAvailable })
+        XCTAssertFalse(gtk_widget_get_sensitive(saveCopy) != 0)
+        XCTAssertFalse(oldEditor.state.isDirty)
+        try FileManager.default.removeItem(at: target)
+        try Data("Not a directory\n".utf8).write(to: target)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncReplacementIssue != nil })
+        let message = try XCTUnwrap(findWidget("settings-library-message"))
+        waitForGLib(.milliseconds(100))
+        XCTAssertEqual(environment.syncReplacementIssue, .invalidTarget(.invalidRoot))
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(message))),
+            GeneralSettingsStrings.message(for: .invalidTarget(.rejectedByStore(.invalidRoot))))
+        XCTAssertTrue(environment.pickerModel !== oldPicker)
+        XCTAssertTrue(environment.editorModel !== oldEditor)
+        XCTAssertTrue(environment.accountModel !== oldAccount)
+        XCTAssertTrue(environment.groupManagementModel !== oldGroups)
+        XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, libraryRoot.path)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+        XCTAssertNil(oldSync.report.blockingIssue, "This is not failed journal/root recovery")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("a.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
+        XCTAssertTrue(environment.pickerModel.libraryAvailable, "A rejected target must leave the healthy old library usable")
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_sensitive(saveCopy) != 0 }, "The retained native library must remain usable")
+        XCTAssertEqual(watchers.count, 2)
+        XCTAssertGreaterThan(watchers.first?.stopCount ?? 0, 0)
+        XCTAssertEqual(watchers.last?.stopCount, 0, "Recovery must install live monitoring")
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.editorModel.state.prompt == selection && self.environment.editorModel.assistantSession != nil
+        })
+        XCTAssertEqual(environment.libraryBrowserModel.selection, selection)
+        XCTAssertEqual(environment.libraryBrowserModel.filter, "a")
+        XCTAssertFalse(oldPicker.libraryAvailable, "Retired capabilities must not be revived")
+        XCTAssertNil(oldEditor.assistantSession)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil && self.environment.accountModel?.state.enabled == true
+        }, timeout: .seconds(10)), "The recovered account must finish startup before a later watcher edit")
+        let recoveredStatus = try XCTUnwrap(environment.syncStatusModel)
+        recoveredStatus.showErrorDetails()
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let details = self.findWidget("library-sync-file-errors") else { return false }
+            return gtk_widget_is_visible(details) != 0
+        }, "The recovered Library must observe its current graph's sync status")
+        recoveredStatus.dismissErrorDetails()
+        let refreshed = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\ntitle: Updated watcher\n---\nWatcher refresh\n"
+        try files().write(Data(refreshed.utf8), at: "a.md")
+        watchers.last?.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .modified)))
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.libraryBrowserModel.rows.contains { $0.title == "Updated watcher" }
+                && self.environment.pickerModel.results.contains { $0.title == "Updated watcher" }
+        })
+        let tabs = try XCTUnwrap(findWidget("settings-tabs"))
+        let accountPage = try XCTUnwrap(findWidget("settings-account-page"))
+        gtk_notebook_set_current_page(mp_notebook(tabs), gtk_notebook_page_num(mp_notebook(tabs), accountPage))
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let signOut = self.findWidget("settings-account-sign-out"),
+                  let create = self.findWidget("settings-groups-create-name") else { return false }
+            return gtk_widget_is_sensitive(signOut) != 0 && gtk_widget_is_sensitive(create) != 0
+        }, "Account/group binding: enabled=\(String(describing: environment.accountModel?.state.enabled)), operation=\(String(describing: environment.accountModel?.state.operation)), error=\(String(describing: environment.accountModel?.state.error)); groups enabled=\(String(describing: environment.groupManagementModel?.state.enabled)), operation=\(String(describing: environment.groupManagementModel?.state.operation)), error=\(String(describing: environment.groupManagementModel?.state.error))")
+
+        let recoveredInvite = try XCTUnwrap(environment.inviteModel)
+        XCTAssertTrue(recoveredInvite !== oldInvite, "Recovery retained the retired invite model")
+        XCTAssertTrue(oldInvite.state.destination == nil && !oldInvite.state.canAccept,
+            "Recovery retained the original staged invite")
+        suppliedInvite = inviteLink
+        environment.openInvite(&suppliedInvite)
+        XCTAssertTrue(suppliedInvite.isEmpty, "Recovered invite activation did not consume its input")
+        XCTAssertTrue(GTKTestSupport.spin {
+            recoveredInvite.state.canAccept
+                && self.findWidget("settings-invite-join").map { gtk_widget_is_sensitive($0) != 0 } == true
+        }, "The recovered Account page did not bind its fresh invite")
+        var unusedPassword = ""
+        oldInvite.accept(as: .existingAccount, password: &unusedPassword)
+        let oldIntentDrained = LinuxSyncTestFlag()
+        GTK.onMainLoop { oldIntentDrained.set() }
+        XCTAssertTrue(GTKTestSupport.spin { oldIntentDrained.value })
+        XCTAssertTrue(recoveredInvite.state.canAccept && !recoveredInvite.state.accepted,
+            "A retired intent changed the recovered invite consent")
+        XCTAssertTrue(transport.requests.allSatisfy {
+            !$0.url.path.hasSuffix("/groups/join") && !$0.url.path.hasSuffix("/register")
+        }, "Recovery or a retired invite intent attempted redemption")
+
+        // Continue past red assertions to prove supported General retry and
+        // to release all old/new sync work before native teardown.
+        try FileManager.default.removeItem(at: target)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+                && self.environment.settingsModel.libraryFolderPath == target.path
+        }, timeout: .seconds(10)), "Retry report: \(String(describing: environment.syncService?.report)); account: \(String(describing: environment.accountModel?.state.operation)) / \(String(describing: environment.accountModel?.state.error))")
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(environment.editorModel !== oldEditor)
+        XCTAssertTrue(environment.accountModel !== oldAccount)
+        XCTAssertNil(environment.syncReplacementIssue)
+        XCTAssertNil(environment.generalSettingsModel.state.lastSwitchMessage)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
+    }
+
+    func testRepeatRefusalAfterDrainRestoresLibraryWithoutRevivingStaleRepeat() throws {
+        let clipboard = LinuxSyncRepeatClipboard()
+        var watchers: [LinuxSyncTestWatcher] = []
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            libraryWatcherFactory: { _ in
+                let watcher = LinuxSyncTestWatcher()
+                watchers.append(watcher)
+                return watcher
+            }, syncTransport: transport, clipboard: clipboard)
+        _ = environment.libraryStatusModel
+        defer { transport.releaseHeld(); clipboard.release("late clipboard") }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncService?.report.lastSuccess != nil })
+        let originalFiles = try files()
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\n{{clipboard}}\n"
+        try originalFiles.write(Data(source.utf8), at: "a.md")
+        watchers.last?.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .modified)))
+        environment.syncService?.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.requests.contains { $0.method == .put } })
+        environment.pickerModel.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.results.contains { $0.relativePath == "a.md" } })
+        let position = try XCTUnwrap(environment.pickerModel.results.firstIndex { $0.relativePath == "a.md" })
+        environment.pickerModel.selectResult(at: position)
+        environment.pickerModel.use(mode: .copyOnly)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.repeatModel?.availability == .ready })
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
+        let oldPicker = environment.pickerModel
+        let oldRepeat = try XCTUnwrap(environment.repeatModel)
+        clipboard.hold = true
+        oldRepeat.repeatLast()
+        XCTAssertTrue(GTKTestSupport.spin { clipboard.pending != nil })
+        let writes = clipboard.writes.count
+        let record = paths.dataDirectory.appendingPathComponent("last-delivery.json")
+        let saved = paths.dataDirectory.appendingPathComponent("saved-record")
+        let previousRecord = try Data(contentsOf: record)
+        transport.holdPull = true
+        environment.syncService?.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { !oldPicker.libraryAvailable })
+        // A deterministic private-store failure, independent of user privileges.
+        try FileManager.default.moveItem(at: record, to: saved)
+        try FileManager.default.createDirectory(at: record, withIntermediateDirectories: false)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncReplacementIssue == .repeatInvalidationFailed })
+        try originalFiles.requireRoot()
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+        XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, libraryRoot.path)
+        XCTAssertTrue(environment.pickerModel !== oldPicker, "Recovery requires fresh capabilities")
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.libraryAvailable }, "A failed Repeat tombstone must not disable the healthy library")
+        XCTAssertEqual(oldRepeat.state, .inactive)
+        XCTAssertFalse(oldPicker.libraryAvailable)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
+
+        // Repairing storage alone must not resurrect the uncommitted record in
+        // a fresh RepeatService. Only a durable tombstone may release its latch.
+        try FileManager.default.removeItem(at: record)
+        try FileManager.default.moveItem(at: saved, to: record)
+        clipboard.release("late clipboard")
+        let recoveredRepeat = try XCTUnwrap(environment.repeatModel)
+        recoveredRepeat.load()
+        XCTAssertTrue(GTKTestSupport.spin { recoveredRepeat.state == .idle })
+        XCTAssertEqual(recoveredRepeat.availability, .unavailable(.invalidationFailed))
+        recoveredRepeat.repeatLast()
+        XCTAssertTrue(GTKTestSupport.spin { recoveredRepeat.result != nil })
+        XCTAssertEqual(recoveredRepeat.result, .unavailable(.invalidationFailed))
+        XCTAssertEqual(clipboard.writes.count, writes)
+        XCTAssertEqual(try Data(contentsOf: record), previousRecord, "No late record write is authorized")
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("settings-library-message") != nil })
+        let message = try XCTUnwrap(findWidget("settings-library-message"))
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(message))),
+            GeneralSettingsStrings.message(for: .repeatInvalidationFailed))
+        environment.showLibrary()
+        let selection = LibraryPromptSelection(identity: .assigned(try XCTUnwrap(ULID(LinuxSyncTestTransport.personalPrompt))), relativePath: "a.md")
+        environment.libraryBrowserModel.selectPrompt(selection)
+        environment.editorModel.open(selection)
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("library-save-copy").map { gtk_widget_get_sensitive($0) != 0 } == true })
+
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.settingsModel.libraryFolderPath == target.path
+                && self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertNil(environment.syncReplacementIssue)
+        XCTAssertNil(environment.generalSettingsModel.state.lastSwitchMessage)
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(message))), "")
+        XCTAssertNil(try LastDeliveryStore(files: RootedFileStore(root: paths.dataDirectory)).load())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
+    }
+
+    func testFailedTargetReadmissionDoesNotRecreateMissingOldRoot() throws {
+        try assertFailedReadmissionRejectsChangedRoot(.missing)
+    }
+
+    func testFailedTargetReadmissionDoesNotAdoptReplacedOldRoot() throws {
+        try assertFailedReadmissionRejectsChangedRoot(.replaced)
+    }
+
+    func testFailedTargetReadmissionDoesNotFollowRedirectedDefaultRoot() throws {
+        try assertFailedReadmissionRejectsChangedRoot(.redirectedDefault)
+    }
+
+    func testOnboardingPublishesCompletedTargetRefusalAndCanRetry() throws {
+        compose()
+        defer { transport.releaseHeld() }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncService?.report.lastSuccess != nil })
+        environment.settingsModel.markSetupPresented()
+        environment.presentFromLauncher()
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("onboarding-library-message") != nil })
+        let message = try XCTUnwrap(findWidget("onboarding-library-message"))
+        let oldSync = try XCTUnwrap(environment.syncService)
+        transport.holdPull = true
+        oldSync.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.onboardingModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.pickerModel.libraryAvailable })
+        try FileManager.default.removeItem(at: target)
+        try Data("Not a directory\n".utf8).write(to: target)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin {
+            String(cString: gtk_label_get_text(mp_label(message)))
+                == GeneralSettingsStrings.message(for: .invalidTarget(.rejectedByStore(.invalidRoot)))
+        })
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(environment.onboardingModel.state.step, .libraryFolder)
+        XCTAssertFalse(environment.settingsModel.firstRun.libraryFolderCompleted)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+        try FileManager.default.removeItem(at: target)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.onboardingModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.settingsModel.firstRun.libraryFolderCompleted
+                && self.environment.settingsModel.libraryFolderPath == target.path
+        }, "Retry step: \(environment.onboardingModel.state.step); report: \(String(describing: environment.syncService?.report)); account: \(String(describing: environment.accountModel?.state.operation)) / \(String(describing: environment.accountModel?.state.error))")
+        XCTAssertNil(environment.syncReplacementIssue)
+        XCTAssertNil(environment.onboardingModel.state.lastSwitchMessage)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: target.appendingPathComponent("late.md").path))
+    }
+
+    func testFailedJournalDrainKeepsGraphClosedAndPublishesRecoveryFeedback() throws {
+        let failFlush = LinuxSyncTestFlag()
+        let allowCleanup = LinuxSyncTestFlag()
+        let watcher = LinuxSyncTestWatcher()
+        compose(watcher: watcher, flush: { descriptor in
+            let path = try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/fd/\(descriptor)")
+            if failFlush.value, !allowCleanup.value, path?.hasSuffix("/sync/apply.json") == true {
+                errno = Glibc.EIO
+                return -1
+            }
+            return Glibc.fsync(descriptor)
+        })
+        defer { allowCleanup.set() }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncService?.report.lastSuccess != nil })
+        let oldPicker = environment.pickerModel
+        let oldSync = try XCTUnwrap(environment.syncService)
+        let journal = paths.dataDirectory.appendingPathComponent("sync/apply.json")
+        failFlush.set()
+        // A role change journals real remoding work. Persisted journal flush
+        // failures must also prevent the drain's replay from retiring safely.
+        transport.role = .editor
+        oldSync.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin {
+            oldSync.report.blockingIssue != nil && FileManager.default.fileExists(atPath: journal.path)
+        })
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("settings-library-message") != nil })
+        let message = try XCTUnwrap(findWidget("settings-library-message"))
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncReplacementIssue == .syncRecoveryRequired })
+        XCTAssertTrue(environment.pickerModel === oldPicker)
+        XCTAssertTrue(environment.syncService === oldSync)
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: journal.path))
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: target.path).isEmpty)
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(message))),
+            "Your library could not be recovered safely. Choose another folder, or restore the original folder and restart Monkey's Paw.")
+    }
+
+    func testQuitDuringLibraryDrainShowsFeedbackWithThePickerHidden() throws {
+        compose()
+        transport.holdPull = true
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        XCTAssertEqual(environment.switchLibrary(to: target), .syncDraining)
+        XCTAssertFalse(environment.panel.isVisible)
+        var approved = false
+        environment.requestQuit { approved = true }
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.notifications.notificationBodies.contains("Finishing sync work before quitting. Try Quit again when it finishes.")
+        })
+        XCTAssertFalse(approved)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.settingsModel.libraryFolderPath == target.path })
+        environment.requestQuit { approved = true }
+        XCTAssertTrue(GTKTestSupport.spin { approved })
+    }
+
+    func testQuitWaitsForTheOldRequestAndCannotApplyItsLateResult() throws {
+        compose()
+        transport.holdPull = true
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        var approved = false
+        environment.requestQuit { approved = true }
+        waitForGLib(.milliseconds(50))
+        XCTAssertFalse(approved)
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { approved })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
+        let count = transport.requests.count
+        environment.syncService?.syncNow()
+        waitForGLib(.milliseconds(50))
+        XCTAssertEqual(transport.requests.count, count)
+    }
+
+    func testWatcherReadDuringJournalDoesNotRetireAHealthyRoot() throws {
+        let raw = LinuxSyncTestWatcher()
+        let blocked = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        compose(watcher: raw, flush: { descriptor in
+            let path = try? FileManager.default.destinationOfSymbolicLink(atPath: "/proc/self/fd/\(descriptor)")
+            if path?.hasSuffix("/sync/apply.json") == true, !blocked.value {
+                blocked.set()
+                // The timeout also releases a failing pre-fix UI publication.
+                _ = release.wait(timeout: .now() + .seconds(2))
+            }
+            return Glibc.fsync(descriptor)
+        })
+        defer { release.signal() }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { blocked.value })
+        raw.emit(.file(FileStoreEvent(relativePath: "a.md", kind: .created)))
+        waitForGLib(.milliseconds(400))
+        XCTAssertTrue(environment.pickerModel.libraryAvailable)
+        XCTAssertEqual(raw.stopCount, 0)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)), String(describing: environment.syncService?.report))
+        XCTAssertNil(environment.syncService?.report.blockingIssue)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.results.contains { $0.relativePath == "a.md" } })
+        try files().requireRoot()
+    }
+
+    func testSyncAvailabilityWaitsForSuccessfulIndexRebuild() throws {
+        let connection = try seedConnection()
+        tools.environment[Self.deviceVariable(connection.connectionID)] = transport.token
+        let data = try RootedFileStore(root: paths.dataDirectory)
+        let previous = SyncLibraryIdentity(account: connection.identity,
+            root: try SyncLibraryRoot(tools.directory.appendingPathComponent("previous").path))
+        try SyncStateStore(files: data, operations: data).reset(for: previous)
+        let usagePath = "usage/" + LinuxSyncTestTransport.personalPrompt
+        try data.write(Data("invalid usage".utf8), at: usagePath)
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nServer personal\n"
+        try files().write(Data(source.utf8), at: "a.md")
+
+        let worker = LinuxBackgroundWork()
+        let entered = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        worker.run { entered.set(); release.wait() }
+        defer { release.signal() }
+        XCTAssertTrue(GTKTestSupport.spin { entered.value })
+        compose(backgroundWork: worker)
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        environment.start()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        XCTAssertNil(environment.syncService?.report.blockingIssue)
+        XCTAssertFalse(environment.pickerModel.libraryAvailable,
+            "A queued index repair must not enable an unavailable library")
+
+        // Repair the input without another sync report. Only the queued rebuild
+        // can restore availability after its successful publication.
+        try data.write(Data("{\"events\":[],\"version\":1}".utf8), at: usagePath)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.pickerModel.libraryAvailable
+                && self.environment.pickerModel.results.contains { $0.relativePath == "a.md" }
+        })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryStatusModel.libraryAvailable })
+    }
+
+    func testReplacementIndexRepairRestoresLibraryStatus() throws {
+        let target = tools.directory.appendingPathComponent("second")
+        let worker = LinuxBackgroundWork()
+        let entered = LinuxSyncTestFlag()
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            libraryWatcherFactory: { directory in
+                if directory == target { worker.run { entered.set(); release.wait() } }
+                return LinuxSyncTestWatcher()
+            }, backgroundWork: worker, syncTransport: transport)
+        _ = environment.libraryStatusModel
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        let oldSync = environment.syncService
+        let data = try RootedFileStore(root: paths.dataDirectory)
+        let usagePath = "usage/" + LinuxSyncTestTransport.personalPrompt
+        try data.write(Data("invalid usage".utf8), at: usagePath)
+        let source = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nServer personal\n"
+        try RootedFileStore(root: target).write(Data(source.utf8), at: "a.md")
+        XCTAssertEqual(environment.switchLibrary(to: target), .syncDraining)
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            entered.value && self.environment.syncService !== oldSync
+                && self.environment.syncService?.report.lastSuccess != nil
+        }, timeout: .seconds(10)))
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.libraryStatusModel.libraryAvailable })
+
+        try data.write(Data("{\"events\":[],\"version\":1}".utf8), at: usagePath)
+        release.signal()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.libraryAvailable })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryStatusModel.libraryAvailable })
+    }
+
+    func testLostRootPreservesStateAndNeverSendsDeletes() throws {
+        compose()
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.environment.syncService?.report.lastSuccess != nil }, timeout: .seconds(10)), String(describing: environment.syncService?.report))
+        let state = paths.dataDirectory.appendingPathComponent("sync/state.json")
+        let before = try Data(contentsOf: state)
+        try FileManager.default.moveItem(at: libraryRoot, to: tools.directory.appendingPathComponent("old-library"))
+        try FileManager.default.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
+        // An immediate replacement can evade GIO's root-loss event. The pass
+        // also checks the pinned incarnation, as the periodic fallback does.
+        environment.syncService?.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            !self.environment.pickerModel.libraryAvailable && self.environment.syncService?.report.blockingIssue == .rootUnavailable
+        }, timeout: .seconds(10)))
+        XCTAssertFalse(transport.requests.contains { $0.method == .delete })
+        XCTAssertEqual(try Data(contentsOf: state), before)
+        XCTAssertEqual(environment.syncService?.report.blockingIssue, .rootUnavailable)
+    }
+
+    private enum OldRootChange { case missing, replaced, redirectedDefault }
+
+    private func assertFailedReadmissionRejectsChangedRoot(_ change: OldRootChange) throws {
+        let parked = tools.directory.appendingPathComponent("original-root")
+        if change == .redirectedDefault {
+            try FileManager.default.createDirectory(at: parked, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: libraryRoot.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: libraryRoot, withDestinationURL: parked)
+        }
+        let watcher = LinuxSyncTestWatcher()
+        compose(watcher: watcher)
+        defer { transport.releaseHeld() }
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncService?.report.lastSuccess != nil })
+        environment.showSettings()
+        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("settings-library-message") != nil })
+        let message = try XCTUnwrap(findWidget("settings-library-message"))
+        let oldPicker = environment.pickerModel
+        let oldSync = try XCTUnwrap(environment.syncService)
+        let state = paths.dataDirectory.appendingPathComponent("sync/state.json")
+        let before = try Data(contentsOf: state)
+        transport.holdPull = true
+        oldSync.syncNow()
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        let target = tools.directory.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        environment.generalSettingsModel.chooseFolder(target.path)
+        XCTAssertTrue(GTKTestSupport.spin { !oldPicker.libraryAvailable })
+        try FileManager.default.removeItem(at: target)
+        try Data("Not a directory\n".utf8).write(to: target)
+        if change == .redirectedDefault { try FileManager.default.removeItem(at: libraryRoot) }
+        else { try FileManager.default.moveItem(at: libraryRoot, to: parked) }
+        if change != .missing {
+            try FileManager.default.createDirectory(at: libraryRoot, withIntermediateDirectories: true)
+            try Data("Replacement root\n".utf8).write(to: libraryRoot.appendingPathComponent("marker.md"))
+        }
+        // No watcher loss event is supplied: recovery must check the original
+        // store's pinned incarnation rather than trusting its stopped watcher.
+        transport.releaseHeld()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncReplacementIssue == .syncRecoveryRequired })
+        waitForGLib(.milliseconds(100))
+        XCTAssertTrue(environment.pickerModel === oldPicker)
+        XCTAssertFalse(environment.pickerModel.libraryAvailable)
+        XCTAssertFalse(environment.libraryStatusModel.libraryAvailable)
+        XCTAssertNil(environment.settingsModel.libraryFolderPath)
+        XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, libraryRoot.path)
+        XCTAssertEqual(try Data(contentsOf: state), before)
+        XCTAssertFalse(transport.requests.contains { $0.method == .delete })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: parked.appendingPathComponent("a.md").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: parked.appendingPathComponent("late.md").path))
+        XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(message))),
+            "Your library could not be recovered safely. Choose another folder, or restore the original folder and restart Monkey's Paw.")
+        switch change {
+        case .missing:
+            XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.path), "Never recreate the default during rollback")
+        case .replaced, .redirectedDefault:
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: libraryRoot.path), ["marker.md"])
+            XCTAssertEqual(try Data(contentsOf: libraryRoot.appendingPathComponent("marker.md")), Data("Replacement root\n".utf8))
+        }
+    }
+
+    private var libraryRoot: URL { paths.documentsDirectory.appendingPathComponent("MonkeysPaw") }
+    private func files() throws -> RootedFileStore { try RootedFileStore(root: libraryRoot, trashRoot: tools.directory.appendingPathComponent("Trash")) }
+    private func permissions(_ path: String) throws -> Int? {
+        try FileManager.default.attributesOfItem(atPath: libraryRoot.appendingPathComponent(path).path)[.posixPermissions] as? Int
+    }
+    private static func deviceVariable(_ id: UUID) -> String {
+        "MONKEYSPAW_DEVICE_" + id.uuidString.replacingOccurrences(of: "-", with: "") + "_TOKEN"
+    }
+    private func compose(timer: Scheduler? = nil, watcher: FileStoreWatcher? = nil, backgroundWork: BackgroundWork? = nil,
+                         flush: @escaping (Int32) -> Int32 = Glibc.fsync) {
+        let factory: ((URL) throws -> FileStoreWatcher)? = watcher.map { raw in { _ in raw } }
+        environment = LinuxEnvironment(application: application, environment: tools.environment,
+            scheduler: timer, libraryWatcherFactory: factory, backgroundWork: backgroundWork,
+            syncTransport: transport, syncDataFlush: flush)
+        // Exercise the primary's watcher/index startup before account intents.
+        _ = environment.libraryStatusModel
+    }
+    private func login() throws {
+        let model = try XCTUnwrap(environment.accountModel)
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy })
+        var password = "transient-password-" + UUID().uuidString
+        model.login(server: "https://sync.example.test", username: "person", password: &password, deviceName: "Linux")
+        XCTAssertTrue(password.isEmpty, "Login consumes secure input")
+        XCTAssertTrue(GTKTestSupport.spin { !model.state.isBusy && model.state.enabled },
+            "Account result: " + String(describing: model.state.operation) + " / " + String(describing: model.state.error))
+        XCTAssertEqual(model.state.secretTier, .file)
+        XCTAssertTrue(model.state.secretStorageMessage.contains("unencrypted"))
+    }
+    private func seedConnection() throws -> SyncAccount {
+        let data = try RootedFileStore(root: paths.dataDirectory)
+        let account = try SyncAccount(identity: SyncAccountIdentity(serverURL: "https://sync.example.test", userID: XCTUnwrap(ULID(LinuxSyncTestTransport.user))),
+            username: "person", deviceID: XCTUnwrap(ULID(LinuxSyncTestTransport.device)), deviceName: "Linux", connectionID: UUID())
+        try SyncAccountStore(files: data, operations: data).setAccount(account)
+        return account
+    }
+    private func waitForGLib(_ delay: Duration) {
+        var elapsed = false
+        GTK.after(delay.timeInterval) { elapsed = true }
+        XCTAssertTrue(GTKTestSupport.spin(until: { elapsed }, timeout: delay + .seconds(2)))
+    }
+    private func onWorker(_ operation: @escaping () throws -> Void) {
+        let done = LinuxSyncTestFlag()
+        Task.detached {
+            do { try operation() }
+            catch { XCTFail("Worker returned an unexpected typed failure") }
+            done.set()
+        }
+        XCTAssertTrue(GTKTestSupport.spin(until: { done.value }, timeout: .seconds(6)))
+    }
+
+    private func findWidget(_ name: String) -> GTK.Widget? {
+        func find(_ widget: GTK.Widget) -> GTK.Widget? {
+            if String(cString: gtk_widget_get_name(widget)) == name { return widget }
+            var child = gtk_widget_get_first_child(widget)
+            while let current = child {
+                if let match = find(current) { return match }
+                child = gtk_widget_get_next_sibling(current)
+            }
+            return nil
+        }
+        var windows = gtk_application_get_windows(application)
+        while let node = windows {
+            if let data = node.pointee.data, let match = find(mp_window_widget(data.assumingMemoryBound(to: GtkWindow.self))) { return match }
+            windows = node.pointee.next
+        }
+        return nil
+    }
+}
+
+private final class LinuxSyncBootstrapObservation {
+    private(set) var earlyRefreshes = 0
+    private(set) var authenticatedRefreshes = 0
+    private(set) var settledSignedOutRefreshes = 0
+
+    init(account: AccountModel, groups: GroupManagementModel) {
+        groups.onChange = { [weak self, weak account, weak groups] in
+            guard let self, let account, groups?.state.operation == .refreshing else { return }
+            if !account.state.isBusy, account.state.enabled { self.authenticatedRefreshes += 1 }
+            else if !account.state.isBusy, account.state.error == .needsSignIn { self.settledSignedOutRefreshes += 1 }
+            else { self.earlyRefreshes += 1 }
+        }
+    }
+}
+
+private final class LinuxSyncRepeatClipboard: Clipboard {
+    var writes: [String] = []
+    var hold = false
+    var pending: (@Sendable (String?) -> Void)?
+    func writeText(_ text: String) { writes.append(text) }
+    func readText(_ completion: @escaping @Sendable (String?) -> Void) {
+        if hold { pending = completion }
+        else { completion("initial clipboard") }
+    }
+    func release(_ text: String) {
+        let completion = pending
+        pending = nil
+        hold = false
+        completion?(text)
+    }
+}
+
+private final class LinuxSyncTestFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return stored }
+    func set() { lock.lock(); stored = true; lock.unlock() }
+}
+
+private final class LinuxSyncTestWatcher: FileStoreWatcher {
+    private var callback: (@Sendable (FileStoreWatchEvent) -> Void)?
+    private(set) var stopCount = 0
+    func start(_ callback: @escaping @Sendable (FileStoreWatchEvent) -> Void) { self.callback = callback }
+    func stop() { stopCount += 1 }
+    func emit(_ event: FileStoreWatchEvent) { callback?(event) }
+}
+
+private final class LinuxSyncTestTimer: Scheduler {
+    private let lock = NSLock()
+    private var pending: [(Duration, () -> Void)] = []
+    func after(_ delay: Duration, _ work: @escaping () -> Void) {
+        lock.lock(); pending.append((delay, work)); lock.unlock()
+    }
+    func take(_ delay: Duration) -> [() -> Void] {
+        lock.lock()
+        let ready = pending.filter { $0.0 == delay }
+        pending.removeAll { $0.0 == delay }
+        lock.unlock()
+        return ready.map { $0.1 }
+    }
+}
+
+private final class LinuxSyncTestTransport: HTTPTransporting, @unchecked Sendable {
+    static let user = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    static let device = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+    static let group = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+    static let personalPrompt = "01ARZ3NDEKTSV4RRFFQ69G5FAY"
+    static let groupPrompt = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+    let token = String(repeating: "a", count: 42) + "A"
+    private let lock = NSLock()
+    private var captured: [HTTPRequest] = []
+    private var held: CheckedContinuation<HTTPResponse, Error>?
+    private var mainRequest = false
+    private var storedRole: SyncAPI.Role = .viewer
+    private var shouldHold = false
+    private var wrong = false
+    private var privateContent = "---\nid: " + LinuxSyncTestTransport.personalPrompt + "\n---\nServer personal\n"
+    private var privateRevision: Int64 = 1
+    var role: SyncAPI.Role { get { locked { storedRole } } set { locked { storedRole = newValue } } }
+    var holdPull: Bool { get { locked { shouldHold } } set { locked { shouldHold = newValue } } }
+    var wrongDevice: Bool { get { locked { wrong } } set { locked { wrong = newValue } } }
+    var requests: [HTTPRequest] { locked { captured } }
+    var pullCount: Int { requests.filter { $0.url.path.hasSuffix("/sync/pull") }.count }
+    var hasHeld: Bool { locked { held != nil } }
+    var sentOnMain: Bool { locked { mainRequest } }
+
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        locked { captured.append(request); mainRequest = mainRequest || Thread.isMainThread }
+        if request.url.path.hasSuffix("/login") { return try response(SyncAPI.AuthResponse(deviceToken: token, user: userDTO)) }
+        if request.url.path.hasSuffix("/me") {
+            let device = SyncAPI.Device(id: wrongDevice ? Self.group : Self.device, name: "Linux", createdAt: timestamp,
+                lastSeenAt: nil, revokedAt: nil, isCurrent: true)
+            return try response(SyncAPI.MeResponse(user: userDTO,
+                groups: [.init(groupID: Self.group, name: "Team", role: role)], devices: [device]))
+        }
+        if request.url.path.hasSuffix("/sync/pull") {
+            if locked({ let result = shouldHold; shouldHold = false; return result }) {
+                return try await withCheckedThrowingContinuation { continuation in locked { held = continuation } }
+            }
+            return try pull()
+        }
+        if request.method == .put {
+            let put = try JSONDecoder().decode(SyncAPI.PutPromptRequest.self, from: request.body ?? Data())
+            let revision = locked { privateContent = put.content; privateRevision += 1; return privateRevision }
+            return try response(SyncAPI.WriteResponse(rev: revision, seq: revision))
+        }
+        return try response(SyncAPI.EmptyResponse())
+    }
+
+    func releaseHeld() {
+        let continuation = locked { let value = held; held = nil; return value }
+        guard let continuation else { return }
+        do { continuation.resume(returning: try pull(path: "late.md")) }
+        catch { continuation.resume(throwing: HTTPTransportError.invalidResponse) }
+    }
+
+    private let timestamp = "2026-10-14T00:00:00.000Z"
+    private var userDTO: SyncAPI.User {
+        .init(id: Self.user, username: "person", displayName: nil, accountKind: .member, createdAt: timestamp, disabledAt: nil)
+    }
+    private func pull(path: String = "a.md") throws -> HTTPResponse {
+        let (privateBytes, revision) = locked { (privateContent, privateRevision) }
+        let groupBytes = try CanonicalForm.group(Data(("---\nid: " + Self.groupPrompt + "\n---\nServer group\n").utf8), filename: "a.md").bytes
+        return try response(SyncAPI.PullResponse(databaseID: "11111111-1111-4111-8111-111111111111", scopes: [
+            .init(identity: .user(userID: Self.user), mode: .snapshot, head: revision, cursor: "personal-\(revision)", hasMore: false,
+                items: [.upsert(seq: revision, prompt: .init(id: Self.personalPrompt, rev: revision, path: path, content: privateBytes))]),
+            .init(identity: .group(groupID: Self.group, name: "Team", role: role), mode: .snapshot, head: 1, cursor: "team", hasMore: false,
+                items: [.upsert(seq: 1, prompt: .init(id: Self.groupPrompt, rev: 1, path: "a.md", content: String(decoding: groupBytes, as: UTF8.self)))])
+        ], removed: []))
+    }
+    private func response<T: APIObjectDTO>(_ value: T) throws -> HTTPResponse {
+        HTTPResponse(statusCode: 200, body: try JSONEncoder().encode(value))
+    }
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+}
+#endif

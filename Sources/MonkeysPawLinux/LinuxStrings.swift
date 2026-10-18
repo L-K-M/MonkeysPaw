@@ -111,6 +111,7 @@ enum LinuxStrings {
     static let showPicker = "Show Picker"
     static let traySetup = "Setup…"
     static let quit = "Quit"
+    static let syncFinishingBeforeQuit = "Finishing sync work before quitting. Try Quit again when it finishes."
     static let generalTab = "General"
     static let shortcutsTab = "Shortcuts"
     static let libraryFolder = "Your library folder"
