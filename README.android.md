@@ -2,10 +2,12 @@
 
 You need Android API 26 or later. This guide covers the Android app behavior
 already merged into main. Physical-device acceptance remains **NOT RUN
-(owner)** in the [Android record](docs/platform/android.md). Sync repository
-and background scheduling foundations are on main. The connected Account,
-groups, invites and conflict-resolution UI is not yet available. The sync
-guide and phone/desktop acceptance remain M10 Z27 work.
+(owner)** in the [Android record](docs/platform/android.md). Sync repository,
+background scheduling, Account/status screens, Library groups and role-aware
+Library, Editor and Assistant integration are on main. Invite and
+conflict-resolution UI integration and phone/desktop acceptance remain
+M10 Z27 work. The [desktop sync guide](docs/platform/sync.md) records desktop
+setup and proof limits.
 
 ## Install or update
 
