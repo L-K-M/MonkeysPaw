@@ -59,7 +59,7 @@ internal class FillBoundaryTest {
         val worker = root.resolve("data/SyncWorker.kt").readText()
         assertFalse(worker.contains("Result.retry()"))
         assertFalse(queue.contains("ExistingWorkPolicy.REPLACE"))
-        val input = queue.substringAfter("private fun input(").substringBefore("companion object")
+        val input = queue.substringAfter("internal fun input(")
         assertEquals(listOf("putString", "putLong"), Regex("\\bput[A-Z][a-zA-Z]+(?=\\()").findAll(input).map { it.value }.toList())
     }
 

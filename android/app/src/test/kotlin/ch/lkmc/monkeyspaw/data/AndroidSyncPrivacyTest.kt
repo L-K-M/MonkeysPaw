@@ -5,7 +5,7 @@ package ch.lkmc.monkeyspaw.data
 import androidx.datastore.core.DataStoreFactory
 import androidx.lifecycle.ViewModelStore
 import androidx.work.Data
-import androidx.work.ListenableWorker
+import androidx.work.ListenableWorker.Result
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.*
@@ -73,13 +73,15 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
     }
 
     private inner class Rig {
+        // Serialize publication and audit walks; an observer may still be writing after UI state settles.
+        val io = Dispatchers.IO.limitedParallelism(1)
         val scope = CoroutineScope(SupervisorJob() + dispatcher)
         private val persistence = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val settings = AndroidSettingsStore(DataStoreFactory.create(serializer = SettingsSerializer, scope = persistence,
             produceFile = { filesDir.resolve("datastore/settings.json").toFile() }))
         val secretData = DataStoreFactory.create(serializer = SecretsSerializer, scope = persistence,
             produceFile = { filesDir.resolve("datastore/secrets.json").toFile() })
-        val secrets = AndroidKeystoreSecretStore(secretData, keys, Dispatchers.IO)
+        val secrets = AndroidKeystoreSecretStore(secretData, keys, io)
         private val auditedSecrets = object : SecretStore by secrets {
             override suspend fun write(value: SecretValue, account: SecretAccount): SecretTier {
                 // Include the whole bound envelope so encoded/nested copies are detected too.
@@ -91,8 +93,8 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
         val prompts = AndroidPromptStore(libraryDir.toFile(), io = checked)
         val files = AndroidStateStore(stateDir.toFile(), settings = settings, isMainThread = { false }, io = checked)
         private val library = library(files, prompts)
-        private val startup = AndroidSyncStartup(library, prompts, files, libraryDir.toFile().absolutePath, dispatcher)
-        private val local = LibraryRepository(library, EditingService(library), prompts, dispatcher) { startup.ready() }
+        private val startup = AndroidSyncStartup(library, prompts, files, libraryDir.toFile().absolutePath, io)
+        private val local = LibraryRepository(library, EditingService(library), prompts, io) { startup.ready() }
         val work = SyncWorkStateStore(files, files.syncOperations)
         val scheduler: SyncWorkScheduler by lazy {
             SyncWorkScheduler(SyncWorkPolicy(work, object : SyncWorkQueue {
@@ -103,10 +105,10 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
                 }
                 override suspend fun once(request: SyncWorkRequest) { requests.add(request); capture(request) }
                 override suspend fun cancel(generation: String) { periodic.remove(generation) }
-            }, AndroidSyncWorkSession(startup, Lazy { sync }), { Instant.parse(time).toEpochMilli() }, 31), dispatcher)
+            }, AndroidSyncWorkSession(startup, Lazy { sync }), { Instant.parse(time).toEpochMilli() }, 31), io)
         }
         // Real disk IO must use real cleanup deadlines rather than auto-advanced virtual time.
-        val sync = AppModule.syncRepository(startup, library, local, scope, Dispatchers.IO, Clock { Instant.parse(time) },
+        val sync = AppModule.syncRepository(startup, library, local, scope, io, Clock { Instant.parse(time) },
             Entropy { count -> ByteArray(count).also(SecureRandom()::nextBytes) }, MonotonicClock(System::nanoTime),
             Lazy { auditedSecrets }, Lazy { HttpTransport(::respond) }, settings, AppModule.syncWorkHooks(Lazy { scheduler }))
 
@@ -155,8 +157,19 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
             val baseline = unrelated.keys
             var model = model(rig)
 
-            suspend fun checkpoint(label: String, expected: Set<String>) {
-                runCurrent()
+            suspend fun worker(input: Data, scheduler: Lazy<SyncWorkScheduler> = Lazy { rig.scheduler }): Result {
+                val result = try { syncWorkerResult(input, scheduler) }
+                catch (error: CancellationException) { throw error }
+                catch (_: Exception) { fail("Worker must return a result without throwing diagnostics") }
+                jobs.add(when (result) {
+                    is Result.Success -> result.outputData
+                    is Result.Failure -> result.outputData
+                    else -> fail("Worker must return success or failure without a retry result")
+                })
+                return result
+            }
+
+            suspend fun checkpoint(label: String, expected: Set<String>) = withContext(rig.io) {
                 val ui = model.state.value
                 assertNull(ui.busy, "Account operation must settle before scanning")
                 assertTrue(ui.draft.password.isEmpty() && ui.inviteDraft.isEmpty(), "Transient secret input must be cleared")
@@ -222,10 +235,22 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
             model.state.first { it.busy == null }
             assertEquals(firstAccount, model.state.value.account.account)
             assertTrue(model.state.value.account.enabled)
-            rig.scheduler.dispatch(oldWork)
-            val success = ListenableWorker.Result.success() as ListenableWorker.Result.Success
-            jobs.add(success.outputData)
-            assertTrue(success.outputData.keyValueMap.isEmpty())
+            assertTrue(worker(AndroidSyncWorkQueue.input(oldWork)) is Result.Success, "Valid work returns success")
+            assertTrue(worker(AndroidSyncWorkQueue.input(oldWork.copy(version = null))) is Result.Success,
+                "Periodic work without a version returns success")
+            val invalidInputs = listOf(Data.EMPTY,
+                Data.Builder().putString(AndroidSyncWorkQueue.GENERATION, "invalid-generation").build(),
+                Data.Builder().putString(AndroidSyncWorkQueue.GENERATION, "1-1-1-1-1").build(),
+                AndroidSyncWorkQueue.input(oldWork.copy(version = 0)),
+                AndroidSyncWorkQueue.input(oldWork.copy(version = -1)))
+            for (input in invalidInputs) {
+                assertTrue(worker(input, Lazy { fail("Invalid input must not resolve the scheduler") }) is Result.Failure,
+                    "Invalid input returns failure")
+            }
+            val input = AndroidSyncWorkQueue.input(oldWork)
+            assertTrue(worker(input, Lazy { throw IllegalStateException(tokens.first()) }) is Result.Failure,
+                "Dispatch failure returns failure without retaining exception diagnostics")
+            assertFailsWith<CancellationException> { worker(input, Lazy { throw CancellationException() }) }
             assertEquals(1, pulls, "Reconstructed work runs through the shared production engine")
             checkpoint("reconstructed account and worker", baseline + firstAccount.secretAccount.rawValue)
 
@@ -268,7 +293,9 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
             assertNull(rig.work.read().connection)
             assertTrue(periodic.isEmpty())
             val before = pulls
-            for (request in requests.toList()) rig.scheduler.dispatch(request)
+            for (request in requests.toList()) {
+                assertTrue(worker(AndroidSyncWorkQueue.input(request)) is Result.Success, "Stale work completes without HTTP")
+            }
             assertEquals(before, pulls, "Old jobs are inert after sign-out")
             checkpoint("sign-out and stale jobs", baseline)
 
@@ -310,9 +337,7 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
 
     private fun capture(request: SyncWorkRequest) {
         descriptions.add(request.toString())
-        jobs.add(Data.Builder().putString(AndroidSyncWorkQueue.GENERATION, request.generation).apply {
-            request.version?.let { putLong(AndroidSyncWorkQueue.VERSION, it) }
-        }.build())
+        jobs.add(AndroidSyncWorkQueue.input(request))
     }
 
     private fun respond(request: HttpRequest): HttpResponse {
