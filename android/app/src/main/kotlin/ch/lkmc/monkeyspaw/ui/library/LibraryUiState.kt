@@ -1,11 +1,15 @@
 package ch.lkmc.monkeyspaw.ui.library
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
+import ch.lkmc.monkeyspaw.core.domain.ULID
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncPromptOrigin
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssue
 import ch.lkmc.monkeyspaw.core.domain.ranking.SearchNormalizer
 import ch.lkmc.monkeyspaw.core.ports.FileStamp
 import ch.lkmc.monkeyspaw.core.services.IndexedPrompt
 import ch.lkmc.monkeyspaw.core.services.PromptIdentity
+import ch.lkmc.monkeyspaw.core.services.PromptAccessState
+import ch.lkmc.monkeyspaw.core.services.GroupAccessGroup
 import ch.lkmc.monkeyspaw.data.LibrarySearchSnapshot
 import java.time.Instant
 
@@ -13,11 +17,13 @@ internal sealed interface LibraryFilter {
     data object All : LibraryFilter
     data object Favourites : LibraryFilter
     data object Recent : LibraryFilter
+    data object Conflicts : LibraryFilter
+    data class Group(val id: ULID) : LibraryFilter
     data class Folder(val path: String) : LibraryFilter
     data class Tag(val key: String) : LibraryFilter
 }
 
-internal data class LibrarySection(val filter: LibraryFilter, val count: Int, val title: String = "")
+internal data class LibrarySection(val filter: LibraryFilter, val count: Int, val title: String = "", val group: GroupAccessGroup? = null)
 
 /** Identity follows assigned renames; the exact path disambiguates duplicate identities. */
 internal data class LibrarySelection(val identity: PromptIdentity, val relativePath: String)
@@ -33,7 +39,13 @@ internal data class LibraryRow(
     val issues: List<PromptIssue>,
     val isReadOnly: Boolean,
     val lastUsedAt: Instant?,
-)
+    val access: PromptAccessState = PromptAccessState.Local,
+    val accessGeneration: Long = 0,
+    val canFavorite: Boolean = !isReadOnly,
+    val syncOrigin: SyncPromptOrigin? = null,
+) {
+    val group: GroupAccessGroup? get() = (access as? PromptAccessState.Group)?.group
+}
 
 internal enum class LibraryContent { LOADING, READY, EMPTY, NO_MATCH, FAILED }
 internal enum class LibraryFailure { DATA, FAVOURITE, CHANGED }
@@ -86,7 +98,14 @@ internal fun projectLibrary(loaded: LibrarySearchSnapshot, requested: LibraryFil
         LibrarySection(LibraryFilter.All, all.size),
         LibrarySection(LibraryFilter.Favourites, all.count { it.favorite }),
         LibrarySection(LibraryFilter.Recent, recent.size),
-    ) + folders.keys.sortedWith(::folderOrder).map { LibrarySection(LibraryFilter.Folder(it), folders.getValue(it), it) } +
+        LibrarySection(LibraryFilter.Conflicts, all.count { it.syncOrigin != null }),
+    ) + loaded.state.access?.groups.orEmpty().values.sortedWith { a, b ->
+        val names = utf8Order(a.name, b.name)
+        if (names != 0) names else utf8Order(a.id.rawValue, b.id.rawValue)
+    }.map { group -> LibrarySection(LibraryFilter.Group(group.id), all.count {
+        (it.access as? PromptAccessState.Group)?.group?.id == group.id
+    }, group.name, group) } +
+        folders.keys.sortedWith(::folderOrder).map { LibrarySection(LibraryFilter.Folder(it), folders.getValue(it), it) } +
         tags.keys.sortedWith(::utf8Order).map { LibrarySection(LibraryFilter.Tag(it), tags.getValue(it).second, "#" + tags.getValue(it).first) }
     val filter = requested.takeIf { id -> sections.any { it.filter == id } } ?: LibraryFilter.All
     var rows = loaded.matches.mapNotNull { byPath[it.entry.relativePath] }.filter { row ->
@@ -94,6 +113,8 @@ internal fun projectLibrary(loaded: LibrarySearchSnapshot, requested: LibraryFil
             LibraryFilter.All -> true
             LibraryFilter.Favourites -> row.favorite
             LibraryFilter.Recent -> row.selection.relativePath in recentPaths
+            LibraryFilter.Conflicts -> row.syncOrigin != null
+            is LibraryFilter.Group -> (row.access as? PromptAccessState.Group)?.group?.id == filter.id
             is LibraryFilter.Folder -> filter.path in folderAncestors(row.selection.relativePath)
             is LibraryFilter.Tag -> row.tags.any { SearchNormalizer.normalize(it) == filter.key }
         }
@@ -117,8 +138,14 @@ private fun libraryRow(indexed: IndexedPrompt): LibraryRow {
     val document = entry.document
     val front = document.frontMatter
     return LibraryRow(LibrarySelection(entry.identity, entry.relativePath), entry.stamp, front.title,
-        entry.folder, front.tags, front.description, front.favorite, entry.issues,
-        isReadOnly = !document.canRender, lastUsedAt = indexed.useEvents.maxOrNull())
+        entry.folder, front.tags, front.description, entry.favorite, entry.issues,
+        isReadOnly = !document.canRender || entry.access.readOnlyReason != null, lastUsedAt = indexed.useEvents.maxOrNull(),
+        access = entry.access, accessGeneration = entry.accessGeneration,
+        canFavorite = when (entry.access) {
+            PromptAccessState.Local -> document.canRender
+            is PromptAccessState.Group -> true
+            PromptAccessState.Unavailable -> false
+        }, syncOrigin = entry.syncOrigin)
 }
 
 private fun folderAncestors(path: String): List<String> = path.indices.filter { path[it] == '/' }.map { path.substring(0, it) }

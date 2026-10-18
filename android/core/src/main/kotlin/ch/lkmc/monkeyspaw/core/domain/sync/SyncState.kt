@@ -41,7 +41,7 @@ internal sealed interface SyncScopeKey {
     }
 }
 
-internal sealed interface SyncPromptOrigin {
+sealed interface SyncPromptOrigin {
     data class ConflictOf(val promptID: ULID) : SyncPromptOrigin
     data object Rescued : SyncPromptOrigin
 }

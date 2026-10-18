@@ -13,8 +13,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
+import ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason
 
-private enum class FileDialog { RENAME, MOVE, DELETE }
+private enum class FileDialog { RENAME, MOVE, DELETE, PRIVATE_COPY }
 
 /** Raw source stays in the ViewModel. Dialog input is local; only confirmed intents leave the view. */
 @Composable
@@ -27,7 +28,8 @@ internal fun EditorScreen(
     onBack: () -> Unit,
     onReload: () -> Unit,
     onRename: (String) -> Unit,
-    onMove: (String) -> Unit,
+    onMove: (EditorMoveTarget) -> Unit,
+    onPrivateCopy: (String) -> Unit,
     onDelete: () -> Unit,
     onHistory: () -> Unit,
     onRevision: (EditorRevision) -> Unit,
@@ -43,6 +45,7 @@ internal fun EditorScreen(
     BackHandler(onBack = onBack)
     var dialog by remember(state.relativePath) { mutableStateOf<FileDialog?>(null) }
     var destination by remember(state.relativePath) { mutableStateOf("") }
+    var moveDestination by remember(state.relativePath) { mutableStateOf(EditorDestination()) }
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -53,7 +56,12 @@ internal fun EditorScreen(
             Text(state.relativePath.orEmpty(), style = MaterialTheme.typography.bodySmall)
             if (state.dirty) Text(stringResource(R.string.editor_unsaved))
             if (state.writing || state.status == EditorStatus.LOADING) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (state.readOnlyReason != null) Text(stringResource(R.string.editor_read_only))
+            state.group?.let { Text(stringResource(R.string.library_group_role, it.name, it.role.wireValue)) }
+            if (state.readOnlyReason != null) Text(stringResource(when (state.readOnlyReason) {
+                SourceReadOnlyReason.GROUP_VIEWER -> R.string.editor_group_viewer
+                SourceReadOnlyReason.GROUP_UNAVAILABLE -> R.string.editor_group_unavailable
+                else -> R.string.editor_read_only
+            }))
             if (onReview != null) TextButton(onClick = onReview) { Text(stringResource(R.string.assistant_review_title)) }
             if (onImprove != null) TextButton(onClick = onImprove) { Text(stringResource(R.string.assistant_improve_title)) }
         }
@@ -155,13 +163,19 @@ internal fun EditorScreen(
             }
         }
         if (!state.isNew) item {
+            val privateFilename = stringResource(R.string.editor_private_copy_filename,
+                state.relativePath.orEmpty().substringAfterLast('/').removeSuffix(".md"))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = { destination = state.relativePath.orEmpty().substringAfterLast('/'); dialog = FileDialog.RENAME },
                     enabled = state.canCommand) { Text(stringResource(R.string.editor_rename)) }
-                TextButton(onClick = { destination = state.relativePath.orEmpty().substringBeforeLast('/', ""); dialog = FileDialog.MOVE },
+                TextButton(onClick = { destination = ""; moveDestination = EditorDestination(); dialog = FileDialog.MOVE },
                     enabled = state.canCommand) { Text(stringResource(R.string.editor_move)) }
                 TextButton(onClick = { dialog = FileDialog.DELETE }, enabled = state.canCommand) { Text(stringResource(R.string.editor_delete)) }
             }
+            TextButton(onClick = {
+                destination = privateFilename
+                dialog = FileDialog.PRIVATE_COPY
+            }, enabled = state.canPrivateCopy) { Text(stringResource(R.string.editor_private_copy)) }
             TextButton(onClick = onReload, enabled = !state.writing) { Text(stringResource(R.string.editor_reload)) }
         }
         item { Spacer(Modifier.height(12.dp)) }
@@ -171,19 +185,43 @@ internal fun EditorScreen(
             FileDialog.RENAME -> R.string.editor_rename
             FileDialog.MOVE -> R.string.editor_move
             FileDialog.DELETE -> R.string.editor_delete
+            FileDialog.PRIVATE_COPY -> R.string.editor_private_copy
         })) }, text = {
             if (action == FileDialog.DELETE) Text(stringResource(R.string.editor_delete_confirm))
+            else if (action == FileDialog.MOVE) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.editor_destination))
+                LazyColumn(Modifier.heightIn(max = 240.dp)) {
+                    items(state.destinations, key = { it.group?.id?.rawValue.orEmpty() }) { choice ->
+                        FilterChip(selected = moveDestination.group?.id == choice.group?.id,
+                            onClick = { moveDestination = choice }, enabled = choice.canWrite,
+                            label = { Text(if (choice.group == null) stringResource(R.string.editor_personal)
+                                else stringResource(R.string.library_group_role, choice.group.name, choice.group.role.wireValue)) })
+                    }
+                }
+                OutlinedTextField(value = destination, onValueChange = { destination = it }, singleLine = true,
+                    label = { Text(stringResource(R.string.editor_subfolder)) })
+                Text(stringResource(R.string.editor_move_scope_help))
+            }
+            else if (action == FileDialog.PRIVATE_COPY) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.editor_private_copy_help))
+                OutlinedTextField(value = destination, onValueChange = { destination = it }, singleLine = true,
+                    label = { Text(stringResource(R.string.editor_path)) })
+            }
             else OutlinedTextField(value = destination, onValueChange = { destination = it }, singleLine = true,
-                label = { Text(stringResource(if (action == FileDialog.RENAME) R.string.editor_filename else R.string.editor_folder)) })
+                label = { Text(stringResource(R.string.editor_filename)) })
         }, confirmButton = {
             TextButton(onClick = {
                 dialog = null
                 when (action) {
                     FileDialog.RENAME -> onRename(destination)
-                    FileDialog.MOVE -> onMove(destination)
+                    FileDialog.MOVE -> onMove(EditorMoveTarget(moveDestination.group?.id, destination))
                     FileDialog.DELETE -> onDelete()
+                    FileDialog.PRIVATE_COPY -> onPrivateCopy(destination)
                 }
-            }, enabled = state.canCommand) { Text(stringResource(R.string.editor_confirm)) }
+            }, enabled = if (action == FileDialog.PRIVATE_COPY) state.canPrivateCopy else state.canCommand &&
+                (action != FileDialog.MOVE || state.destinations.any { it.group?.id == moveDestination.group?.id && it.canWrite })) {
+                Text(stringResource(R.string.editor_confirm))
+            }
         }, dismissButton = { TextButton(onClick = { dialog = null }) { Text(stringResource(R.string.editor_cancel)) } })
     }
     EditorDecisionDialogs(state, onDecision, onConflict)
@@ -199,7 +237,7 @@ internal fun EditorDecisionDialogs(state: EditorUiState,
             title = { Text(stringResource(if (conflict.deleted) R.string.editor_deleted else R.string.editor_changed)) },
             text = { Text(stringResource(R.string.editor_conflict_help)) }, confirmButton = {
                 TextButton(onClick = { onConflict(EditorConflictChoice.KEEP_MINE) },
-                    enabled = !state.writing && !conflict.loading && conflict.failure == null && conflict.readOnlyReason == null) {
+                    enabled = state.canEdit && !state.writing && !conflict.loading && conflict.failure == null && conflict.readOnlyReason == null) {
                     Text(stringResource(R.string.editor_keep_mine))
                 }
             }, dismissButton = {
@@ -252,6 +290,7 @@ private fun failureString(failure: EditorFailure): Int = when (failure) {
     EditorFailure.DATA -> R.string.editor_data_failed
     EditorFailure.INVALID -> R.string.editor_invalid
     EditorFailure.READ_ONLY -> R.string.editor_read_only_failed
+    EditorFailure.ACCESS_CHANGED -> R.string.editor_access_changed
     EditorFailure.OCCUPIED -> R.string.editor_occupied
     EditorFailure.INVALID_PATH -> R.string.editor_invalid_path
     EditorFailure.IDENTITY -> R.string.editor_identity_failed

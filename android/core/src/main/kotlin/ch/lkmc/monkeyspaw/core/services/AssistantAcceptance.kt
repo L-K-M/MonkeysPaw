@@ -96,9 +96,10 @@ interface AssistantAcceptanceEditor {
     fun cancelAssistantAcceptance(permit: AssistantSavePermit)
 }
 
-/** Z18 can supply live roles here and forward every transition to the assistant context. */
+/** Cached local roles authorize both request context and checked publication. */
 fun interface AssistantAccess {
     fun current(relativePath: String?): AssistantAccessState
+    fun current(relativePath: String?, identity: PromptIdentity?): AssistantAccessState = current(relativePath)
 
     companion object {
         val LOCAL = AssistantAccess { AssistantAccessState.PRIVATE_PROMPT }

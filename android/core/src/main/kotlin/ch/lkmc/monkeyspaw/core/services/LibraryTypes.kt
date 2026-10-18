@@ -2,7 +2,10 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.ULIDGenerationError
+import ch.lkmc.monkeyspaw.core.domain.paths.SyncPathIssue
 import ch.lkmc.monkeyspaw.core.domain.sync.SyncError
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncPromptOrigin
+import ch.lkmc.monkeyspaw.core.sync.SyncConflictMetadata
 import ch.lkmc.monkeyspaw.core.domain.format.*
 import ch.lkmc.monkeyspaw.core.ports.*
 import java.security.MessageDigest
@@ -23,6 +26,7 @@ internal class MutationBoundary {
 
 internal fun sanitized(error: Exception): Exception = when (error) {
     is InterruptedException -> error.also { Thread.currentThread().interrupt() }
+    is SyncPathIssue -> StoreError.InvalidPath
     StoreError.RecoveryRequired -> LibraryError.RecoveryRequired
     is StoreError, is LibraryError, is SyncError, is SyncFileOperationError, is PromptWriteError, is ULIDGenerationError,
     is AssistantSaveRefusal, is CancellationException -> error
@@ -88,6 +92,10 @@ data class LibraryEntry internal constructor(
     val identity: PromptIdentity = PromptIdentity.at(relativePath, document.frontMatter.id)
     val folder: String get() = relativePath.substringBeforeLast('/', "")
     val issues: List<PromptIssue> get() = document.issues
+    /** Private marker-derived lineage follows copies across folders and devices. */
+    val syncOrigin: SyncPromptOrigin? get() = if (access == PromptAccessState.Local) {
+        runCatching { SyncConflictMetadata.origin(document) }.getOrNull()
+    } else null
 
     internal fun projected(snapshot: GroupAccessSnapshot): LibraryEntry = copy(
         access = snapshot.access(relativePath, identity), accessGeneration = snapshot.generation, favorite = snapshot.favorite(this))

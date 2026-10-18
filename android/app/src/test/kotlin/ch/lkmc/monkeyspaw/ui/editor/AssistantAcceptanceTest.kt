@@ -224,6 +224,7 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
         h.ready(improve = true)
         val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
         h.assistant.accept(h.editor, outcomes::add)
+        runCurrent()
         assertNotNull(h.editor.state.value.pendingDecision)
         h.decide(EditorDecision.DISCARD)
         h.settle()
@@ -291,6 +292,7 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
             val candidate = h.ready()
             val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
             h.assistant.accept(h.editor, outcomes::add)
+            runCurrent()
             assertNotNull(h.editor.state.value.pendingDecision)
             assertTrue(h.assistant.state.value.isAccepting)
             assertEquals(candidate, h.assistant.state.value.candidate)
@@ -348,6 +350,7 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
         h.editor.close()
         assertEquals(earlier, h.editor.state.value.pendingDecision)
         assertEquals(2, h.editor.state.value.queuedActions.size)
+        runCurrent()
         h.decide(EditorDecision.CANCEL)
         assertTrue(h.editor.state.value.writing)
         assertTrue(outcomes.isEmpty())
@@ -384,6 +387,8 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
         val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
         h.assistant.accept(h.editor, outcomes::add)
         runCurrent()
+        h.io.release()
+        runCurrent()
         h.editor.edit("Away")
         h.editor.edit("Original")
         assertTrue(h.assistant.state.value.isAccepting)
@@ -408,6 +413,8 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
             h.io.held = true
             val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
             h.assistant.accept(h.editor, outcomes::add)
+            runCurrent()
+            h.io.release() // Capture the permit before the queued publication.
             runCurrent()
             h.io.release()
             val path = if (destination == AssistantSaveDestination.IMPROVE) "a.md" else "Candidate.md"
@@ -518,6 +525,7 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
             h.ready()
             val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
             h.assistant.accept(h.editor, outcomes::add)
+            runCurrent()
             assertNotNull(h.editor.state.value.pendingDecision)
             when (mode) {
                 0 -> h.assistant.cancel()
@@ -618,6 +626,7 @@ internal class AssistantAcceptanceTest : TemporaryFiles() {
         val outcomes = mutableListOf<AssistantAcceptanceOutcome>()
         h.assistant.accept(h.editor, outcomes::add)
         h.editor.open(LibrarySelection(PromptIdentity.at("b.md"), "b.md"))
+        runCurrent()
         h.decide(EditorDecision.SAVE)
         h.settle()
         assertEquals(AssistantAcceptanceConflict.ChangedBuffer, assertIs<AssistantAcceptanceOutcome.Conflict>(outcomes.single()).reason)

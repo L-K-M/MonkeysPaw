@@ -62,7 +62,9 @@ internal class AppGraphTest {
         val module = source("di/AppModule.kt")
         assertEquals(1, constructorCount(module, "AssistantService"))
         assertEquals(1, constructorCount(module, "AssistantGraph"))
-        assertTrue(module.contains("AssistantAccess.LOCAL"))
+        assertTrue(module.contains("fun assistantAccess(library: Lazy<LibraryService>)"))
+        assertTrue(module.contains("library.get().accessSnapshot"))
+        assertTrue(module.contains("snapshot.access(relativePath, identity)"))
     }
 
     @Test
