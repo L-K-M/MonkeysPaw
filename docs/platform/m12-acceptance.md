@@ -63,7 +63,7 @@ authorized choice and date; it does not turn an unrun physical check into PASS.
 
 | ID | Source and keys | Environment | Tester/date | Expected | Actual | Result | Evidence |
 |---|---|---|---|---|---|---|---|
-| D-HISTORY | [M2](m2-acceptance.md#m2-daily-use-acceptance) `P1; P4; T1.R5; T3.R1; T3.R2`; [Linux](linux.md#release-deb-installation-m2-not-run) `N1; N2; N3` | Owner / historical `v0.1.0` conflict | NOT RUN | Preserve exact historical artifacts and owner installations, or commit an explicit owner-authorized plan amendment before using replacement evidence | NOT RUN | NOT RUN | NOT RUN |
+| D-HISTORY | [M2](m2-acceptance.md#m2-daily-use-acceptance) `P1; P4; T1.R5; T3.R1; T3.R2`; [Linux](linux.md#release-deb-installation-m2-not-run) `P1; N1; N2; N3; T1.R2` | Owner / historical `v0.1.0` gate | NOT RUN | Record authorized disposition; retain M12 release installation checks | Remove the historical published v0.1.0 dmg/deb gate; retain v1.0.0 installation checks, all NOT RUN; owner decision 2026-10-19 | DECIDED | owner answer to supervisor, 2026-10-19 |
 | D-R1 | [M12](../plan/15-milestones.md#15-milestones); [release contract](../../CICD.md#ci-and-releases) | Owner / release date and R1 preparation | NOT RUN | Supply actual date; approve dated notes, aligned 1.0.0 marketing versions and hook-managed Android code once, aligned retry, reviewed main and candidate dry run | NOT RUN | NOT RUN | NOT RUN |
 | D-SIGN | [macOS install](macos.md#m2-macos-artifacts-and-installation-not-run) `N3; N5`; [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R4` | Owner / actual macOS signing mode | NOT RUN | Record signing choice; require real quarantine/AX/Keychain update evidence; retain Android public signer | v1.0.0 stays ad-hoc signed, without Developer ID or notarization; owner decision 2026-10-19. First-launch checks remain NOT RUN. | DECIDED | owner answer to supervisor, 2026-10-19 |
 | D-PRIVATE | [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `P1; T1.R1`; [Security](../../SECURITY.md#report-a-vulnerability-privately) | Owner / repository settings | NOT RUN | Enable and verify confidential reporting before release; the disabled source observation is historical, with no verified alternate contact | NOT RUN | NOT RUN | NOT RUN |
@@ -175,8 +175,8 @@ Counts below are source obligation/record units, **not unique physical runs**.
 | [flatpak.md](flatpak.md#flatpak-owner-procedure) | 4 / 38 | Open owner obligations; mapped below |
 | [gnome.md](gnome.md#gnome-portal-owner-checks) | 2 / 31 | Open owner obligations; mapped below |
 | [kde.md](kde.md#kde-shortcut-selection-and-delivery-owner-check) | 4 / 51 | Open owner obligations; mapped below |
-| [linux.md](linux.md#linux-picker-and-delivery-checks) | 23 / 227 | Open owner obligations; mapped below |
-| [m2-acceptance.md](m2-acceptance.md#m2-daily-use-acceptance) | 1 / 22 | Open owner obligations; mapped below |
+| [linux.md](linux.md#linux-picker-and-delivery-checks) | 23 / 227 | Open owner obligations; release install keys retained for M12 after owner removed the v0.1.0 gate on 2026-10-19 |
+| [m2-acceptance.md](m2-acceptance.md#m2-daily-use-acceptance) | 1 / 22 | Open owner obligations; release install keys retained for M12 after owner removed the v0.1.0 gate on 2026-10-19 |
 | [m3-acceptance.md](m3-acceptance.md#m3-library-window-acceptance) | 1 / 12 | Open owner obligations; mapped below |
 | [m4-acceptance.md](m4-acceptance.md#m4-assistant-acceptance) | 1 / 17 | Open owner obligations; mapped below |
 | [m5-acceptance.md](m5-acceptance.md#m5-server-acceptance) | 1 / 17 | Open owner obligations; mapped below |
@@ -316,8 +316,9 @@ sync](#c-android-connected-sync), [Milestone
 reconciliation](#c-milestone-reconciliation).
 
 Record candidate origin and exact main/artifact identity in every row.
-The historical v0.1.0 keys remain gated by D-HISTORY; no version substitution
-is authorized here. Candidate results alone never authorize milestone closure.
+The owner removed the historical v0.1.0 gate on 2026-10-19 (D-HISTORY).
+Release installation rows still require candidate checks and independent
+actual v1.0.0 checks. Candidate results alone never authorize milestone closure.
 
 | ID | Source and keys | Environment | Tester/date | Expected | Actual | Result | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -475,9 +476,9 @@ is authorized here. Candidate results alone never authorize milestone closure.
 | C-LIN07-GNOME-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | GNOME-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN07-KDE-W-Anthropic | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C3` | KDE-W / Anthropic | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN07-KDE-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | KDE-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| C-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| C-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| C-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| C-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| C-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| C-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN09-1 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[1].C3` | KDE-W / tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN09-2 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[2].C3` | GNOME-W / AppIndicator | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN09-3 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[3].C3` | GNOME-W / no tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
@@ -911,8 +912,8 @@ reconciliation](#p-milestone-reconciliation).
 
 Use the actual release downloads for every execution row below. Rerun
 installation/update and all affected behavior; C-row evidence cannot be copied
-as a P-row observation. Preserve a separate historical v0.1.0 evidence record
-for D-HISTORY unless the owner has committed an authorized plan amendment.
+as a P-row observation. The owner removed the historical v0.1.0 evidence
+requirement on 2026-10-19 (D-HISTORY); every v1.0.0 install row remains open.
 
 | ID | Source and keys | Environment | Tester/date | Expected | Actual | Result | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -1072,9 +1073,9 @@ for D-HISTORY unless the owner has committed an authorized plan amendment.
 | P-LIN07-GNOME-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | GNOME-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN07-KDE-W-Anthropic | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C3` | KDE-W / Anthropic | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN07-KDE-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | KDE-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN09-1 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[1].C3` | KDE-W / tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN09-2 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[2].C3` | GNOME-W / AppIndicator | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN09-3 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[3].C3` | GNOME-W / no tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |

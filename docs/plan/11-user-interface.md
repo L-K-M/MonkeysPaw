@@ -208,8 +208,10 @@ requires the `macos-app` CI job; hardware checks stay NOT RUN in
 
 Both native pickers, General and Shortcuts Settings, onboarding/recovery,
 Forget controls, Linux tray, the five-category conformance corpus and the
-release workflow are merged. The v0.1.0 tag and owner-run platform checks
-remain open M2 work; the Library window, editor, history, import and tour
+release workflow are merged. Owner-run platform checks, including the
+[M12 release install rows](../platform/m12-acceptance.md#post-publication-phase-from-actual-v100),
+remain open M2 work; the owner removed the historical v0.1.0 gate on
+2026-10-19. The Library window, editor, history, import and tour
 follow in M3.
 
 ```

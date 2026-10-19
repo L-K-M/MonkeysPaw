@@ -252,10 +252,13 @@ Rollout by milestone:
     release tag, retain Android checksum/sideload guidance and the public-signing
     disclosure, and include Flatpak checksum/install instructions and Linux
     x86_64/GNOME Platform 50 requirements.
-  - To cut the first release after CI and owner installation checks pass,
-    run `scripts/release.sh 0.1.0 --push` on current main with the shared
-    `lkm-release` engine installed. It bumps committed versions and pushes
-    the release commit and `v0.1.0` tag. CI derives the artifact version from
+  - After CI, candidate checks and owner authorization in the
+    [M12 ledger](../platform/m12-acceptance.md#owner-decisions-before-tagging),
+    the owner can run `scripts/release.sh 1.0.0 --push` on current main with
+    the shared `lkm-release` engine installed. It bumps committed versions and pushes
+    the release commit and `v1.0.0` tag. The owner removed the historical
+    `v0.1.0` gate on 2026-10-19; M12 release installation checks remain required.
+    CI derives the artifact version from
     `${GITHUB_REF_NAME#v}` without modifying committed settings. See `CICD.md`.
     `--check` reports engine configuration without executing the hook;
     omitting `--push` still commits and tags. Test hook/commit/tag effects

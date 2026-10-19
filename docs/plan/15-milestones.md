@@ -23,7 +23,7 @@
 | M1b | Delivery: Linux plumbing | GtkApplication D-Bus activation and actions; gsettings keybinding installer (GNOME); GDBus shim; notifications; GdkClipboard; ydotool and xdotool drivers; Setup rows; self-test. | ci.yml `linux-app` job green: Xvfb lifecycle, fake executables, mock-bus tests, and an X11 smoke step: `gapplication action … toggle`, pick, and xdotool paste into an xterm. |
 | M1c | Delivery: GNOME portals | GlobalShortcuts portal (GNOME ≥ 48); RemoteDesktop keysym paste with restore token; GNOME ladder order. | Mock-portal tests pass. Owner-run on GNOME Wayland: the self-test reports a backend that verifiably pasted; ladder results go in `docs/platform/gnome.md`. A copy-only result needs a written root cause. |
 | M1d | Delivery: KDE | KGlobalAccel actions; portal shortcuts on Plasma ≥ 6.3; KDE ladder order; hotkey conflict check. | Mock-bus tests pass. Owner-run on Plasma Wayland, recorded as in M1c (`docs/platform/kde.md`). |
-| M2 | Library + fill: **daily use** | Format, grammar, validator, renderer, builtins; library folder, watcher, index, fuzzy search, ranking; picker and fill form with live preview; remembered values; first-run library step + seeds; Settings: General and Shortcuts; §11.5 picker and library states; `spec/fixtures/` corpus for format, grammar, render, validation, and ranking (§10.7); release.yml (dmg + deb). | A prompt saved in an editor appears in the picker within 1 s. Keystroke budgets pass as presentation-model tests. Swift tests consume every fixture. Tag `v0.1.0` produces an installable dmg and deb. |
+| M2 | Library + fill: **daily use** | Format, grammar, validator, renderer, builtins; library folder, watcher, index, fuzzy search, ranking; picker and fill form with live preview; remembered values; first-run library step + seeds; Settings: General and Shortcuts; §11.5 picker and library states; `spec/fixtures/` corpus for format, grammar, render, validation, and ranking (§10.7); release.yml (dmg + deb). | A prompt saved in an editor appears in the picker within 1 s. Keystroke budgets pass as presentation-model tests. Swift tests consume every fixture. Release dmg and deb are installable; owner installation checks remain in the [M12 release install rows](../platform/m12-acceptance.md#post-publication-phase-from-actual-v100). |
 | M3 | Library window | Browse by folder, tag, favourite; editor with live validation, field inspector, history and restore, rename/move/delete, external-change conflict dialog; import of `.md`, `.prompt`, `.prompty`; first-run tour. | Create → edit → rename → restore round-trips on disk (integration test on a temp library). An external write during an unsaved edit shows the conflict dialog (presentation-model test). |
 | M4 | Assistant | Provider settings and test connection; model picker; secret store on both OSes; transport with the §7.1 rules; write, review, improve with structured output, validation, merge rule, diff, accept/reject, provenance; Settings: Assistant. | Stub-transport tests pass for both protocols and every §7.2 stop reason. A random runtime key saved through the settings service and native driver is scanned after Save, Test connection, restart, rename, switch and delete, across the repository and isolated config, data, log and temporary roots, including raw, base64, percent-encoded and JSON-escaped forms. Keychain and Secret Service must leave zero copies there; while saved, the Linux file tier must leave exactly one copy in the atomic 0600 `<config>/secrets-unencrypted.json`, visibly labelled "unencrypted", with zero other copies. Deleting the profile leaves zero copies in every tier (§12, §19 B29). README carries minimum assistant privacy/key-tier disclosures (§19 B33); full SECURITY.md/PRIVACY.md follow in M7. Owner-run: write, review, and improve work against Anthropic and a local Ollama on macOS and Linux ([checklist](../platform/assistant.md)); skipped native-store tests do not close acceptance. |
 | M5 | Server | `SyncAPI` DTOs in Core; `dump-schema` → `spec/schema/` with a CI drift check; fixtures for paths, canonical form, and DTOs; path validation and canonical form in Core; schema and migrations; accounts, devices, groups, memberships, invites, audit events; prompts API with compare-and-swap, revisions, moves; per-scope pull with snapshot mode; `database_id`; login backoff; admin CLI; backups; compose.yaml, .env.example, update.sh, Caddyfile; ghcr publishing; compose smoke job. | Server tests cover every §8.2 matrix row, every §8.3 response code, and every §8.4 rule: compare-and-swap ordering, per-scope visibility, snapshot triggers, path validation, canonical form. [`compose-smoke`](../../.github/workflows/ci.yml) passes in CI (up, health, login, push, snapshot and delta pull; §13). `shellcheck update.sh` clean. [Owner checklist](../platform/server.md): `./update.sh` on a fresh host brings it up healthy, real-domain HTTPS works, and two update re-runs preserve `tls`; backup/restore drill passes. Desktop login/push/pull follows once M6 exists. |
@@ -64,8 +64,8 @@
   tag publishing in `release.yml`; it does not close M2 release acceptance.
 
 - J3 adds universal macOS dmg/zip packaging and CI proof before J4 wires tag
-  releases; M2 release acceptance still requires the `v0.1.0` artifacts and
-  an owner-run dmg installation on a real Mac.
+  releases; release acceptance still requires an owner-run dmg installation
+  on a real Mac in the [M12 release install rows](../platform/m12-acceptance.md#p-macos).
 
 - I1 adds Core settings persistence and the General/onboarding model, including
   legacy Setup import; later slices wire the desktop settings, folder step and seeds.
@@ -96,8 +96,8 @@
   macos-26 with Xcode 26.0 is the required proof. The picker/fill owner
   checklist in `docs/platform/macos.md` remains NOT RUN. M2 stays open for
   Settings, seeds, library onboarding, fixtures and release acceptance.
-  Those implementation slices are now merged; the v0.1.0 tag and owner-run
-  acceptance remain pending.
+  Those implementation slices are now merged; owner-run acceptance remains
+  pending, including the [M12 release install rows](../platform/m12-acceptance.md#post-publication-phase-from-actual-v100).
 
 - M2f lands the Linux picker/fill view and production library composition,
   replacing the canned Linux panel. Core dismiss retains drafts across blur
@@ -109,8 +109,8 @@
   settings/seeds/first-run slice (including folder selection), and the fixtures
   and release slice remain. X11, GNOME/KDE Wayland and fill-form owner checks
   in `docs/platform/linux.md` remain NOT RUN.
-  Those implementation slices are now merged; the v0.1.0 tag and owner-run
-  acceptance remain pending.
+  Those implementation slices are now merged; owner-run acceptance remains
+  pending, including the [M12 release install rows](../platform/m12-acceptance.md#post-publication-phase-from-actual-v100).
 
 - M2 starts with M2a, a focused source-to-render foundation: pure Core
   values parse Markdown front matter and the body, validate content,

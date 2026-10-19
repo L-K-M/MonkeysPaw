@@ -137,12 +137,14 @@ Use manual publishing for a new release or a retry of the current release.
 Republishing an older stable tag can move `latest` and `X.Y` backward before
 GitHub refuses the duplicate release.
 
-After integrating the workflow and passing CI plus the owner installation
-checklist in [docs/platform/macos.md](docs/platform/macos.md), cut `v0.1.0` from
+The owner removed the historical published `v0.1.0` installation gate on
+2026-10-19. The [M12 release install rows](docs/platform/m12-acceptance.md#post-publication-phase-from-actual-v100)
+still require actual `v1.0.0` installations. After CI, candidate checks and
+owner release authorization in that ledger, the owner can cut `v1.0.0` from
 current main with:
 
 ```bash
-scripts/release.sh 0.1.0 --push
+scripts/release.sh 1.0.0 --push
 ```
 
 The release stub delegates to the installed `lkm-release` engine
