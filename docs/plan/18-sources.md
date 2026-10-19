@@ -25,3 +25,8 @@ Key evidence:
 | Android insertion | Android docs: `InputMethodService` (`switchToPreviousInputMethod`, API 28), `ACTION_PROCESS_TEXT`, Quick Settings tiles (`requestAddTileService`), clipboard behaviour since Android 13; Chromium `SelectionPopupControllerImpl`; Compose foundation 1.9 `ProcessTextKey`; Termux `TerminalView`; Play accessibility policy |
 | Android storage and secrets | SAF performance (CommonsWare, SAFTraversal); WorkManager periodic minimum; the `security-crypto` deprecation (1.1.0-alpha07); network security config |
 | Swift on Android (rejected for v1) | Swift SDK for Android and the workgroup FAQ; `swift-java` 0.3 and its minSdk issue #419 |
+
+Owner decision 2026-10-19 supersedes the GHCR publication convention cited
+above. It remains historical source material; registry distribution is not
+provided yet. See the [current release
+contract](14-repository-packaging-ci-release.md).

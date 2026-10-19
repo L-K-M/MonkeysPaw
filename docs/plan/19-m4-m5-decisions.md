@@ -41,3 +41,8 @@ changes a contract amends the referenced section in the same PR.
 | B31 · A6/A7 | Normal OpenAI stop is absent from §7.2's explicit normal list; defaults/model/beta/fallback assertions are time-sensitive. | Specify OpenAI stop as normal and every unrecognized nonempty completion as unexpectedStop. Preserve Q6 and the stated Anthropic defaults until primary API verification/owner tests establish a plan change; gate beta/fallbacks on exact normalized api.anthropic.com host, never a custom endpoint. |
 | B32 · A10/A11 / M6 integration | §7.3 requires group editor/viewer behavior before M6 supplies group access state. | Provide a small Core access-state seam: viewer offers a new private copy; write/improve in group requires editor+. M4 local operation proceeds without building Account/sync UI. M6 supplies authoritative role changes and invalidates drafts; server still enforces independently. |
 | B33 · A17/S18/S21 | §8/§12 require privacy disclosures, but §15 assigns full SECURITY.md/PRIVACY.md to M7; both files are absent here. | Ship minimum §12 assistant outbound/key-tier and server plaintext/operator-access/single-process/TLS/backup disclosures with M4/M5. Leave full platform documentation and polish to M7. |
+
+Owner decision 2026-10-19 supersedes B22's registry tags, promotion and
+package-write permission requirements. Both native image build/smoke gates
+remain; no images are pushed to any registry. See the [current release
+contract](14-repository-packaging-ci-release.md).

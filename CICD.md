@@ -32,8 +32,8 @@ See [§14](docs/plan/14-repository-packaging-ci-release.md) for each gate.
 touching either workflow, packaging inputs, Android, shared fixtures/seeds or
 `server/Dockerfile`. It calls CI before packaging. Once S20's compose smoke
 job lands in `ci.yml`, this existing
-`uses: ./.github/workflows/ci.yml` call also gates image publishing and GitHub
-undrafting on that job from the release commit, without another workflow edit.
+`uses: ./.github/workflows/ci.yml` call also gates GitHub undrafting on that
+job from the release commit, without another workflow edit.
 `scripts/check-version.py --check-tag <tag>` requires the tag's numeric core
 to match every committed `MARKETING_VERSION` and the README version marker.
 It also checks Android's single numeric `versionName` and literal positive
@@ -86,20 +86,14 @@ throwaway admin password file mounted read-only at `/run/secrets/`.
 
 Only smoke-tested OCI archives and digests are uploaded as
 `MonkeysPaw-server-image-{amd64,arm64}` workflow artifacts. They stay outside
-the `MonkeysPaw-release-*` asset glob: images are registry objects rather
-than GitHub Release files. The `image-publish` job waits for tests, verify,
-Linux, Flatpak, macOS, Android, artifacts and both native image builds. It logs
-in to ghcr with the job's token via stdin, uses Skopeo to preserve and push the untagged digests,
-then uses `docker buildx imagetools create` to promote the multiarch manifest.
-Every published tag is checked for exactly amd64 and arm64 with the expected
-digests. No image tag is pushed before every build and verification gate passes.
-
-Stable `vX.Y.Z` releases publish
-`ghcr.io/l-k-m/monkeyspaw-server:{X.Y.Z,X.Y,latest}`. Hyphenated prereleases
-publish only their exact version tag, such as `:0.1.0-beta.1`, without `X.Y`
-or `latest`. The verify job self-tests this tag mapping. The first ghcr
-publication is private; the owner must make the package public once in its
-package settings. `update.sh` still builds the repo-owned server image locally.
+the `MonkeysPaw-release-*` asset glob and are retained for three days as
+validation artifacts, separate from GitHub Release downloads. Both native
+image builds and smoke tests remain release gates. The owner removed GHCR
+publication on 2026-10-19: no image is pushed to GHCR or any other registry,
+and no multiarch registry manifest is assembled. Registry distribution is
+not provided yet. Build a versioned local image with
+`scripts/build.sh server-image`; `update.sh` also builds the repo-owned image
+locally for Compose deployment.
 
 Each packager uploads a workflow artifact, downloads it, and byte-compares
 every file against its build outputs. Ordinary CI also round-trips its
@@ -108,9 +102,9 @@ exactly seven desktop assets (deb/checksum, Flatpak/checksum and dmg/zip/manifes
 plus the two Android assets (APK/checksum), nine nonempty files in total.
 It rejects extra files, including hidden entries, and requires each checksum manifest to name
 every corresponding payload exactly once before checking all four manifests.
-Assembly and both publish jobs require the verified Flatpak output. On a real
-release, image promotion and manifest verification finish before the GitHub publish job runs, so a
-failed image publish keeps the release unpublished. The publish job creates
+Assembly and GitHub publishing require the verified Flatpak output and both
+native image build/smoke results. A failed image gate keeps the release
+unpublished. The publish job creates
 a draft with all nine assets, downloads them again from the release, and
 byte-compares each before publishing. A failed upload or
 comparison leaves the release unpublished. Hyphenated tags are prereleases
@@ -124,18 +118,13 @@ distinct from ordinary CI reports, so retained reports cannot contaminate
 asset assembly after a successful job retry. Signing-ADR changes select
 `core-linux` to check fingerprint agreement.
 
-Registry promotion and GitHub publishing are separate operations: if GitHub
-publishing fails afterward, verified image tags can already be published.
-
 PRs, including forks, always run the dry-run path. Manual `dry_run` defaults
 to true: all tests, packaging, both native image builds and smoke tests, and workflow-artifact
-comparisons run; both publish jobs are skipped without registry login or
-push. On a branch, artifacts use the committed version. Selecting a tag
+comparisons run; GitHub publishing is skipped. Images are never pushed,
+including on real releases. On a branch, artifacts use the committed version. Selecting a tag
 also exercises its alignment check. To publish manually, select an existing
 `v*` tag and set `dry_run` to false; publishing from a branch fails.
 Use manual publishing for a new release or a retry of the current release.
-Republishing an older stable tag can move `latest` and `X.Y` backward before
-GitHub refuses the duplicate release.
 
 The owner removed the historical published `v0.1.0` installation gate on
 2026-10-19. The [M12 release install rows](docs/platform/m12-acceptance.md#post-publication-phase-from-actual-v100)
@@ -158,7 +147,6 @@ The engine rolls back tracked bump edits if the hook fails.
 Monitor both the main CI run and tag release run. If publishing fails after
 draft creation, inspect the draft and failed check before deleting the draft
 and rerunning; the workflow refuses to overwrite an existing release.
-Check the ghcr tags too, since image promotion precedes GitHub publishing.
 
 `scripts/release.sh --check` reports configuration and skips the hook. Running
 without `--push` still commits and tags, so integration tests use disposable
@@ -180,7 +168,8 @@ that reference in the Summary. Its `VERSION`, `REVISION` and `CREATED` build
 args use the committed version, HEAD SHA and HEAD's `%cI` commit timestamp,
 matching the release image contract. Missing Docker, a failing `docker info`,
 or a non-Linux engine skips the default target and fails a named target.
-Image publication and multiarch assembly remain in the release workflow.
+Registry distribution is not provided yet; the release workflow only builds
+and smoke-tests each native architecture.
 
 `scripts/build.sh app [flags]` retains the app-only `lkm-build` path. Download each platform's checksum file
 with its archives and verify it before installing.
@@ -202,10 +191,10 @@ generated notes. Device install/update acceptance remains owner-run.
 The workflow uses pinned action SHAs, credential-free checkouts, job timeouts
 and a default read-only token. Release concurrency is `release-${{ github.ref }}`
 without cancellation. The GitHub publish job alone gets `contents: write`;
-only `image-publish` gets `packages: write`, with `contents: read`. Neither
-publish job executes checked-out code. The reusable CI concurrency includes its
+no job requests `packages: write`. The publish job executes no checked-out
+code. The reusable CI concurrency includes its
 caller name so release testing and ordinary CI cannot cancel one another.
 
-The `ci.yml` image job builds and smoke-tests only; release image publishing
-lives in `release.yml`. Flathub supplies the GNOME runtime, while GitHub Releases
+Both `ci.yml` and `release.yml` build and smoke-test images without publishing
+them. Flathub supplies the GNOME runtime, while GitHub Releases
 distributes the app bundle and checksum; there is no Flathub app publication.

@@ -37,7 +37,7 @@ class FlatpakWorkflowTests(unittest.TestCase):
         self.assertIn('"$RUNNER_TEMP/monkeyspaw-tested-deb/$DEB_FILE" "$VERSION"', job)
         self.assertIn('apt-get install -y --no-install-recommends "./dist/$deb_file"', JOBS["linux"])
         self.assertIn('$(/usr/bin/monkeyspaw --version)', JOBS["linux"])
-        for name in ("artifacts", "image-publish", "publish"):
+        for name in ("artifacts", "publish"):
             dependencies = re.search(r"^    needs: \[(.+)\]$", JOBS[name], re.MULTILINE)[1].split(", ")
             self.assertIn("flatpak", dependencies)
         for path in ("flatpak/**", "scripts/build-flatpak.sh", "scripts/flatpak-smoke.py"):

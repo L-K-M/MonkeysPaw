@@ -43,7 +43,10 @@ The owner removed the private vulnerability reporting requirement on
 2026-10-19, including the former reporting-enablement row (`T1.R1.C2`).
 This supersedes the prerequisite based on the disabled setting observed
 on 2026-10-16; it does not assert that reporting was enabled. See
-[D-PRIVATE](m12-acceptance.md#owner-decisions-before-tagging).
+[D-PRIVATE](m12-acceptance.md#owner-decisions-before-tagging). On the same
+date, the owner removed the registry-publication clause from the remaining
+downloads/runtime row (former `T1.R7.C2`, now `T1.R6.C2`); see D-GHCR in that
+ledger. Downloads, checksums and runtime checks remain NOT RUN.
 
 | Prerequisite | Result | Evidence |
 |---|---|---|
@@ -52,7 +55,7 @@ on 2026-10-16; it does not assert that reporting was enabled. See
 | Record actual signing identities and macOS Accessibility/Keychain approvals; do not assume notarization | NOT RUN | NOT RUN |
 | Accept the opt-in clipboard simultaneous-copy/750 ms limits or keep restore off where an absolute guarantee is required | NOT RUN | NOT RUN |
 | Review Flatpak whole-home/overrides, working Secret Service and one active installation route | NOT RUN | NOT RUN |
-| Verify published assets/checksums and required runtime availability; make first ghcr package public if using that distribution path | NOT RUN | NOT RUN |
+| Verify published assets/checksums and required runtime availability | NOT RUN | NOT RUN |
 
 ## Desktop and Flatpak runs
 

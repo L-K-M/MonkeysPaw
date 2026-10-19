@@ -80,3 +80,8 @@ prerequisites; the decision rows above also gate their named slices.
 | D18 | Linux Delivery/update Settings | D3/D6/D12/D14/D15 |
 | D19 | Privacy and platform documentation | Final feature contracts; D16–D18 for artifact/UI claims |
 | D20 | Owner matrix and closure | D1–D19 on main, owner hardware/access |
+
+Owner decision 2026-10-19 supersedes G22/G23's image-publish and GHCR
+distribution references. Both native image build/smoke gates remain; no images
+are pushed to any registry. See the [current release
+contract](14-repository-packaging-ci-release.md).

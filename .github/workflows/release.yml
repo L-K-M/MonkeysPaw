@@ -36,7 +36,7 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-# Write permissions belong only to the two publish jobs.
+# Write permissions belong only to the GitHub publish job.
 permissions:
   contents: read
 
@@ -67,7 +67,6 @@ jobs:
       prerelease: ${{ steps.version.outputs.prerelease }}
       revision: ${{ steps.version.outputs.revision }}
       created: ${{ steps.version.outputs.created }}
-      image_tags: ${{ steps.image-tags.outputs.tags }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,34 +101,6 @@ jobs:
             echo "revision=$(git rev-parse HEAD)"
             echo "created=$(git show -s --format=%cI HEAD)"
           } >> "$GITHUB_OUTPUT"
-      - name: Derive and self-test image tags
-        id: image-tags
-        env:
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-
-          image_tags() {
-            local version="${1#v}"
-            [[ "$1" == v* && "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ && ${#version} -le 128 ]] || return 1
-            case "$version" in
-              *-*) printf '%s\n' "$version" ;;
-              *) printf '%s %s latest\n' "$version" "${version%.*}" ;;
-            esac
-          }
-
-          test "$(image_tags v1.2.3)" = '1.2.3 1.2 latest'
-          test "$(image_tags v0.1.0-beta.1)" = '0.1.0-beta.1'
-          test "$(image_tags v0.2.0-rc-1)" = '0.2.0-rc-1'
-          if image_tags v1.2.3+build >/dev/null || image_tags main >/dev/null; then
-            echo '::error::Image tag self-test accepted an invalid tag'
-            exit 1
-          fi
-          tags=$(image_tags "$RELEASE_TAG") || {
-            echo "::error::Release tag $RELEASE_TAG cannot be published as an image tag"
-            exit 1
-          }
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Build release deb
@@ -606,85 +577,10 @@ jobs:
           docker rm --force monkeyspaw-server-release || true
           docker buildx rm monkeyspaw-server-release || true
 
-  image-publish:
-    name: Promote verified multiarch image
-    needs: [tests, verify, linux, flatpak, macos, android-build, artifacts, server-images]
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'tag' && needs.verify.outputs.publish == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write
-    env:
-      IMAGE_NAME: ghcr.io/l-k-m/monkeyspaw-server
-      IMAGE_TAGS: ${{ needs.verify.outputs.image_tags }}
-    # No checkout or repository scripts execute with the registry write token.
-    steps:
-      - name: Fetch both smoke-tested OCI archives
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: MonkeysPaw-server-image-*
-          merge-multiple: true
-          path: images
-      - name: Install OCI archive tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends skopeo
-      - name: Log in to ghcr after all gates pass
-        env:
-          GHCR_TOKEN: ${{ github.token }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-      - name: Push untagged digests and verify promoted manifests
-        run: |
-          set -euo pipefail
-          image="${IMAGE_NAME,,}"
-          sources=()
-          for arch in amd64 arm64; do
-            test -s "images/server-$arch.tar"
-            digest=$(cat "images/server-$arch.digest")
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            skopeo --override-os linux --override-arch "$arch" copy --preserve-digests \
-              --authfile "$HOME/.docker/config.json" --digestfile "$RUNNER_TEMP/pushed-$arch.digest" \
-              "oci-archive:images/server-$arch.tar" "docker://$image@$digest"
-            test "$(cat "$RUNNER_TEMP/pushed-$arch.digest")" = "$digest"
-            sources+=("$image@$digest")
-          done
-
-          read -r -a tags <<< "$IMAGE_TAGS"
-          test "${#tags[@]}" -gt 0
-          tag_args=()
-          for tag in "${tags[@]}"; do tag_args+=(--tag "$image:$tag"); done
-          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-          for tag in "${tags[@]}"; do
-            docker buildx imagetools inspect --raw "$image:$tag" > "$RUNNER_TEMP/published-manifest.json"
-            python3 - "$RUNNER_TEMP/published-manifest.json" <<'PY'
-          import json
-          from pathlib import Path
-          import sys
-
-          with open(sys.argv[1]) as file:
-              manifest = json.load(file)
-          entries = manifest["manifests"]
-          assert len(entries) == 2, "Expected exactly two platform manifests"
-          expected = {
-              ("linux", arch): Path(f"images/server-{arch}.digest").read_text().strip()
-              for arch in ("amd64", "arm64")
-          }
-          actual = {
-              (entry["platform"]["os"], entry["platform"]["architecture"]): entry["digest"]
-              for entry in entries
-          }
-          assert actual == expected, f"Unexpected platforms/digests: {actual}"
-          PY
-          done
-      - name: Log out of ghcr
-        if: always()
-        run: docker logout ghcr.io
-
   publish:
     name: Publish verified draft
-    # Registry promotion precedes undrafting; a failed image keeps the release hidden.
-    needs: [tests, verify, linux, flatpak, macos, android-build, artifacts, server-images, image-publish]
+    # Both native image builds and smoke tests must pass before publishing.
+    needs: [tests, verify, linux, flatpak, macos, android-build, artifacts, server-images]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'tag' && needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
