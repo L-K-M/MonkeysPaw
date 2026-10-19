@@ -411,5 +411,5 @@ Rollout by milestone:
   no app update feed. Real GNOME-/KDE-host permissions, Secret Service,
   consent, URI association and readback require the
   [Flatpak owner procedure](../platform/flatpak.md) and M7 ledger evidence.
-  The dedicated sync guide remains Y34/Z27 work; no sync acceptance follows
-  from Flatpak's installed-URI CI proof.
+  Sync checks stay open in the [sync guide](../platform/sync.md); no sync
+  acceptance follows from Flatpak's installed-URI CI proof.

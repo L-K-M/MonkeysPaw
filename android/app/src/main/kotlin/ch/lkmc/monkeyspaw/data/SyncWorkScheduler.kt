@@ -65,12 +65,14 @@ internal class AndroidSyncWorkQueue(private val context: Context) : SyncWorkQueu
 
     private fun connected() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
     private fun tag(generation: String) = "sync-$generation"
-    private fun input(request: SyncWorkRequest) = Data.Builder().putString(GENERATION, request.generation).apply {
-        request.version?.let { putLong(VERSION, it) }
-    }.build()
 
     companion object {
         const val GENERATION = "generation"
         const val VERSION = "version"
+
+        /** OS requests and privacy tests use the same encoder. */
+        internal fun input(request: SyncWorkRequest) = Data.Builder().putString(GENERATION, request.generation).apply {
+            request.version?.let { putLong(VERSION, it) }
+        }.build()
     }
 }

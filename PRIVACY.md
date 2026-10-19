@@ -19,7 +19,7 @@ telemetry.
 | Assistant Write | Your configured provider receives your brief, system instructions, output schema, model and request parameters. |
 | Assistant Review or Improve | Your provider receives the current template source, including front matter. Improve also sends your instruction and selected findings. Explicit retries can include the session's previous messages and your feedback. |
 | Assistant Test connection | Your provider receives model-list requests, authenticated when a key is configured. They carry no prompt content. |
-| Desktop Account and sync | Your configured server receives sign-in/registration credentials and a device name, then a bearer device token for authenticated requests. Enabled sync sends and retrieves prompt source, IDs, paths, revisions and scope/group metadata, and polls in the background. Account, group, invite, conflict and device actions send their corresponding API requests. |
+| Desktop and Android Account and sync | Your configured server receives sign-in/registration credentials and a device name, then a bearer device token for authenticated requests. Enabled sync sends and retrieves prompt source, IDs, paths, revisions and scope/group metadata, and polls in the background. Account, group, invite, conflict and device actions send their corresponding API requests. Android uses WorkManager for background sync. Opening an invite stages review; redemption requires explicit Accept. |
 | Desktop automatic updates or Check Now | GitHub receives the fixed release-metadata GET described below. |
 | Hosted server health/TLS | The server healthcheck requests its loopback `/api/health` endpoint without credentials. If you enable the optional Caddy HTTPS proxy, Caddy forwards client requests to the server and contacts its certificate services to obtain/renew certificates. Your hosting/proxy tools have their own network and retention policies. |
 | View release, Open Folder, Setup links or OS permission/settings actions | The app asks your OS or desktop service to open a page, folder, dialog or settings panel. Your browser handles its own cookies, history and subsequent requests. |
@@ -42,11 +42,12 @@ resolution are available on main. Automated device-token privacy fixtures
 passed both native CI suites. The [desktop sync guide](docs/platform/sync.md)
 records automated proof and open checks of deployed servers, signed
 installations, real keyrings and physical devices, which remain M6 Y34 work.
-Android's sync repository, background scheduling, Account/status screens,
-Library groups and role-aware Library, Editor and Assistant integration are
-on main; invite and conflict-resolution UI integration and Android sync
-acceptance remain M10 Z27 work. No Android
-desktop-style update checker is claimed. See
+Android implements optional server sign-in, explicit-consent invite
+acceptance, groups with viewer read-only access, conflict resolution and
+WorkManager background sync. Its device token is Keystore-encrypted;
+passwords and invite secrets are not persisted. Physical and phone/desktop
+acceptance remains open in the [M10 checklist](docs/platform/android.md#android-sync-m10-not-run-owner).
+No Android desktop-style update checker is claimed. See
 [Android usage](README.android.md) and [security boundaries](SECURITY.md).
 
 ### Desktop update requests
@@ -102,7 +103,7 @@ home-contained paths only. Prompt files are not encrypted by the app.
 | Desktop `settings.json`, `provider-settings.json`, `provider-state.json` | Preferences, first-run progress, provider references and capability state. Credentials are stored separately using the [key tiers](SECURITY.md#credentials). Android stores non-secret settings/provider state in its settings DataStore. |
 | Desktop `update-state.json` | Last automatic attempt, last successful check and rate-limit result/expiry; retained across launches. No browsing or prompt history. |
 | Linux `portal.json` and shortcut mechanism state | Private portal restore tokens and shortcut choices, retained for later sessions. Clearing remembered fields does not revoke OS permissions. |
-| Desktop `sync/`, `Groups/` and `Conflicts/` | Account/root bindings, cursors, staged operations and recovery copies, plus managed group and conflict files in the library. Journals and retained recovery files can contain prompt source. Signing out is not a wipe of your library, history, conflicts or backups. |
+| Desktop and Android `sync/`, `Groups/` and `Conflicts/` | Account/root bindings, cursors, staged operations and recovery copies, plus managed group and conflict files in the library. Android sync records live under `filesDir/state/sync/`; WorkManager state contains non-secret references and counters. Journals and retained recovery files can contain prompt source. Signing out is not a wipe of your library, history, conflicts or backups. |
 | Desktop `logs/monkeyspaw.log` | Diagnostics, warning level by default; active file plus four rotations, up to 1 MiB each. macOS also uses unified logging; Linux also uses stderr. OS/external log retention is outside this app. |
 | Server database and backups | Plaintext prompts/revisions and account metadata with credential hashes. Maintenance prunes to 200 revisions per prompt and purges eligible changes/tombstones older than 90 days; retained feeds/snapshots and backups can preserve content separately. Retired IDs retain scope/time metadata. The backup helper keeps 14 successful backups by default; other copies and pre-restore recovery files need operator cleanup. See [hosting and backup](docs/platform/server.md#server-backup-and-restore) and the [server specification](docs/plan/08-sync-server.md#81-data-model). |
 | Server login backoff buckets | Failed logins store attempted usernames and client IP addresses in separate buckets, with failure counts, update timestamps and lockout deadlines. These buckets have no automatic expiry; a successful login clears only its username bucket. |

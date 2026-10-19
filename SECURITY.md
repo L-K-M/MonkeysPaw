@@ -39,12 +39,14 @@ Desktop Account, invite handling, sync status, groups and conflict resolution
 are available on main. Automated device-token privacy fixtures passed both
 native CI suites. The [desktop sync guide](docs/platform/sync.md) records
 automated proof and open checks of deployed servers, signed installations,
-real keyrings and physical devices, which remain M6 Y34 work. Android's
-repository, background scheduling, Account/status screens, Library groups
-and role-aware Library, Editor and Assistant integration are on main;
-invite and conflict-resolution UI integration and Android sync acceptance
-remain M10 Z27 work; see the
-[milestone record](docs/plan/15-milestones.md).
+real keyrings and physical devices, which remain M6 Y34 work.
+Android implements optional server sign-in, invite acceptance only on explicit
+consent, groups with viewer read-only access, conflict resolution and
+WorkManager background sync. Its device tokens use Keystore-backed AES-GCM;
+passwords and invite secrets are not persisted. The server/operator and
+no-end-to-end-encryption boundaries above also apply to Android. Physical
+acceptance remains open in the [M10 checklist](docs/platform/android.md#android-sync-m10-not-run-owner)
+and [milestone record](docs/plan/15-milestones.md).
 
 ## Credentials
 
@@ -66,11 +68,11 @@ interpret a failed Clear as successful deletion. See the
 ## Transport, hosting and backups
 
 Assistant endpoints require HTTPS except for literal loopback destinations.
-Desktop sync requires HTTPS except for localhost, loopback and literal private
-IP ranges. An HTTP exception sends credentials and content without TLS;
-use HTTPS on networks you do not control. The clients refuse redirects and
-do not use browser cookies or ambient credential storage. Keep normal TLS
-certificate validation enabled.
+Desktop and Android sync require HTTPS except for localhost, loopback and
+literal private IP ranges. An HTTP exception sends credentials and content
+without TLS; use HTTPS on networks you do not control. The clients refuse
+redirects and do not use browser cookies or ambient credential storage. Keep
+normal TLS certificate validation enabled.
 
 Run one server process per SQLite database on local storage. Keep the default
 HTTP host binding on loopback; use the documented HTTPS reverse proxy for

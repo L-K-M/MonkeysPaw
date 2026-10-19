@@ -59,7 +59,8 @@ internal class FillBoundaryTest {
         val worker = root.resolve("data/SyncWorker.kt").readText()
         assertFalse(worker.contains("Result.retry()"))
         assertFalse(queue.contains("ExistingWorkPolicy.REPLACE"))
-        val input = queue.substringAfter("private fun input(").substringBefore("companion object")
+        // A missing marker yields no keys and fails instead of scanning the whole file.
+        val input = queue.substringAfter("internal fun input(", missingDelimiterValue = "")
         assertEquals(listOf("putString", "putLong"), Regex("\\bput[A-Z][a-zA-Z]+(?=\\()").findAll(input).map { it.value }.toList())
     }
 

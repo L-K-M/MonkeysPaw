@@ -211,11 +211,11 @@ Desktop Account, invites, sync status, groups and conflict resolution are
 available on main. Automated device-token privacy fixtures passed both native
 CI suites. The [desktop sync guide](../platform/sync.md) records automated
 proof and open checks of deployed servers, signed installations, real
-keyrings and physical devices, which remain M6 Y34 work. Android's repository,
-background scheduling, Account/status screens, Library groups and role-aware
-Library, Editor and Assistant integration are on main; invite and
-conflict-resolution UI integration and Android sync acceptance remain
-M10 Z27 work. M7's
+keyrings and physical devices, which remain M6 Y34 work. Android implements
+optional server sign-in, explicit-consent invite acceptance, groups with viewer
+read-only access, conflict resolution and WorkManager background sync; Android
+sync acceptance remains open in the
+[M10 checklist](../platform/android.md#android-sync-m10-not-run-owner). M7's
 [owner ledger](../platform/m7-acceptance.md) starts NOT RUN and does not close sync.
 
 **Logging.**

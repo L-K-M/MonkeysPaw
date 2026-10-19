@@ -944,3 +944,60 @@ PASS/FAIL/BLOCKED evidence. Never record an invite URL, token or password.
 | Cold invite during onboarding or settings loading: background, return and finish setup; the earlier invitation is gone without constructing Account on an ordinary local stop | NOT RUN |
 | Open an invite for another deployment: explicit sign-in there or explicit new-account acceptance; current bearer never crosses servers | NOT RUN |
 | Accept with an existing account and explicitly create a new account; remote registration followed by local failure offers sign-in without redeeming again | NOT RUN |
+
+## Android sync (M10): NOT RUN (owner)
+
+**M10 remains open.** This integrated checklist follows
+[§23 P19/P20](../plan/23-m10-decisions.md) and the
+[milestone acceptance](../plan/15-milestones.md). Use the final signed,
+minified release APK after all prerequisites are merged to main. The exact
+acceptance is a phone and a desktop sharing a group prompt through a deployed
+server. JVM tests, APK assembly and historical CI do not establish that result.
+No device, native Keystore, logcat or deployed-server run is recorded here.
+
+For every result use **PASS**, **FAIL**, **BLOCKED** or **NOT RUN** with a
+sanitized evidence reference and expected/observed behavior. All rows start
+NOT RUN. Record unavailable hardware or an unavailable desktop M6 prerequisite
+as BLOCKED with its reason; required NOT RUN, BLOCKED or FAIL rows keep M10
+open. Repeat affected rows after a change to the final main commit or APK.
+
+| Run identity | Status | Required record |
+|---|---|---|
+| Integrated code and automated gates | NOT RUN | Full merged main SHA; prerequisite PRs and important review dispositions; latest-main `android`, `android-sync` and `server` job URLs/results. |
+| Installed APK | NOT RUN | Artifact origin, version/code, SHA-256, signer certificate SHA-256 and verified signature; signed/minified release build. Follow [APK verification](#release-apk-verification); the public signer does not identify the publisher. |
+| Phone and storage | NOT RUN | Device/model, Android/API and OS build, private-library filesystem, actual Keystore security level/backing; API 26/27 and StrongBox-capable hardware where available. |
+| Server | NOT RUN | Deployed server version/commit, database identity, deployment scheme/host/prefix and TLS/trust configuration; no credentials or query strings. |
+| Desktop peer | NOT RUN | Desktop app version/commit, OS/version and signed-installation identity; M6 sync availability. |
+| Tester and date | NOT RUN | Tester, UTC date, run identifier, expected/observed outcomes and sanitized evidence location linked from each scenario. |
+
+Use two disposable users and harmless prompts. Never put credentials, invite
+links, sentinel values, prompt content or field values in this record, logs,
+screenshots or command arguments. Record only outcomes, counts and safe
+identifiers. Keep this record tied to the exact installed APK above.
+
+| Integrated owner scenario | Status | Evidence required |
+|---|---|---|
+| Phone and desktop share a group prompt | NOT RUN | Create a group on desktop; phone reviews its destination and explicitly accepts the invite. Desktop edit → phone pull → Fill/Copy, then phone edit → desktop pull, preserving identity and exact expected bytes. Record both directions and both users, without copying content into evidence. |
+| Viewer and personal data | NOT RUN | Downgrade/upgrade the phone user; read-only files/editor and queued Save/Restore/Move/assistant acceptance obey the role. Viewer Fill/Copy, private copy and personal favourite remain usable. Group favourites stay personal; remembered values, usage, history and assistant provenance never arrive on the peer. |
+| Physical private-library durability | NOT RUN | Complete every [Z4 filesystem row](#m10-z4-private-filesystem-durability-not-run) on real storage: checked file/directory flushes, xattrs/incarnations, 0600/0444 replacements, case rename, raw retention and journal replay twice. Record interruption method; process kill and power loss are distinct. Missing/replaced established roots stop sync without recreation or deletion inference. |
+| Restart and native Keystore | NOT RUN | Complete the [native store](#android-native-secret-store-checks-m11-l8-not-run) and [device-token](#android-sync-tls-and-device-token-checks-m10-z6-not-run) checks. Force-stop/reopen and reboot retain the bound token; missing/locked/tampered keys fail closed. Sign-out/switch preserve an unrelated provider and another device account; record actual backing rather than inferring it from the tier. |
+| Sign-out and account switch | NOT RUN | Offline sign-out clears local credentials/state while retaining library files and reporting unconfirmed remote revocation. Switch accounts without cross-upload; explicit inclusion alone releases held files. Restart and run stale jobs after sign-out/401; no old credential use, and failed login leaves the authentication stop intact. |
+| Scheduler and lifecycle | NOT RUN | Complete the [Z20 scheduler rows](#android-sync-scheduling-m10-z20-not-run): connectivity, reboot, Doze/standby, ordinary versus expedited/quota fallback, interrupted debounce, overlap/successor and cancellation. Force-stop delays dispatch until launch. Application/IME/delivery startup remains local. |
+| TLS and deployment binding | NOT RUN | Complete the [Z6 TLS rows](#android-sync-tls-and-device-token-checks-m10-z6-not-run): default system trust, explicit deployment-bound user-CA opt-in/reset, wrong-host/expired/untrusted certificates, redirects, deadlines/cancellation and permitted literal HTTP with its warning. No bearer reaches another deployment. |
+| Invite cold and resident open | NOT RUN | Complete the [Z23 invite rows](#android-invite-links-m10-z23-not-run) from cold, foreground and background states. No redemption before Accept; consumed Intent is cleared. Cancel/hide/process loss discards invitation/password; another-server invite never forwards the current bearer. Existing/new-account acceptance and post-registration activation failure are distinct. |
+| Conflict resolve | NOT RUN | Make offline edits on both peers; reconnect and inspect Server/My version on a narrow phone with Unicode/line endings. Separately exercise Keep server, Keep mine and Keep both, then sync the result to desktop. Changed head requires a fresh comparison; gone/unwritable original retains the private version. Cancel, repeated tap and restart preserve committed results without loss or duplicate copies. |
+| Runtime privacy | NOT RUN | Generate fresh synthetic tokens/passwords/invites only in memory. Scan after login, failed activation/cleanup, restart, switch, sign-out and invite clearing across app-private files, DataStores, hidden/cache/temp files, logcat and WorkManager input/output/non-secret state. Require zero raw or encoded copies, including in the ciphertext file; verify unrelated credentials remain readable. Record match counts only. |
+
+[AndroidSyncPrivacyTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/data/AndroidSyncPrivacyTest.kt)
+uses the production Account/repository/service and work policy with real
+settings/secrets DataStores and injected JVM AES-GCM keys. It reuses the
+calibrated streaming [SecretScan](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/data/SecretScan.kt)
+from [AssistantSettingsPersistenceTest](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ui/settings/AssistantSettingsPersistenceTest.kt).
+The scans include raw, base64, URL-base64, percent, nested JSON/Unicode/slash
+escapes and UTF-16 copies; files include the encrypted store with no plaintext
+exception. Existing [Account cancellation tests](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/ui/account/AccountViewModelTest.kt)
+and [repository worker cancellation tests](../../android/app/src/test/kotlin/ch/lkmc/monkeyspaw/data/AndroidSyncRepositoryTest.kt)
+retain their race matrices. JVM reconstruction closes and reopens stores;
+it does not kill Android, run WorkManager's OS database or inspect logcat.
+Both engines' full real-server scenario gates and all owner rows remain
+separate proofs; local slice results belong in its handoff.
