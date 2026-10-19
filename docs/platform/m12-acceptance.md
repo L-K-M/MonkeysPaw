@@ -20,14 +20,9 @@ skipped native test or historical CI receipt cannot establish owner acceptance.
 ## Recording and phases
 
 This inventory was re-enumerated from main baseline
-`382a9f62934e19bfb6ff69e290c3f5db040b78eb`, not from the older frozen inventory.
+`66cc2e70f9f5ae54fd4a4a2b8b7a760f3485083f`, not from the older frozen inventory.
 That is a source baseline, **not a tested release SHA**. Refresh coverage after
 source changes and bind every execution to the final reviewed main and bytes.
-The pending Z27 section is indexed read-only from its separate worktree.
-The sole expected unresolved target until its prerequisite merges is
-[Android integrated M10](android.md#android-sync-m10-not-run-owner), supplied by
-PR #293. Merge that prerequisite before merging this ledger; do not copy its
-section into the Android source checklist.
 
 - **Candidate (`C-`):** pre-tag observations on one exact final main SHA and
   identified candidate artifacts. Record same-commit full CI, completed reviews
@@ -100,7 +95,7 @@ its older no-caller prose does not waive the minimum-API rows. The
 [macOS version display](macos.md#m7-d17-delivery-and-update-settings-not-run)
 uses the actual full candidate/release version; its earlier beta example does
 not require publishing a beta instead of 1.0.0. The
-[current sync guide](sync.md#required-owner-acceptance-ledger) and pending
+[current sync guide](sync.md#required-owner-acceptance-ledger) and
 [integrated phone checklist](android.md#android-sync-m10-not-run-owner)
 govern connected acceptance despite earlier pending-integration prose.
 
