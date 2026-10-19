@@ -31,8 +31,8 @@ Rollout by milestone:
   - `CICD.md`: workflows, the tag → release flow, the ghcr notes.
   - [M7 acceptance ledger](../platform/m7-acceptance.md): exact main/artifact
     and owner-session evidence, initially NOT RUN. CI does not prove real
-    focus, consent, clipboard or installed-browser behavior. The owner must
-    enable GitHub private vulnerability reporting before release (§21 G23).
+    focus, consent, clipboard or installed-browser behavior. The owner removed
+    the private vulnerability reporting prerequisite on 2026-10-19 (§21 G23).
     Earlier owner NOT RUN rows remain; D20 records actual results on main.
   - `.github/dependabot.yml`: swift, docker, github-actions, and `gradle`
     for `/android`, with the androidx and kotlin+ksp groups.

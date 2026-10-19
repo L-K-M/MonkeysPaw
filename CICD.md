@@ -1,7 +1,7 @@
 # CI and releases
 
 For installation and first use, see the [platform guides](README.md#install).
-[Security](SECURITY.md) covers trust/signing and confidential reporting;
+[Security](SECURITY.md) covers trust boundaries and signing;
 [Privacy](PRIVACY.md) covers requests and retention. The
 [M7 ledger](docs/platform/m7-acceptance.md) tracks owner prerequisites and
 installed-artifact checks separately from CI. No owner acceptance is inferred
