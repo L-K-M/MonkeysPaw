@@ -1,7 +1,8 @@
 # M12 v1.0 owner sign-off ledger
 
-M12 is open. **Every result, actual observation and evidence field starts
-NOT RUN.** No owner execution is asserted here. No agent creates or pushes
+M12 is open. **Owner execution results, actual observations and evidence
+remain NOT RUN.** Decision answers are recorded separately below. No owner
+execution is asserted here. No agent creates or pushes
 a tag. Only the owner authorizes publication and creates/pushes `v1.0.0`.
 
 Use the [coverage table](#source-to-sign-off-coverage),
@@ -16,6 +17,8 @@ required check prevented by an unavailable prerequisite; NOT RUN is unattempted.
 Vocabulary examples and expected refusals in sources are not observed failures.
 Required unavailable sessions stay open. A sent event, zero tool exit, mock,
 skipped native test or historical CI receipt cannot establish owner acceptance.
+Use **DECIDED** only for an answered owner decision; it means the owner
+answered, not that any check passed.
 
 ## Recording and phases
 
@@ -28,7 +31,8 @@ source changes and bind every execution to the final reviewed main and bytes.
   identified candidate artifacts. Record same-commit full CI, completed reviews
   and dispositions, and `dry_run=true` release run. No tag is created here.
 - **Post-publication (`P-`):** independently execute the required rows using
-  actual `v1.0.0` downloads/installed copies and the published image. Record
+  actual `v1.0.0` downloads/installed copies and locally built server images
+  from the exact release checkout. Registry distribution is not provided yet. Record
   the tag SHA, release/publishing run and exact downloaded bytes. Candidate
   evidence never closes a P row, even when the bytes compare equal.
 - Each C/P pair below is two records. Repeated source keys are intentional;
@@ -55,16 +59,16 @@ The detailed evidence rules remain in
 
 ## Owner decisions before tagging
 
-All five decisions are open. A decision records an authorized disposition;
-it does not turn an unrun physical check into PASS.
+Unanswered decisions remain NOT RUN. A DECIDED row records the owner's
+authorized choice and date; it does not turn an unrun physical check into PASS.
 
 | ID | Source and keys | Environment | Tester/date | Expected | Actual | Result | Evidence |
 |---|---|---|---|---|---|---|---|
-| D-HISTORY | [M2](m2-acceptance.md#m2-daily-use-acceptance) `P1; P4; T1.R5; T3.R1; T3.R2`; [Linux](linux.md#release-deb-installation-m2-not-run) `N1; N2; N3` | Owner / historical `v0.1.0` conflict | NOT RUN | Preserve exact historical artifacts and owner installations, or commit an explicit owner-authorized plan amendment before using replacement evidence | NOT RUN | NOT RUN | NOT RUN |
+| D-HISTORY | [M2](m2-acceptance.md#m2-daily-use-acceptance) `P1; P4; T1.R5; T3.R1; T3.R2`; [Linux](linux.md#release-deb-installation-m2-not-run) `P1; N1; N2; N3; T1.R2` | Owner / historical `v0.1.0` gate | NOT RUN | Record authorized disposition; retain M12 release installation checks | Remove the historical published v0.1.0 dmg/deb gate; retain v1.0.0 installation checks, all NOT RUN; owner decision 2026-10-19 | DECIDED | owner answer to supervisor, 2026-10-19 |
 | D-R1 | [M12](../plan/15-milestones.md#15-milestones); [release contract](../../CICD.md#ci-and-releases) | Owner / release date and R1 preparation | NOT RUN | Supply actual date; approve dated notes, aligned 1.0.0 marketing versions and hook-managed Android code once, aligned retry, reviewed main and candidate dry run | NOT RUN | NOT RUN | NOT RUN |
-| D-SIGN | [macOS install](macos.md#m2-macos-artifacts-and-installation-not-run) `N3; N5`; [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R4` | Owner / actual macOS signing mode | NOT RUN | Choose documented ad-hoc or provision Developer ID; arrange notarization/stapling only if promised; require real quarantine/AX/Keychain update evidence; retain Android public signer | NOT RUN | NOT RUN | NOT RUN |
-| D-PRIVATE | [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `P1; T1.R1`; [Security](../../SECURITY.md#report-a-vulnerability-privately) | Owner / repository settings | NOT RUN | Enable and verify confidential reporting before release; the disabled source observation is historical, with no verified alternate contact | NOT RUN | NOT RUN | NOT RUN |
-| D-GHCR | [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R7`; [image contract](../../CICD.md#ci-and-releases) | Owner / first GHCR package | NOT RUN | Approve package/token permissions and first-created-package public-visibility sequence; later prove anonymous pulls for both architectures | NOT RUN | NOT RUN | NOT RUN |
+| D-SIGN | [macOS install](macos.md#m2-macos-artifacts-and-installation-not-run) `N3; N5`; [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R3` | Owner / actual macOS signing mode | NOT RUN | Record signing choice; require real quarantine/AX/Keychain update evidence; retain Android public signer | v1.0.0 stays ad-hoc signed, without Developer ID or notarization; owner decision 2026-10-19. First-launch checks remain NOT RUN. | DECIDED | owner answer to supervisor, 2026-10-19 |
+| D-PRIVATE | [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `P1` and former `T1.R1.C2` (removed); [Security](../../SECURITY.md) | Owner / repository settings | NOT RUN | Record the owner's reporting requirement disposition | Remove the private vulnerability reporting section and enablement prerequisite; owner decision 2026-10-19 | DECIDED | owner answer to supervisor, 2026-10-19 |
+| D-GHCR | [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R6` (registry clause removed); [image contract](../../CICD.md#ci-and-releases) | Owner / server image distribution | NOT RUN | Record distribution choice; retain both native image build/smoke gates and owner deployment checks | Do not push the server image to GHCR or any registry; registry distribution is not provided yet and the owner will arrange it later; owner decision 2026-10-19 | DECIDED | owner answer to supervisor, 2026-10-19 |
 
 ## Open dispositions and accepted platform rules
 
@@ -172,12 +176,12 @@ Counts below are source obligation/record units, **not unique physical runs**.
 | [flatpak.md](flatpak.md#flatpak-owner-procedure) | 4 / 38 | Open owner obligations; mapped below |
 | [gnome.md](gnome.md#gnome-portal-owner-checks) | 2 / 31 | Open owner obligations; mapped below |
 | [kde.md](kde.md#kde-shortcut-selection-and-delivery-owner-check) | 4 / 51 | Open owner obligations; mapped below |
-| [linux.md](linux.md#linux-picker-and-delivery-checks) | 23 / 227 | Open owner obligations; mapped below |
-| [m2-acceptance.md](m2-acceptance.md#m2-daily-use-acceptance) | 1 / 22 | Open owner obligations; mapped below |
+| [linux.md](linux.md#linux-picker-and-delivery-checks) | 23 / 227 | Open owner obligations; release install keys retained for M12 after owner removed the v0.1.0 gate on 2026-10-19 |
+| [m2-acceptance.md](m2-acceptance.md#m2-daily-use-acceptance) | 1 / 22 | Open owner obligations; release install keys retained for M12 after owner removed the v0.1.0 gate on 2026-10-19 |
 | [m3-acceptance.md](m3-acceptance.md#m3-library-window-acceptance) | 1 / 12 | Open owner obligations; mapped below |
 | [m4-acceptance.md](m4-acceptance.md#m4-assistant-acceptance) | 1 / 17 | Open owner obligations; mapped below |
 | [m5-acceptance.md](m5-acceptance.md#m5-server-acceptance) | 1 / 17 | Open owner obligations; mapped below |
-| [m7-acceptance.md](m7-acceptance.md#m7-acceptance-ledger) | 6 / 58 | Open owner obligations; mapped below |
+| [m7-acceptance.md](m7-acceptance.md#m7-acceptance-ledger) | 6 / 56 | Owner removed AC703 reporting prerequisite `P1` and former `T1.R1.C2` on 2026-10-19; current `T1.R6.C2` retains downloads/runtime checks with its registry clause removed on the same date; remaining obligations stay open |
 | [macos.md](macos.md#macos-delivery-acceptance) | 23 / 364 | Open owner obligations; mapped below |
 | [server.md](server.md#server-deployment-acceptance) | 8 / 46 | Open owner obligations; mapped below |
 | [sync.md](sync.md#desktop-sync-setup-and-verification) | 3 / 21 | Open owner obligations; mapped below |
@@ -256,7 +260,7 @@ obligations. The two automated-only sync sections are listed separately below.
 | [AC501](m5-acceptance.md#m5-server-acceptance) `B[1,2,3]; P[1,7,9]; T1.R[1,4,5]; T4.R[7,39]; T5.R[1,2,3,4,5,6].C2` | C/P-AC501-01 |
 | [AC701](m7-acceptance.md#m7-acceptance-ledger) `P[1,2]` | C/P-AC701-01 |
 | [AC702](m7-acceptance.md#recording-a-run) `P[1,2,3]` | C/P-AC702-01 |
-| [AC703](m7-acceptance.md#owner-prerequisites) `P[1]; T1.R[1,2,3,4,5,6,7].C2` | C/P-AC703-01, P-AC703-published |
+| [AC703](m7-acceptance.md#owner-prerequisites) `T1.R[1,2,3,4,5,6].C2` | C/P-AC703-01, P-AC703-published |
 | [AC704](m7-acceptance.md#desktop-and-flatpak-runs) `P[1]; T1.R[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32].C2` | C/P-AC704-01, C/P-AC704-02, C/P-AC704-03, C/P-AC704-04, C/P-AC704-05, C/P-AC704-06, C/P-AC704-07 |
 | [AC705](m7-acceptance.md#x11-alias-evidence) `P[1]; T1.R[1,2,3,4,5,6,7,8].C2` | C/P-ALIAS-X11-1, C/P-ALIAS-X11-2, C/P-ALIAS-X11-3, C/P-ALIAS-X11-4, C/P-ALIAS-X11-5, C/P-ALIAS-X11-6, C/P-ALIAS-X11-7, C/P-ALIAS-X11-8, C/P-ALIAS-X11-fallback-unknown-class, C/P-ALIAS-X11-fallback-lookalike-class, C/P-ALIAS-X11-fallback-missing-class, C/P-ALIAS-X11-fallback-class-query-timeout, C/P-ALIAS-X11-fallback-XTerm, C/P-ALIAS-X11-fallback-URxvt, C/P-ALIAS-X11-fallback-st, C/P-ALIAS-GNOME-X11-1, C/P-ALIAS-GNOME-X11-2, C/P-ALIAS-GNOME-X11-3, C/P-ALIAS-GNOME-X11-4, C/P-ALIAS-GNOME-X11-5, C/P-ALIAS-GNOME-X11-6, C/P-ALIAS-GNOME-X11-7, C/P-ALIAS-GNOME-X11-8, C/P-ALIAS-GNOME-X11-fallback-unknown-class, C/P-ALIAS-GNOME-X11-fallback-lookalike-class, C/P-ALIAS-GNOME-X11-fallback-missing-class, C/P-ALIAS-GNOME-X11-fallback-class-query-timeout, C/P-ALIAS-GNOME-X11-fallback-XTerm, C/P-ALIAS-GNOME-X11-fallback-URxvt, C/P-ALIAS-GNOME-X11-fallback-st, C/P-ALIAS-KDE-X11-1, C/P-ALIAS-KDE-X11-2, C/P-ALIAS-KDE-X11-3, C/P-ALIAS-KDE-X11-4, C/P-ALIAS-KDE-X11-5, C/P-ALIAS-KDE-X11-6, C/P-ALIAS-KDE-X11-7, C/P-ALIAS-KDE-X11-8, C/P-ALIAS-KDE-X11-fallback-unknown-class, C/P-ALIAS-KDE-X11-fallback-lookalike-class, C/P-ALIAS-KDE-X11-fallback-missing-class, C/P-ALIAS-KDE-X11-fallback-class-query-timeout, C/P-ALIAS-KDE-X11-fallback-XTerm, C/P-ALIAS-KDE-X11-fallback-URxvt, C/P-ALIAS-KDE-X11-fallback-st |
 | [AC706](m7-acceptance.md#procedure-ownership-and-remaining-work) `B[1,2,3]` | C/P-AC706-01 |
@@ -313,8 +317,9 @@ sync](#c-android-connected-sync), [Milestone
 reconciliation](#c-milestone-reconciliation).
 
 Record candidate origin and exact main/artifact identity in every row.
-The historical v0.1.0 keys remain gated by D-HISTORY; no version substitution
-is authorized here. Candidate results alone never authorize milestone closure.
+The owner removed the historical v0.1.0 gate on 2026-10-19 (D-HISTORY).
+Release installation rows still require candidate checks and independent
+actual v1.0.0 checks. Candidate results alone never authorize milestone closure.
 
 | ID | Source and keys | Environment | Tester/date | Expected | Actual | Result | Evidence |
 |---|---|---|---|---|---|---|---|
@@ -472,9 +477,9 @@ is authorized here. Candidate results alone never authorize milestone closure.
 | C-LIN07-GNOME-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | GNOME-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN07-KDE-W-Anthropic | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C3` | KDE-W / Anthropic | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN07-KDE-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | KDE-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| C-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| C-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| C-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| C-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| C-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| C-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN09-1 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[1].C3` | KDE-W / tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN09-2 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[2].C3` | GNOME-W / AppIndicator | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-LIN09-3 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[3].C3` | GNOME-W / no tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
@@ -882,7 +887,7 @@ is authorized here. Candidate results alone never authorize milestone closure.
 | C-AC701-01 | [AC701](m7-acceptance.md#m7-acceptance-ledger) `P[1,2]` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-AC702-01 | [AC702](m7-acceptance.md#recording-a-run) `P[1,2,3]` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-AC706-01 | [AC706](m7-acceptance.md#procedure-ownership-and-remaining-work) `B[1,2,3]` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| C-AC703-01 | [AC703](m7-acceptance.md#owner-prerequisites) `P[1]; T1.R[1,2,3,4,5,6].C2` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| C-AC703-01 | [AC703](m7-acceptance.md#owner-prerequisites) `T1.R[1,2,3,4,5].C2` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-AC704-01 | [AC704](m7-acceptance.md#desktop-and-flatpak-runs) `P[1]; T1.R[1,2,3,4,5,6,7].C2` | MAC-dmg | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-AC704-02 | [AC704](m7-acceptance.md#desktop-and-flatpak-runs) `P[1]; T1.R[1,2,3,4,5,6,7].C2` | MAC-zip | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | C-AC704-03 | [AC704](m7-acceptance.md#desktop-and-flatpak-runs) `P[1]; T1.R[8,9,10,11,12].C2` | GNOME-W | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
@@ -908,16 +913,16 @@ reconciliation](#p-milestone-reconciliation).
 
 Use the actual release downloads for every execution row below. Rerun
 installation/update and all affected behavior; C-row evidence cannot be copied
-as a P-row observation. Preserve a separate historical v0.1.0 evidence record
-for D-HISTORY unless the owner has committed an authorized plan amendment.
+as a P-row observation. The owner removed the historical v0.1.0 evidence
+requirement on 2026-10-19 (D-HISTORY); every v1.0.0 install row remains open.
 
 | ID | Source and keys | Environment | Tester/date | Expected | Actual | Result | Evidence |
 |---|---|---|---|---|---|---|---|
 | P-TAG | [publication contract](../../CICD.md#ci-and-releases) | GitHub release / v1.0.0 | NOT RUN | Owner-created tag points to reviewed candidate SHA; stable, non-draft, latest release with approved dated notes and Android/Flatpak disclosures | NOT RUN | NOT RUN | NOT RUN |
 | P-ASSETS | [publication contract](../../CICD.md#ci-and-releases) | All nine actual v1.0.0 downloads | NOT RUN | Exact dmg, zip, shared macOS manifest, deb/checksum, Flatpak/checksum and APK/checksum; four manifests pass; bytes equal verified workflow artifacts; safe provenance records | NOT RUN | NOT RUN | NOT RUN |
-| P-IMAGE-AMD64 | [publication contract](../../CICD.md#ci-and-releases) | GHCR / linux/amd64 | NOT RUN | 1.0.0, 1.0 and latest resolve to verified manifest; exactly amd64+arm64, matching version/revision/created labels; anonymous pull and real deployment/health on amd64 | NOT RUN | NOT RUN | NOT RUN |
-| P-IMAGE-ARM64 | [publication contract](../../CICD.md#ci-and-releases) | GHCR / linux/arm64 | NOT RUN | Independently verify all three tags and manifest metadata, public visibility, anonymous pull and deployment/health on arm64 | NOT RUN | NOT RUN | NOT RUN |
-| P-RETRY | [publication contract](../../CICD.md#ci-and-releases) | Owner / publication failure or retry disposition | NOT RUN | Inspect release/draft/tag and already-promoted images before any retry; record no-retry disposition if none; no automatic retag or alias rollback | NOT RUN | NOT RUN | NOT RUN |
+| P-IMAGE-AMD64 | [image contract](../../CICD.md#ci-and-releases) | Locally built release image / linux/amd64 | NOT RUN | Build exact v1.0.0 checkout with scripts/build.sh server-image; verify platform and version/revision/created labels; real deployment/health on amd64. Owner removed registry tags, manifest promotion, visibility and anonymous-pull requirements on 2026-10-19 (D-GHCR). | NOT RUN | NOT RUN | NOT RUN |
+| P-IMAGE-ARM64 | [image contract](../../CICD.md#ci-and-releases) | Locally built release image / linux/arm64 | NOT RUN | Independently build exact v1.0.0 checkout with scripts/build.sh server-image; verify platform and version/revision/created labels; real deployment/health on arm64. Owner removed registry tags, manifest promotion, visibility and anonymous-pull requirements on 2026-10-19 (D-GHCR). | NOT RUN | NOT RUN | NOT RUN |
+| P-RETRY | [publication contract](../../CICD.md#ci-and-releases) | Owner / publication failure or retry disposition | NOT RUN | Inspect release/draft/tag before any retry; record no-retry disposition if none; no automatic retag. Owner removed image-promotion retry requirements on 2026-10-19 (D-GHCR). | NOT RUN | NOT RUN | NOT RUN |
 
 ### P macOS
 
@@ -1069,9 +1074,9 @@ for D-HISTORY unless the owner has committed an authorized plan amendment.
 | P-LIN07-GNOME-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | GNOME-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN07-KDE-W-Anthropic | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C3` | KDE-W / Anthropic | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN07-KDE-W-Ollama | [LIN07](linux.md#library-assistant-flows-m4-a16-not-run) `P[1,2]; T1.R[1,2,3,4,5,6,7,8,9,10].C4` | KDE-W / Ollama | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / historical version gate D-HISTORY | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-LIN08-01 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | X11 / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-LIN08-02 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | GNOME-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-LIN08-03 | [LIN08](linux.md#release-deb-installation-m2-not-run) `B[1,2,3,4]; N[1,2,3,4,5,6]; P[1]; T1.R[1,2,3,4].C3` | KDE-W / Ubuntu24.04+ amd64 / recorded candidate/release version | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN09-1 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[1].C3` | KDE-W / tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN09-2 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[2].C3` | GNOME-W / AppIndicator | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-LIN09-3 | [LIN09](linux.md#tray-m2-not-run) `P[1]; T1.R[3].C3` | GNOME-W / no tray | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
@@ -1480,8 +1485,8 @@ for D-HISTORY unless the owner has committed an authorized plan amendment.
 | P-AC701-01 | [AC701](m7-acceptance.md#m7-acceptance-ledger) `P[1,2]` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-AC702-01 | [AC702](m7-acceptance.md#recording-a-run) `P[1,2,3]` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-AC706-01 | [AC706](m7-acceptance.md#procedure-ownership-and-remaining-work) `B[1,2,3]` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-AC703-01 | [AC703](m7-acceptance.md#owner-prerequisites) `P[1]; T1.R[1,2,3,4,5,6].C2` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
-| P-AC703-published | [AC703](m7-acceptance.md#owner-prerequisites) `T1.R[7].C2` | Actual published downloads and first GHCR package | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-AC703-01 | [AC703](m7-acceptance.md#owner-prerequisites) `T1.R[1,2,3,4,5].C2` | Owner / final main / all required environments | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
+| P-AC703-published | [AC703](m7-acceptance.md#owner-prerequisites) `T1.R[6].C2` | Actual published downloads and required runtimes | NOT RUN | Linked keys; owner removed the GHCR visibility clause on 2026-10-19 (D-GHCR) | NOT RUN | NOT RUN | NOT RUN |
 | P-AC704-01 | [AC704](m7-acceptance.md#desktop-and-flatpak-runs) `P[1]; T1.R[1,2,3,4,5,6,7].C2` | MAC-dmg | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-AC704-02 | [AC704](m7-acceptance.md#desktop-and-flatpak-runs) `P[1]; T1.R[1,2,3,4,5,6,7].C2` | MAC-zip | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |
 | P-AC704-03 | [AC704](m7-acceptance.md#desktop-and-flatpak-runs) `P[1]; T1.R[8,9,10,11,12].C2` | GNOME-W | NOT RUN | Linked keys | NOT RUN | NOT RUN | NOT RUN |

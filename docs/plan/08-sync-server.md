@@ -824,27 +824,24 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     binary's locking protocol; v1 supports one serving process and no replicas.
   - Never copy a live database file. A Litestream sidecar is documented as
     an option, not shipped.
-- **Image publishing.** `release.yml` publishes
-  `ghcr.io/l-k-m/monkeyspaw-server` for `linux/amd64` and `linux/arm64`.
-  Stable `vX.Y.Z` tags produce `X.Y.Z`, `X.Y` and `latest`; hyphenated
-  prereleases produce only their exact version tag, without `X.Y` or `latest`.
+- **Server images.** `release.yml` builds and smoke-tests `linux/amd64` and
+  `linux/arm64` images as release gates. The owner removed GHCR publication
+  on 2026-10-19: images are never pushed to any registry, and registry
+  distribution is not provided yet. Build a versioned local image with
+  `scripts/build.sh server-image`.
   - Native builds run on `ubuntu-24.04` and hosted `ubuntu-24.04-arm`,
     without QEMU/binfmt. Both receive `VERSION`, the commit SHA as `REVISION`
     and the commit timestamp as `CREATED`, with source, revision, version,
     created and Unlicense OCI labels.
   - Each architecture mounts a throwaway admin password file as a secret,
     waits for container health and requires `/api/health` to return 200.
-    Its OCI archive and digest are workflow artifacts outside the five-file
-    release-asset glob; images remain registry objects.
-  - Registry promotion and GitHub undrafting require tests, version checks,
-    Linux and macOS packaging, asset verification and both image builds.
-    Only the image-publish job has `packages: write`; PRs and manual dry
-    runs build and smoke both architectures without registry login or push.
-    Promotion pushes untagged digests, then creates and verifies a manifest
-    containing exactly amd64 and arm64 with those digests for every tag.
-  - Image promotion precedes GitHub publishing so an image failure keeps
-    the release unpublished. The two services are not atomic: a later
-    GitHub publishing failure can leave verified image tags published.
-  - The first publish is private; the owner must make the package public once.
+    Its OCI archive and digest are validation workflow artifacts outside
+    `MonkeysPaw-release-*`, retained for three days rather than distributed
+    as release downloads.
+  - GitHub undrafting requires tests, version checks, Linux, Flatpak, macOS
+    and Android packaging, asset verification and both native image gates.
+    No job requests `packages: write`. PRs and manual dry runs also build
+    and smoke both architectures. No registry login, push or multiarch
+    registry manifest assembly runs, including on real releases.
   - `update.sh` still builds locally: repo-owned images are built, never
     pulled.

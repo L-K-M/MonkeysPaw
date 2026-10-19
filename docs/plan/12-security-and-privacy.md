@@ -112,8 +112,9 @@ is part of the request. Test connection sends only a model-list request.
 limits; [PRIVACY.md](../../PRIVACY.md) records outbound traffic, retention,
 Forget, repeat, clipboard restore and E28 invite exposure. GitHub private
 vulnerability reporting was disabled at the 2026-10-16 read-only check. The
-owner must enable it before release; no alternative private contact is
-verified. Track that prerequisite in the [M7 ledger](../platform/m7-acceptance.md#owner-prerequisites).
+owner removed that reporting prerequisite on 2026-10-19, recorded in the
+[M7 ledger](../platform/m7-acceptance.md#owner-prerequisites); no enablement
+or alternative private contact is asserted.
 
 Linux uses `service=ch.lkmc.monkeyspaw` and the namespaced account as
 Secret Service attributes, with a `Monkey's Paw: <account>` item label.

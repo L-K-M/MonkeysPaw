@@ -39,21 +39,23 @@ versions, hashes, issue references and redacted screenshots only.
 
 ## Owner prerequisites
 
-The repository's read-only private-vulnerability-reporting API returned
-`enabled: false` on 2026-10-16. The intended confidential route is the
-[repository Security tab](https://github.com/L-K-M/MonkeysPaw/security),
-**Report a vulnerability**, as described in [SECURITY.md](../../SECURITY.md).
-It is unavailable until the owner enables it. No alternate contact is verified.
+The owner removed the private vulnerability reporting requirement on
+2026-10-19, including the former reporting-enablement row (`T1.R1.C2`).
+This supersedes the prerequisite based on the disabled setting observed
+on 2026-10-16; it does not assert that reporting was enabled. See
+[D-PRIVATE](m12-acceptance.md#owner-decisions-before-tagging). On the same
+date, the owner removed the registry-publication clause from the remaining
+downloads/runtime row (former `T1.R7.C2`, now `T1.R6.C2`); see D-GHCR in that
+ledger. Downloads, checksums and runtime checks remain NOT RUN.
 
 | Prerequisite | Result | Evidence |
 |---|---|---|
-| Owner enables GitHub private vulnerability reporting before release and verifies Report a vulnerability is available | NOT RUN | NOT RUN |
 | Reconcile D1–D19 onto main and identify final CI/reviewed artifacts before D20 | NOT RUN | NOT RUN |
 | Supply installed macOS, native GNOME/KDE Wayland, ordinary X11 and GNOME-/KDE-host Flatpak sessions, plus GNOME/KDE X11 where available | NOT RUN | NOT RUN |
 | Record actual signing identities and macOS Accessibility/Keychain approvals; do not assume notarization | NOT RUN | NOT RUN |
 | Accept the opt-in clipboard simultaneous-copy/750 ms limits or keep restore off where an absolute guarantee is required | NOT RUN | NOT RUN |
 | Review Flatpak whole-home/overrides, working Secret Service and one active installation route | NOT RUN | NOT RUN |
-| Verify published assets/checksums and required runtime availability; make first ghcr package public if using that distribution path | NOT RUN | NOT RUN |
+| Verify published assets/checksums and required runtime availability | NOT RUN | NOT RUN |
 
 ## Desktop and Flatpak runs
 

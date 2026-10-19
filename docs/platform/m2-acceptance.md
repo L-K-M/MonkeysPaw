@@ -1,7 +1,7 @@
 # M2 daily-use acceptance
 
 This maps every [§15 M2 acceptance item](../plan/15-milestones.md) to its
-automated gate. M2 remains open until the `v0.1.0` artifacts and owner-run
+automated gate. M2 remains open until the release installation and owner-run
 checks below are recorded. Record the commit, CI run, artifact hashes and
 tester with the results.
 
@@ -16,7 +16,7 @@ tester with the results.
 | An external editor save appears in the macOS picker within 1 s | [MacPickerViewTests](../../MonkeysPawTests/MacPickerViewTests.swift): `testExternalSaveReachesPickerWithinOneSecondThroughFSEvents` (atomic create) and `testExternalInPlaceSaveReachesPickerWithinOneSecondThroughFSEvents`. Real FSEvents → debounce → index → results and preview. | `macos-app`, hosted tests |
 | §2 keystroke budgets pass as presentation-model tests | [PickerModelTests](../../Tests/MonkeysPawCoreTests/Fill/PickerModelTests.swift), mapped below. | `linux-app` Core tests and `core-macos` |
 | Swift consumes every fixture | [PromptConformanceTests](../../Tests/MonkeysPawCoreTests/PromptConformanceTests.swift): `testEveryFixture` enumerates exactly eight categories: M2's `format`, `grammar`, `render`, `validation` and `ranking`, plus `import` (M3) and `paths` and `canonical` (M5) added since; every category is nonempty and every JSON/source file is consumed exactly once. Mutation tests reject unknown/missing categories, orphan sources, duplicate consumption and malformed cases. | `linux-app` Core tests and `core-macos` |
-| Tag `v0.1.0` produces an installable dmg and deb | `deb` builds, inspects, installs and checks a prerelease deb; `macos-artifacts` verifies universal slices, signatures, versions, dmg contents, zip equivalence and launches both packaged copies. [release.yml](../../.github/workflows/release.yml) runs CI on the release commit, verifies the tag, builds the tag's deb/dmg/zip, checks uploaded bytes and checksums, then verifies the draft's assets before publishing the release. | `deb`, `macos-artifacts`; release jobs `tests`, `verify`, `linux`, `macos`, `artifacts`, `publish` |
+| Release dmg and deb are installable | `deb` builds, inspects, installs and checks a prerelease deb; `macos-artifacts` verifies universal slices, signatures, versions, dmg contents, zip equivalence and launches both packaged copies. [release.yml](../../.github/workflows/release.yml) verifies the release commit, tag, artifacts and downloaded bytes. Owner installation remains **NOT RUN** in the M12 [macOS](m12-acceptance.md#p-macos) and [Linux](m12-acceptance.md#p-linux-native) release install rows. | `deb`, `macos-artifacts`; release jobs `tests`, `verify`, `linux`, `macos`, `artifacts`, `publish` |
 
 Watcher timing starts immediately before the write, including temporary-file
 creation for atomic replacement. Tests print elapsed seconds; macOS also
@@ -39,8 +39,8 @@ Owner-run gates:
 
 | Check | Status | Record results in |
 |---|---|---|
-| Download and install the `v0.1.0` dmg, including checksum, Gatekeeper, launch after eject and relaunch | **NOT RUN** | [macOS artifacts and installation](macos.md#m2-macos-artifacts-and-installation-not-run) |
-| Download and install the `v0.1.0` deb on a supported Linux desktop, verify checksum/version, launch, relaunch and uninstall | **NOT RUN** | [Linux release deb installation](linux.md#release-deb-installation-m2-not-run) |
+| Download and install the release dmg, including checksum, Gatekeeper, launch after eject and relaunch | **NOT RUN** | M12 [release macOS install rows](m12-acceptance.md#p-macos), `P-MAC06-01` through `P-MAC06-04`; [procedure](macos.md#m2-macos-artifacts-and-installation-not-run) |
+| Download and install the release deb on a supported Linux desktop, verify checksum/version, launch, relaunch and uninstall | **NOT RUN** | M12 [release Linux install rows](m12-acceptance.md#p-linux-native), `P-LIN08-01` through `P-LIN08-03`; [procedure](linux.md#release-deb-installation-m2-not-run) |
 | Real desktop hotkey, focus restoration and exact paste into browser/terminal, including macOS full-screen Spaces and GNOME/KDE Wayland | **NOT RUN** | [macOS](macos.md), [GNOME](gnome.md), [KDE](kde.md), [Linux](linux.md) |
 | Settings: General folder/default/reveal, cancellation, errors and reusable window | **NOT RUN** | [macOS General rows](macos.md#m2-settings-general-and-shortcuts-not-run): Choose, Cancel, invalid folder, Use Default and Show in Finder. [Linux General rows](linux.md#settings-m2-not-run): Choose folder through Open Folder and both Settings entry points. |
 | Settings: Shortcuts binding, conflict/failure, actual activation verification and Setup access | **NOT RUN** | [macOS Shortcuts rows](macos.md#m2-settings-general-and-shortcuts-not-run): Open Setup, record/rebind and conflicting shortcut. [Linux Shortcuts rows](linux.md#settings-m2-not-run): Open Setup, GNOME portal and KDE; use the [GNOME](gnome.md) / [KDE](kde.md) delivery checks for real activation. |
@@ -54,8 +54,9 @@ Owner-run gates:
 | Conditional clipboard privacy (§5.3): zero reads without the builtin or on mere selection; one read per form open/fieldless use, reused by edits and repeated builtin occurrences | **NOT RUN** | [macOS clipboard privacy rows](macos.md#m2-conditional-clipboard-privacy-not-run), [Linux clipboard privacy rows](linux.md#conditional-clipboard-privacy-m2-not-run) |
 | Visible keyboard focus and reduced motion (§11.6) in picker/fill, Settings and onboarding | **NOT RUN** | macOS [Visible focus and Reduced motion rows](macos.md#m2-voiceover-visible-focus-and-reduced-motion-not-run), Linux [Visible focus and Reduced motion rows](linux.md#orca-visible-focus-and-reduced-motion-m2-not-run) |
 
-Version alignment, a dry run or a prerelease package does not establish the
-exact `v0.1.0` release gate; that tag and the owner installations remain pending.
-Record candidate checks from the main dry-run artifacts, then record the
-published `v0.1.0` artifacts and installed copies against their exact commit,
-run and hashes.
+The owner removed the historical published `v0.1.0` dmg/deb acceptance gate
+on 2026-10-19 ([D-HISTORY](m12-acceptance.md#owner-decisions-before-tagging)).
+Release installation remains required in the M12 rows linked above. Record
+candidate checks from the main dry-run artifacts, then independently record
+the actual `v1.0.0` downloads and installed copies against their exact commit,
+run and hashes. Version alignment or a dry run does not close those owner checks.

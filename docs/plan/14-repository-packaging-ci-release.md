@@ -8,7 +8,7 @@ Rollout by milestone:
 | M0 | ci.yml: Core tests (macOS + Linux), Linux app build (`swift:6.4-noble`), macOS app build (Xcode 26), server build + tests, server image build (`push: false`) with a `/api/health` check |
 | M1 | ci.yml `linux-app` job: GTK lifecycle under Xvfb, driver fakes, GDBus mock-bus tests |
 | M2 | ci.yml: macOS artifact proof; release.yml: dmg (universal) + zip + deb; scripts/package-macos.sh |
-| M5 | server image publish to ghcr; compose config check and compose smoke job; `spec/schema/` drift check |
+| M5 | native server image build/smoke gates without registry publication; compose config check and compose smoke job; `spec/schema/` drift check |
 | M7 | flatpak repack and release upload |
 | M8 | ci.yml `android` job (wrapper validation, `:core:test`, unit tests, lint, debug + release assemble); release.yml APK job; dependabot `gradle` for `/android` |
 
@@ -28,11 +28,11 @@ Rollout by milestone:
     rule) plus the canonical shared-rules block.
   - `CLAUDE.md`: copied verbatim from a peer repo.
   - `CHANGELOG.md`: Keep a Changelog.
-  - `CICD.md`: workflows, the tag → release flow, the ghcr notes.
+  - `CICD.md`: workflows, the tag → release flow, local server image builds.
   - [M7 acceptance ledger](../platform/m7-acceptance.md): exact main/artifact
     and owner-session evidence, initially NOT RUN. CI does not prove real
-    focus, consent, clipboard or installed-browser behavior. The owner must
-    enable GitHub private vulnerability reporting before release (§21 G23).
+    focus, consent, clipboard or installed-browser behavior. The owner removed
+    the private vulnerability reporting prerequisite on 2026-10-19 (§21 G23).
     Earlier owner NOT RUN rows remain; D20 records actual results on main.
   - `.github/dependabot.yml`: swift, docker, github-actions, and `gradle`
     for `/android`, with the androidx and kotlin+ksp groups.
@@ -47,8 +47,8 @@ Rollout by milestone:
   `RELEASE_NEW_VERSION` to align Android's committed `versionName` and
   increment its positive Int `versionCode` once per changed version. An
   aligned retry is a no-op; validation and overflow failures edit nothing.
-  Release CI derives the macOS artifact version, the deb version, the server `VERSION` build arg,
-  and the image tags from the git tag without editing committed settings.
+  Release CI derives the macOS artifact version, the deb version and the server
+  `VERSION` build arg from the git tag without editing committed settings.
   `python3 scripts/check-version.py` checks that every `MARKETING_VERSION`
   agrees with the single README marker and Android's numeric `versionName`,
   requires a single literal positive Int `versionCode`, and verifies
@@ -191,12 +191,13 @@ Rollout by milestone:
     selecting an existing `v*` tag and setting `dry_run` to false.
   - Concurrency is `release-${{ github.ref }}`, without cancellation.
     Workflow permissions default to `contents: read`. Only GitHub publishing gets
-    `contents: write`; only image publishing gets `packages: write`, with
-    `contents: read`. Actions are SHA-pinned, checkouts do not persist
+    `contents: write`; no job requests `packages: write`. Actions are
+    SHA-pinned, checkouts do not persist
     credentials, and each runner job has a timeout.
   - The draft release is published only after all build and verification
-    gates pass and the server image tags are promoted and verified. Server
-    images are ghcr objects rather than release files. Release assets:
+    gates pass, including both native server image builds and smoke tests.
+    Images stay in separate workflow artifacts; registry distribution is
+    not provided yet. Release assets:
 
     - macOS: a universal `.dmg`, plus `.zip` and their `.sha256` manifest.
     - Linux: a `.deb` built by `packaging/build-deb.sh` with
@@ -218,20 +219,15 @@ Rollout by milestone:
     labels, then smoke-tests container health and `/api/health` 200 with a
     throwaway admin password file bind-mounted read-only. OCI archives and
     digests use separate workflow artifacts outside `MonkeysPaw-release-*`.
-  - Image publishing requires tests, verify, Linux, Flatpak, macOS, Android,
-    artifacts and both native image builds. It pushes untagged digests, creates a
-    multiarch manifest and verifies exactly amd64 and arm64 with the
-    expected digests for each tag before GitHub publishing can run. This
-    ordering keeps a failed image publish from undrafting the release;
-    a later GitHub failure can leave verified image tags published.
-    The owner must make the first, initially private ghcr package public.
-    `update.sh` still builds the repo-owned image locally (§8.6).
+  - The owner removed GHCR publication on 2026-10-19. Images are never pushed
+    to any registry and no multiarch registry manifest is assembled. GitHub
+    publishing still requires tests, verify, Linux, Flatpak, macOS, Android,
+    artifacts and both native image build/smoke results. Build the server
+    image locally with `scripts/build.sh server-image`; `update.sh` builds
+    the repo-owned image locally for Compose (§8.6).
   - macOS builds are ad-hoc signed (`codesign --sign -`) unless Q3 provides
     an identity. Signing env is exported only when the secrets are
     non-empty (Obtainintosh lesson).
-  - Stable `vX.Y.Z` tags publish image tags `X.Y.Z`, `X.Y` and `latest` at
-    `ghcr.io/l-k-m/monkeyspaw-server`. Hyphenated tags are prereleases and
-    publish only the exact version image tag, never `X.Y` or `latest`.
   - Each packaging job downloads its workflow artifact and byte-compares
     every file, including checksums, against the originals. Android also
     validates APK ID/full version/committed code/API levels and the recorded
@@ -240,22 +236,25 @@ Rollout by milestone:
     plus the explicit two Android assets, exactly nine nonempty files,
     rejects missing/extra files (including hidden entries), requires exact
     payload membership in each manifest and checks all four manifests.
-    Assembly and both publish jobs depend on the verified Flatpak job.
+    Assembly and GitHub publishing depend on the verified Flatpak job.
     The publish job repeats the identical asset gate, creates a draft with all
     nine assets, downloads every release asset and
     byte-compares against those verified build outputs before undrafting.
     Any failure leaves the release unpublished. PRs and manual dry runs do
     every build and workflow-artifact verification, including both image
-    smoke tests, and skip both publish jobs without logging in to ghcr.
-    This includes fork PRs. Both publish jobs require a tag and a true
+    smoke tests, and skip GitHub publishing. This includes fork PRs.
+    The publish job requires a tag and a true
     publish output. Generated release notes link to `CHANGELOG.md` at the full
     release tag, retain Android checksum/sideload guidance and the public-signing
     disclosure, and include Flatpak checksum/install instructions and Linux
     x86_64/GNOME Platform 50 requirements.
-  - To cut the first release after CI and owner installation checks pass,
-    run `scripts/release.sh 0.1.0 --push` on current main with the shared
-    `lkm-release` engine installed. It bumps committed versions and pushes
-    the release commit and `v0.1.0` tag. CI derives the artifact version from
+  - After CI, candidate checks and owner authorization in the
+    [M12 ledger](../platform/m12-acceptance.md#owner-decisions-before-tagging),
+    the owner can run `scripts/release.sh 1.0.0 --push` on current main with
+    the shared `lkm-release` engine installed. It bumps committed versions and pushes
+    the release commit and `v1.0.0` tag. The owner removed the historical
+    `v0.1.0` gate on 2026-10-19; M12 release installation checks remain required.
+    CI derives the artifact version from
     `${GITHUB_REF_NAME#v}` without modifying committed settings. See `CICD.md`.
     `--check` reports engine configuration without executing the hook;
     omitting `--push` still commits and tags. Test hook/commit/tag effects
@@ -310,8 +309,9 @@ Rollout by milestone:
   `VERSION` is the committed version, `REVISION` is `git rev-parse HEAD`, and
   `CREATED` is `git show -s --format=%cI HEAD`, matching release metadata.
   Missing Docker, a failing `docker info`, or a non-Linux engine skips the
-  default target and fails a named target. Registry publication and multiarch
-  assembly remain in the release workflow.
+  default target and fails a named target. Registry distribution is not
+  provided yet; the release workflow only builds and smoke-tests both native
+  architectures.
   `scripts/build.sh app [lkm-build flags]` preserves the
   app-only engine path, including `--clean`, `--debug`, `--run`, `--install`,
   `--zip` and `--dmg`.

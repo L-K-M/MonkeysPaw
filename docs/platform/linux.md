@@ -134,23 +134,26 @@ editor's existing unsaved-edit decision.
 
 Use an amd64 Ubuntu 24.04+ desktop for the release's amd64 package. Candidate
 checks use the Release workflow's `dry_run=true` artifacts from the exact
-main commit; after publication repeat with the `v0.1.0` release downloads.
-Keep a separate record for each candidate and published build.
+main commit; after publication repeat with the actual release downloads in
+the [M12 release Linux install rows](m12-acceptance.md#p-linux-native),
+`P-LIN08-01` through `P-LIN08-03`. The owner removed the historical `v0.1.0`
+gate on 2026-10-19. Keep a separate record for each candidate and published build.
 
 - Commit / CI run / Release workflow run:
 - Artifact version / `.deb` SHA-256:
 - Ubuntu / desktop / compositor / architecture:
 - Date / tester / launch and delivery results:
 
-1. Download `monkeyspaw_0.1.0_amd64.deb` and its
-   `monkeyspaw_0.1.0_amd64.deb.sha256` into the same directory. Confirm
+1. Download `monkeyspaw_<version>_amd64.deb` and its
+   `monkeyspaw_<version>_amd64.deb.sha256` into the same directory, replacing
+   `<version>` with the candidate or actual release version. Confirm
    `dpkg --print-architecture` reports `amd64`.
 2. In that directory run
-   `sha256sum -c monkeyspaw_0.1.0_amd64.deb.sha256`. Require **OK** and record
+   `sha256sum -c monkeyspaw_<version>_amd64.deb.sha256`. Require **OK** and record
    the hash before installing.
-3. Run `sudo apt install ./monkeyspaw_0.1.0_amd64.deb`. Record dependency or
+3. Run `sudo apt install ./monkeyspaw_<version>_amd64.deb`. Record dependency or
    installation failures; then run `monkeyspaw --version` and require
-   `monkeyspaw 0.1.0`.
+   `monkeyspaw <version>`.
 4. Launch `monkeyspaw` from the terminal and from the desktop launcher.
    Complete pending Setup, folder and seed steps. Run the picker/fill and
    delivery checks below from this installed copy.
@@ -169,7 +172,7 @@ Keep a separate record for each candidate and published build.
 | Check | Expected result | Status |
 |---|---|---|
 | Download and checksum | The exact candidate/release deb and manifest are recorded; `sha256sum -c` reports OK. | NOT RUN |
-| Install and version | apt succeeds; the installed `monkeyspaw --version` reports `monkeyspaw 0.1.0`. | NOT RUN |
+| Install and version | apt succeeds; the installed `monkeyspaw --version` reports the recorded candidate or release version. | NOT RUN |
 | Launch and relaunch | Terminal/desktop launch, onboarding, saved state and installed-copy delivery work through steps 4–5. | NOT RUN |
 | Uninstall | Package-managed binary, desktop and service entries disappear; user prompts and state remain. | NOT RUN |
 
