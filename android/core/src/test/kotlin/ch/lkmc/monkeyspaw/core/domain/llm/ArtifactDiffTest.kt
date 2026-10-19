@@ -9,6 +9,27 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ArtifactDiffTest {
+    @Test fun ordinaryBytesReconstructBothExactVersionsWithoutAnAssistantCandidate() {
+        val original = "\uFEFF---\r\n# exact header\r\ntitle: 'Café'\r\n---\r\n😀 {{old}}\r\n".encodeToByteArray()
+        val candidate = "---\ntitle: Cafe\u0301\n---\n😀 {{new}}".encodeToByteArray()
+        val diff = ArtifactDiff.compare(original, candidate)
+        assertContentEquals(original, project(diff, LineDiffLine.Kind.ADDED))
+        assertContentEquals(candidate, project(diff, LineDiffLine.Kind.REMOVED))
+        assertEquals(listOf(PlaceholderChange.Renamed("old", "new")), diff.placeholderWarnings)
+        val row = diff.body.first()
+        row.bytes.fill(0)
+        assertContentEquals(original, project(diff, LineDiffLine.Kind.ADDED))
+    }
+
+    @Test fun ordinaryBytesRejectInvalidUtf8FutureFormatAndInvalidDocuments() {
+        val valid = "body".encodeToByteArray()
+        for (invalid in listOf(byteArrayOf(-1), "---\nformat: 999\n---\nfuture".encodeToByteArray(),
+            "---\nfavorite: nope\n---\ninvalid".encodeToByteArray())) {
+            assertFailsWith<Exception> { ArtifactDiff.compare(invalid, valid) }
+            assertFailsWith<Exception> { ArtifactDiff.compare(valid, invalid) }
+        }
+    }
+
     @Test fun separateSectionsReconstructTheCanonicalMergedFile() {
         val original = PromptCodec.parse("---\n# discarded comment\ntitle: Before\nprivate: false\nmodel: {nested: [1, false]}\n---\n😀 {{old}}\r\n", "Original.md")
         val candidate = ready(ArtifactMerge.improve(artifact("😀 {{new}}\n"), original))

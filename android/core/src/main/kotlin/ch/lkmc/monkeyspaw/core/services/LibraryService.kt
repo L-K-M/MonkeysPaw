@@ -458,6 +458,10 @@ class LibraryService(
 
     /** Only checked synchronous file work enters here; journal/state/keyed IO stays outside. */
     internal fun <T> withSyncLock(work: (PromptStore) -> T): T = mutations.run { work(prompts) }
+    internal fun checkedSyncAccess(): GroupAccessSnapshot = mutations.run {
+        groupAccess?.refreshLocked()
+        accessSnapshot
+    }
     internal fun beginSyncApply(id: UUID, nextState: SyncState) =
         mutations.run { syncGate.begin(id, nextState) }
     internal fun endSyncApply(id: UUID) = mutations.run { syncGate.finish(id) }
