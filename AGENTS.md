@@ -70,8 +70,10 @@ The default build skips unavailable targets; named unavailable targets fail.
 File artifacts stay in `dist/`. The server image stays in the active Docker
 engine's image store as `monkeyspaw-server:<committed-version>`, printed in the
 Summary. Its `VERSION`, `REVISION` and `CREATED` args match release metadata:
-committed version, HEAD SHA and HEAD's `%cI` commit timestamp. Registry
-publication and multiarch assembly run through the release workflow.
+committed version, HEAD SHA and HEAD's `%cI` commit timestamp. The release
+workflow builds and smoke-tests both native image architectures without
+pushing images; registry distribution is not provided yet (owner decision
+2026-10-19).
 
 On the Paseo implementation host, use `/home/paseo/.local/bin/swift64`
 instead of `swift` for every build/test command. This wrapper supplies

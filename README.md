@@ -68,8 +68,7 @@ For paste failures, use the copied result, correct permissions/tools and run
 **Test paste** to reset failed backends. Tool exit status alone does not prove
 receipt. Follow your platform guide above, the [Assistant checklist](docs/platform/assistant.md),
 [Android checklist](docs/platform/android.md) or [server procedures](docs/platform/server.md).
-Report vulnerabilities through [Security](SECURITY.md#report-a-vulnerability-privately),
-subject to its explicit owner-enablement prerequisite.
+Read [Security](SECURITY.md) for trust boundaries and signing limits.
 
 [Builds and releases](CICD.md) describes local prerequisites, CI and artifacts.
 The [M7 acceptance ledger](docs/platform/m7-acceptance.md) starts entirely

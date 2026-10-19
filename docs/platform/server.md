@@ -118,6 +118,10 @@ Use Docker Engine on Linux with BuildKit enabled and **Docker Compose
 [environment-secret permission fix](https://github.com/docker/compose/releases/tag/v2.20.0),
 local image builds and bounded health waits. The server is built from this
 checkout as `monkeyspaw-server:local`; Caddy is the external `caddy:2` image.
+The owner removed GHCR publication on 2026-10-19; registry distribution is
+not provided yet. For a separate versioned local image, run
+`scripts/build.sh server-image` from the repository root. It stays in the
+active Docker engine's image store; Compose builds its own `:local` image.
 
 Prepare the default deployment from the repository root:
 

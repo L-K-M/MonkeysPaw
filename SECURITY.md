@@ -1,20 +1,5 @@
 # Security
 
-## Report a vulnerability privately
-
-Use this repository's [Security tab](https://github.com/L-K-M/MonkeysPaw/security)
-and **Report a vulnerability** to submit a private report. Include the affected
-version or commit, platform, impact and a minimal reproduction with disposable
-data. Remove passwords, API keys, device tokens, invite links and prompt text
-from attachments.
-
-**Owner prerequisite:** GitHub private vulnerability reporting was disabled
-when checked on 2026-10-16. The owner must enable it before release; until then
-the reporting button is unavailable. No alternative private contact has been
-verified. Do not put sensitive vulnerability details in a public issue.
-See the [release prerequisites](docs/platform/m7-acceptance.md#owner-prerequisites)
-and [GitHub's reporting instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/report-privately).
-
 ## Trust boundaries
 
 Your library is ordinary Markdown on your device. The app does not encrypt

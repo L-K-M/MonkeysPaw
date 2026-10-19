@@ -32,7 +32,7 @@ def evaluate(expression, event, ref_type, dry_run, publish="false"):
 
 
 class ReleasePolicyTests(unittest.TestCase):
-    def test_fork_and_same_repo_prs_and_manual_dry_runs_skip_both_publish_jobs(self):
+    def test_fork_and_same_repo_prs_and_manual_dry_runs_skip_publication(self):
         requested = re.search(r"PUBLISH_REQUESTED: \$\{\{ (.+) \}\}", JOBS["verify"])[1]
         for event, ref_type, dry_run, allowed in (
             ("pull_request", "branch", False, False), ("pull_request", "branch", True, False),
@@ -40,11 +40,47 @@ class ReleasePolicyTests(unittest.TestCase):
             ("workflow_dispatch", "tag", False, True), ("push", "tag", False, True),
         ):
             publish = "true" if evaluate(requested, event, ref_type, dry_run) else "false"
-            for job in ("image-publish", "publish"):
-                with self.subTest(job=job, event=event, ref_type=ref_type, dry_run=dry_run):
-                    condition = re.search(r"^    if: (.+)$", JOBS[job], re.MULTILINE)[1]
-                    self.assertEqual(evaluate(condition, event, ref_type, dry_run, publish), allowed)
-                    self.assertNotIn("uses: actions/checkout", JOBS[job])
+            with self.subTest(event=event, ref_type=ref_type, dry_run=dry_run):
+                condition = re.search(r"^    if: (.+)$", JOBS["publish"], re.MULTILINE)[1]
+                self.assertEqual(evaluate(condition, event, ref_type, dry_run, publish), allowed)
+                self.assertNotIn("uses: actions/checkout", JOBS["publish"])
+
+    def test_images_are_never_pushed_and_no_job_requests_package_write(self):
+        self.assertNotIn("image-publish", JOBS)
+        self.assertNotIn("IMAGE_NAME:", SOURCE)
+        self.assertNotIn("image_tags:", JOBS["verify"])
+        for source in (SOURCE, (ROOT / ".github/workflows/ci.yml").read_text()):
+            self.assertNotRegex(source, r"\bpackages:\s*write\b|permissions:\s*write-all\b")
+            self.assertNotIn("ghcr.io/", source)
+            self.assertNotRegex(source, r"\b(?:docker|podman)\s+(?:login|logout|push)\b|"
+                                r"docker/login-action|buildx\s+imagetools|--push\b|"
+                                r"type=registry|push:\s*true\b|docker://")
+
+    def test_both_native_image_builds_and_smokes_gate_release_publication(self):
+        job = JOBS["server-images"]
+        self.assertEqual(re.findall(r"- arch: (\w+)\n\s+runner: ([\w.-]+)", job),
+                         [("amd64", "ubuntu-24.04"), ("arm64", "ubuntu-24.04-arm")])
+        self.assertIn("needs: [tests, verify, linux]", job)
+        self.assertIn("contents: read", job)
+        self.assertNotRegex(job, re.compile(r"^    if:", re.MULTILINE))
+        build = step_script("server-images", "Build native OCI archive and load it for smoke testing")
+        self.assertIn('case "$ARCH:$(uname -m)"', build)
+        self.assertIn('docker buildx build --platform "linux/$ARCH"', build)
+        for name in ("VERSION", "REVISION", "CREATED"):
+            self.assertIn(f'--build-arg "{name}=${name}"', build)
+        self.assertIn('--output "type=oci,dest=$archive"', build)
+        self.assertIn('skopeo copy "oci-archive:$archive" docker-daemon:monkeyspaw-server:release', build)
+        smoke = step_script("server-images", "Wait for container health and require API status 200")
+        self.assertIn('$bootstrap_dir/admin-password:/run/secrets/admin-password:ro', smoke)
+        self.assertIn('"$health" == healthy', smoke)
+        self.assertIn("http://127.0.0.1:8080/api/health", smoke)
+        self.assertIn('if [[ "$status" != 200 ]]', smoke)
+        self.assertLess(job.index("Wait for container health and require API status 200"),
+                        job.index("Upload smoke-tested OCI archive and digest"))
+        self.assertIn("name: MonkeysPaw-server-image-${{ matrix.arch }}", job)
+        for name in ("artifacts", "publish"):
+            dependencies = re.search(r"^    needs: \[(.+)\]$", JOBS[name], re.MULTILINE)[1].split(", ")
+            self.assertIn("server-images", dependencies)
 
     def test_version_step_allows_dry_runs_and_rejects_branch_publication_and_wrong_tags(self):
         with tempfile.TemporaryDirectory(prefix="monkeyspaw-release-policy-") as directory:
@@ -68,23 +104,21 @@ class ReleasePolicyTests(unittest.TestCase):
                     else:
                         self.assertFalse(output.exists())
 
-    def test_android_assets_gate_assembly_and_both_publish_jobs(self):
+    def test_android_assets_gate_assembly_and_publication(self):
         self.assertIn("needs: [tests, verify]", JOBS["android-build"])
         self.assertIn("testDebugUnitTest lintDebug assembleRelease", JOBS["android-build"])
         self.assertIn('"-PreleaseVersion=$VERSION"', JOBS["android-build"])
         self.assertIn("scripts/package-android.sh", JOBS["android-build"])
         self.assertIn("scripts/verify-android-release.py", JOBS["android-build"])
         self.assertNotIn("secrets.", JOBS["android-build"])
-        for job in ("artifacts", "image-publish", "publish"):
+        for job in ("artifacts", "publish"):
             dependencies = re.search(r"^    needs: \[(.+)\]$", JOBS[job], re.MULTILINE)[1].split(", ")
             self.assertIn("android-build", dependencies)
             for required in ("tests", "verify", "linux", "macos"):
                 self.assertIn(required, dependencies)
         self.assertIn("server-images", JOBS["artifacts"])
         for required in ("artifacts", "server-images"):
-            self.assertIn(required, JOBS["image-publish"])
             self.assertIn(required, JOBS["publish"])
-        self.assertIn("image-publish]", JOBS["publish"])
         for path in (".github/workflows/ci.yml", "android/**", "spec/**", "seed/**", "scripts/package-android.sh",
                      "scripts/verify-android-release.py", "scripts/check-version.py"):
             self.assertIn(f"      - {path}\n", SOURCE.split("\nconcurrency:", 1)[0])

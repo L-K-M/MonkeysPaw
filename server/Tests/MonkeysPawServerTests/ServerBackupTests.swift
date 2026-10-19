@@ -209,7 +209,7 @@ struct ServerBackupTests {
     @Test func exclusiveMaintenancePreventsNewServerAndDatabaseUsers() async throws {
         try await withBackupDirectory { directory in
             try await withBackupDatabase(directory) { try await Fixture(database: $0).seed() }
-            let lock = try DatabaseFileLock(directory: directory, mode: .exclusive)
+            let lock = try await acquireExclusiveLockAfterShutdown(directory: directory)
             defer { lock.release() }
             for arguments in [["serve"], ["migrate"], ["backup", directory.appendingPathComponent("blocked.db").path]] {
                 let result = try await AdminCLITestFixture.run(arguments, dataDirectory: directory)

@@ -47,6 +47,21 @@ func withBackupDatabase<T: Sendable>(
     }
 }
 
+func acquireExclusiveLockAfterShutdown(directory: URL) async throws -> DatabaseFileLock {
+    let lockReleaseTimeout: Duration = .seconds(2)
+    let retryInterval: Duration = .milliseconds(10)
+    let deadline = ContinuousClock.now.advanced(by: lockReleaseTimeout)
+
+    while true {
+        do {
+            return try DatabaseFileLock(directory: directory, mode: .exclusive)
+        } catch BackupRestoreError.databaseInUse where ContinuousClock.now < deadline {
+            // A parallel spawn can retain the released CLOEXEC descriptor until exec.
+            try await Task.sleep(for: retryInterval)
+        }
+    }
+}
+
 func editBackup(_ file: URL, _ query: SQLQueryString) async throws {
     let connection = try await SQLiteConnection.open(storage: .file(path: file.path),
                                                      logger: ServerLogging.logger(level: .critical)).get()

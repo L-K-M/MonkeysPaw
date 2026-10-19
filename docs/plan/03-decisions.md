@@ -32,3 +32,7 @@ a per-parser option to defer comparisons involving anchored key subtrees,
 avoiding alias expansion during duplicate hashing before Core can reject
 them (§5.2). Ordinary duplicate checks and the default Yams policy are
 unchanged. Core still depends only on Foundation and Yams.
+
+Owner decision 2026-10-19 supersedes D14's GHCR publication choice. Server
+images are built locally; registry distribution is not provided yet. See the
+[current release contract](14-repository-packaging-ci-release.md).
