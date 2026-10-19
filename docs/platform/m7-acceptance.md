@@ -129,9 +129,10 @@ choice, with fallback checked in the Linux procedure.
   devices still need owner checks. The [desktop sync guide](sync.md) records
   automated proof and open owner checks. Y34 still owns desktop sync
   privacy/deployed closure; Z27 owns Android sync closure. Android's repository,
-  background scheduling, Account/status screens, Library groups and role-aware
-  Library, Editor and Assistant integration are on main; invite and
-  conflict-resolution UI integration remains pending.
+  background scheduling, Account/status screens, invite acceptance, conflict
+  resolution, Library groups and role-aware Library, Editor and Assistant
+  integration are on main; phone/desktop acceptance remains open in the
+  [M10 checklist](android.md#android-sync-m10-not-run-owner).
   See [§15](../plan/15-milestones.md) and the existing [server](server.md) and
   [Android](android.md) records. M7's URI staging procedure proves no sync
   transfer or invite redemption acceptance.
