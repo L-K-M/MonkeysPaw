@@ -490,9 +490,9 @@ risk, so it is contained by contract:
   `scripts/verify-android-release.py` checks the staged APK's application ID,
   full version, committed code, API levels, verified signature and recorded
   signer fingerprint, and requires its exact checksum. The artifact pair is
-  uploaded, downloaded and byte-compared. Assembly and both publish jobs
-  require Android plus every desktop/image gate; seven assets are required
-  until separate Flatpak release wiring adds its pair. Draft assets are
+  uploaded, downloaded and byte-compared. Assembly and GitHub publishing
+  require Android plus every desktop/image gate; nine assets are required,
+  including the Flatpak pair. Draft assets are
   downloaded and compared before publishing (§14). Fork PRs and manual dry
   runs publish nothing; release notes include checksum/sideload guidance and
   public-signing disclosure. Actual tagging needs separate owner authorization.
