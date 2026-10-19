@@ -3,6 +3,8 @@ package ch.lkmc.monkeyspaw.data
 import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
+import androidx.work.Data
+import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerParameters
 import dagger.Lazy
 import dagger.assisted.Assisted
@@ -16,16 +18,19 @@ internal class SyncWorker @AssistedInject constructor(
     @Assisted parameters: WorkerParameters,
     private val scheduler: Lazy<SyncWorkScheduler>,
 ) : CoroutineWorker(context, parameters) {
-    override suspend fun doWork(): Result {
-        val generation = inputData.getString(AndroidSyncWorkQueue.GENERATION) ?: return Result.failure()
-        val version = if (inputData.keyValueMap.containsKey(AndroidSyncWorkQueue.VERSION))
-            inputData.getLong(AndroidSyncWorkQueue.VERSION, -1).takeIf { it > 0 } ?: return Result.failure() else null
-        if (runCatching { UUID.fromString(generation).toString() == generation }.getOrDefault(false).not()) return Result.failure()
-        return try {
-            scheduler.get().dispatch(SyncWorkRequest(generation, version))
-            // Reports preserve offline/partial/401 outcomes; retries use our persisted, capped due policy.
-            Result.success()
-        } catch (error: CancellationException) { throw error }
-        catch (_: Exception) { Result.failure() }
-    }
+    override suspend fun doWork(): Result = syncWorkerResult(inputData, scheduler)
+}
+
+/** Keep validation, dispatch and the returned Result on one JVM-testable production path. */
+internal suspend fun syncWorkerResult(input: Data, scheduler: Lazy<SyncWorkScheduler>): Result {
+    val generation = input.getString(AndroidSyncWorkQueue.GENERATION) ?: return Result.failure()
+    val version = if (input.keyValueMap.containsKey(AndroidSyncWorkQueue.VERSION))
+        input.getLong(AndroidSyncWorkQueue.VERSION, -1).takeIf { it > 0 } ?: return Result.failure() else null
+    if (runCatching { UUID.fromString(generation).toString() == generation }.getOrDefault(false).not()) return Result.failure()
+    return try {
+        scheduler.get().dispatch(SyncWorkRequest(generation, version))
+        // Reports preserve offline/partial/401 outcomes; retries use our persisted, capped due policy.
+        Result.success()
+    } catch (error: CancellationException) { throw error }
+    catch (_: Exception) { Result.failure() }
 }

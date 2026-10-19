@@ -38,6 +38,12 @@ internal class SyncApplyJournal(
 
     val pending: SyncApplyRecord? get() = persistence.snapshot.value
 
+    /** Exact sent facts survive an uncertain CAS, without authorizing an automatic retry. */
+    fun retainResolution(bytes: ByteArray) = lock.withLock {
+        if (bytes.size > Limits.syncRecordMaxBytes) throw SyncError.InvalidState
+        retain(bytes, "sync/retained/resolution-${SyncHash.of(bytes).rawValue}.json")
+    }
+
     fun apply(plan: SyncApplyPlan, permit: SyncWorkPermit? = null): SyncApplyOutcome {
         if (permit == null) return applyPlan(plan)
         permit.validate(plan.nextState.binding)

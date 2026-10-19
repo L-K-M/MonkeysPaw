@@ -12,6 +12,7 @@ import ch.lkmc.monkeyspaw.core.sync.SyncDirectoryEdit
 import ch.lkmc.monkeyspaw.core.sync.SyncDirectoryStep
 import ch.lkmc.monkeyspaw.core.sync.syncPathKey
 import java.util.UUID
+import java.time.Instant
 import java.util.concurrent.locks.ReentrantLock
 
 /** Exact immutable baseline. Stamps stay opaque; the journal codec checks their encoding. */
@@ -161,6 +162,22 @@ internal class SyncLibraryMutations(private val library: LibraryService, private
     val journalLock = ReentrantLock()
 
     fun read(path: String): SyncLibraryFile? = library.withSyncLock { read(it, path) }
+
+    val accessSnapshot: GroupAccessSnapshot get() = library.checkedSyncAccess()
+
+    /** Explicit resolution archives through ordinary history before entering the apply recovery gate. */
+    fun preserveHistory(file: SyncLibraryFile, at: Instant) {
+        if (!matches(file, read(file.path))) throw LibraryError.Conflict
+        val history = library.history
+        val previous = try { history.headProvenance(file.identity, file.bytes) }
+            catch (_: LibraryError.InvalidProvenance) { null }
+        val latest = history.revisions(file.identity).firstOrNull()
+        val revision = if (latest != null && history.read(latest).contentEquals(file.bytes)) latest
+            else history.snapshot(file.bytes, file.identity, at)
+        history.archiveProvenance(previous, revision, file.bytes)
+        history.prune(file.identity)
+        if (!matches(file, read(file.path))) throw LibraryError.Conflict
+    }
 
     fun listedFiles(): List<SyncLibraryFile> = library.withSyncLock { files ->
         operations.listFiles().sortedWith { a, b ->

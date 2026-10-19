@@ -34,7 +34,7 @@ internal class EditorViewModel @Inject constructor(
     private enum class GuardMode { UNSAVED_EDITS, PREVIEWED_BUFFER }
     private data class Request(val decision: EditorPendingDecision, val session: Long, val accessGeneration: Long,
         val mode: GuardMode = GuardMode.UNSAVED_EDITS, val operation: (() -> Unit)? = null,
-        val cancelled: (() -> Unit)? = null)
+        val cancelled: (() -> Unit)? = null, val afterClose: (() -> Unit)? = null)
     private data class Observation(val load: PromptLoadResult, val projection: EditorDocumentState?)
     private data class CommandResult(val result: EditResult, val projection: EditorDocumentState?)
 
@@ -329,6 +329,16 @@ internal class EditorViewModel @Inject constructor(
     fun open(selection: LibrarySelection) = request(EditorAction.Open(selection))
     fun createDraft(path: String = "Untitled.md") = request(EditorAction.New(path))
     fun close() = request(EditorAction.Close)
+    fun closeThen(onClosed: () -> Unit) = request(EditorAction.Close, onClosed)
+    fun cancelCloseThen() {
+        requests.removeAll { it.afterClose != null }
+        if (pending?.afterClose != null) {
+            pending = null
+            savingDecision = null
+            currentState = state.value.copy(pendingDecision = null)
+        }
+        drain()
+    }
     fun reload() = request(EditorAction.Reload)
     fun rename(filename: String) = request(EditorAction.Rename(filename))
     fun move(folder: String) = request(EditorAction.Move(folder))
@@ -510,13 +520,14 @@ internal class EditorViewModel @Inject constructor(
         }
     }
 
-    private fun request(action: EditorAction) {
+    private fun request(action: EditorAction, afterClose: (() -> Unit)? = null) {
         if (!active) return
         if (action is EditorAction.Open && action.selection == state.value.selection) return
         if (action == runningCommand) return
         if (pending?.let { it.session == session && it.decision.action == action } == true ||
             requests.any { it.session == session && it.decision.action == action }) return
-        requests.addLast(Request(EditorPendingDecision(++nextDecision, action), session, repository.accessSnapshot.generation))
+        requests.addLast(Request(EditorPendingDecision(++nextDecision, action), session, repository.accessSnapshot.generation,
+            afterClose = afterClose))
         drain()
     }
 
@@ -549,6 +560,7 @@ internal class EditorViewModel @Inject constructor(
                 break
             }
             perform(next)
+            if (action == EditorAction.Close && requests.isEmpty()) next.afterClose?.invoke()
         }
         currentState = state.value.copy(queuedActions = requests.map { it.decision.action })
     }
@@ -560,6 +572,7 @@ internal class EditorViewModel @Inject constructor(
         currentState = state.value.copy(pendingDecision = null)
         if (request != null && (!isCommand(request.decision.action) || request.session == session)) {
             perform(request)
+            if (request.decision.action == EditorAction.Close && requests.isEmpty()) request.afterClose?.invoke()
         }
         drain()
     }

@@ -36,6 +36,7 @@ internal fun LibraryScreen(
     onAssistantSettings: (() -> Unit)? = null,
     onWrite: (() -> Unit)? = null,
     onAccount: (() -> Unit)? = null,
+    onResolve: ((LibrarySelection) -> Unit)? = null,
 ) {
     LazyColumn(modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
@@ -99,7 +100,10 @@ internal fun LibraryScreen(
         items(state.rows, key = { it.selection.relativePath }) { row ->
             PromptRow(row, selected = state.selectedPrompt?.selection == row.selection,
                 favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && row.canFavorite,
-                onSelect = { onSelect(row.selection); onOpen(row.selection) }, onToggleFavorite = { onToggleFavorite(row.selection) })
+                onSelect = { onSelect(row.selection); onOpen(row.selection) }, onToggleFavorite = { onToggleFavorite(row.selection) },
+                onResolve = onResolve?.takeIf { mode == LibraryMode.BROWSER && row.syncOrigin != null }?.let { resolve ->
+                    { onSelect(row.selection); resolve(row.selection) }
+                })
         }
         item { Spacer(Modifier.height(12.dp)) }
     }
@@ -127,7 +131,7 @@ private fun sectionTitle(section: LibrarySection): String = when (section.filter
 
 @Composable
 private fun PromptRow(row: LibraryRow, selected: Boolean, favoriteEnabled: Boolean,
-    onSelect: () -> Unit, onToggleFavorite: () -> Unit) {
+    onSelect: () -> Unit, onToggleFavorite: () -> Unit, onResolve: (() -> Unit)?) {
     Card(onClick = onSelect, modifier = Modifier.fillMaxWidth().semantics { this.selected = selected },
         colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
             else MaterialTheme.colorScheme.surfaceContainer)) {
@@ -136,6 +140,7 @@ private fun PromptRow(row: LibraryRow, selected: Boolean, favoriteEnabled: Boole
             Text(row.selection.relativePath, style = MaterialTheme.typography.bodySmall)
             row.group?.let { Text(stringResource(R.string.library_group_role, it.name, it.role.wireValue)) }
             if (row.syncOrigin != null) Text(stringResource(R.string.library_private_copy), style = MaterialTheme.typography.labelLarge)
+            onResolve?.let { TextButton(onClick = it) { Text(stringResource(R.string.resolve_open)) } }
             row.description?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             if (row.tags.isNotEmpty()) Text(row.tags.joinToString(" ") { "#$it" }, style = MaterialTheme.typography.bodySmall)
             if (row.isReadOnly) Text(stringResource(R.string.library_read_only), style = MaterialTheme.typography.labelLarge)
