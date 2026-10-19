@@ -456,6 +456,22 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
     }
 
     @Test
+    fun `consumed staging inode proves applied create even if the final name disappears`() {
+        val prompts = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
+            override fun create(temporary: Path, destination: Path) {
+                Files.move(temporary, destination)
+                Files.delete(destination)
+                throw IOException("postpublication failure")
+            }
+        }, io).also { it.prepareRoot() }
+        val error = failure(SyncFileFailureCode.IO_FAILURE, SyncFileMutationEffect.APPLIED) {
+            prompts.syncOperations.publish(original, "p.md", SyncFileExpectation.Absent, SyncFileMode.NORMAL)
+        }
+        assertNull(error.displacedBytes)
+        assertNull(prompts.stamp("p.md"))
+    }
+
+    @Test
     fun `checked staging cleanup failure after exclusive publication is applied`() {
         val prompts = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
             override fun removeTemporary(temporary: Path) { throw IOException("private cleanup error") }
@@ -464,7 +480,7 @@ internal class AndroidSyncFileOperationsTest : TemporaryFiles() {
             prompts.syncOperations.publish(original, "p.md", SyncFileExpectation.Absent, SyncFileMode.NORMAL)
         }
         assertContentEquals(original, prompts.read("p.md"))
-        assertTrue(prompts.syncOperations.listFiles().any { it.relativePath.startsWith(".monkeyspaw-") })
+        assertTrue(prompts.syncOperations.listFiles().none { it.relativePath.startsWith(".monkeyspaw-") })
     }
 
     @Test

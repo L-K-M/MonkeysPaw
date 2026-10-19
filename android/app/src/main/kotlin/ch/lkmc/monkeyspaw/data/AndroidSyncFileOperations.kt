@@ -40,14 +40,14 @@ internal class AndroidSyncFileOperations(
                 effect.applied = true
             } catch (error: Exception) {
                 effect.observeFailure {
-                    // Atomic replacement consumes the staging name, even if a later writer removes the result.
-                    expecting is SyncFileExpectation.Matching && files.attributes(temporary) == null ||
+                    // Both publication modes consume staging, even if a later writer removes the result.
+                    files.attributes(temporary) == null ||
                         files.attributes(destination)?.isRegularFile == true && files.nodeIdentity(destination) == stagedIdentity
                 }
                 throw error
             }
             if (!readStable(path).contentEquals(intended)) throw SyncFileOperationError(SyncFileFailureCode.CHANGED)
-            // Exclusive publication leaves a second link until its staging name is removed.
+            // A consumed staging name makes cleanup a no-op after either publication mode.
             files.publication.removeTemporary(temporary)
             flushFile(path)
         }

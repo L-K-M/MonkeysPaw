@@ -12,12 +12,23 @@ import java.nio.file.attribute.PosixFilePermissions
 internal open class AtomicPublication {
     open fun flush(channel: FileChannel) = channel.force(true)
 
-    open fun replace(temporary: Path, destination: Path) {
+    open fun replace(temporary: Path, destination: Path) = synchronized(exclusiveMoves) {
         Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        Unit
     }
 
     open fun create(temporary: Path, destination: Path) {
-        Files.createLink(destination, temporary)
+        move(temporary, destination)
+    }
+
+    open fun move(source: Path, destination: Path) = synchronized(exclusiveMoves) {
+        // Android denies hard links. Keep the no-replace check/rename serialized across stores.
+        requireVacant(destination)
+        if (device(source) != device(destination.parent)) {
+            throw AtomicMoveNotSupportedException("", "", "Cross-filesystem publication refused")
+        }
+        Files.move(source, destination)
+        Unit
     }
 
     open fun removeTemporary(temporary: Path) {
@@ -34,7 +45,19 @@ internal open class AtomicPublication {
 
     open fun renameDirectory(source: Path, destination: Path) {
         // ATOMIC_MOVE permits replacement even without REPLACE_EXISTING.
-        Files.move(source, destination)
+        move(source, destination)
+    }
+
+    private fun device(path: Path): Any = Files.getAttribute(path, "unix:dev", LinkOption.NOFOLLOW_LINKS)
+
+    private fun requireVacant(path: Path) {
+        try { Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS) }
+        catch (_: NoSuchFileException) { return }
+        throw FileAlreadyExistsException("")
+    }
+
+    private companion object {
+        private val exclusiveMoves = Any()
     }
 }
 
@@ -133,16 +156,16 @@ internal class RootedFileStore(
         StorePath.validate(destination)
         val from = locate(source, Parents.EXISTING) ?: throw StoreError.NotFound
         requireRegular(attributes(from) ?: throw StoreError.NotFound)
+        val sourceIdentity = nodeIdentity(from)
         val to = locate(destination, Parents.CREATE) ?: throw StoreError.InvalidRoot
         if (attributes(to) != null) throw StoreError.AlreadyExists
-        // ATOMIC_MOVE may replace an occupied leaf, so publish with an exclusive link.
-        // A crash before unlink can leave both names for manual recovery.
-        publication.create(from, to)
         try {
-            publication.unlink(from)
+            publication.move(from, to)
         } catch (error: Exception) {
-            try { publication.unlink(to) }
-            catch (_: Exception) { throw StoreError.RecoveryRequired }
+            // A failed native rename may have applied; do not promise the old path survived.
+            val unchanged = try { attributes(from)?.isRegularFile == true && nodeIdentity(from) == sourceIdentity }
+            catch (_: Exception) { false }
+            if (!unchanged) throw StoreError.RecoveryRequired
             throw error
         }
         syncDirectory(from.parent)
