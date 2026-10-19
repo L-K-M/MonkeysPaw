@@ -48,7 +48,8 @@ bundle build number. Signing is ad-hoc unless `MACOS_SIGNING_IDENTITY` names an
 identity already installed in the runner's keychain; `MACOS_SIGNING_KEYCHAIN`
 optionally selects that keychain. Signing env is exported only for non-empty
 secrets, and never on PRs. Certificate provisioning and notarization remain
-outside this workflow.
+outside this workflow. The owner chose ad-hoc signing without Developer ID
+or notarization for v1.0.0 on 2026-10-19; real first-launch checks remain open.
 
 The release `flatpak` job downloads that release deb and checksum, without
 rebuilding Swift. It verifies the package version, runtime linking and installed

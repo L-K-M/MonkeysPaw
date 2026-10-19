@@ -1,7 +1,8 @@
 # M12 v1.0 owner sign-off ledger
 
-M12 is open. **Every result, actual observation and evidence field starts
-NOT RUN.** No owner execution is asserted here. No agent creates or pushes
+M12 is open. **Owner execution results, actual observations and evidence
+remain NOT RUN.** Decision answers are recorded separately below. No owner
+execution is asserted here. No agent creates or pushes
 a tag. Only the owner authorizes publication and creates/pushes `v1.0.0`.
 
 Use the [coverage table](#source-to-sign-off-coverage),
@@ -16,6 +17,8 @@ required check prevented by an unavailable prerequisite; NOT RUN is unattempted.
 Vocabulary examples and expected refusals in sources are not observed failures.
 Required unavailable sessions stay open. A sent event, zero tool exit, mock,
 skipped native test or historical CI receipt cannot establish owner acceptance.
+Use **DECIDED** only for an answered owner decision; it means the owner
+answered, not that any check passed.
 
 ## Recording and phases
 
@@ -55,14 +58,14 @@ The detailed evidence rules remain in
 
 ## Owner decisions before tagging
 
-All five decisions are open. A decision records an authorized disposition;
-it does not turn an unrun physical check into PASS.
+Unanswered decisions remain NOT RUN. A DECIDED row records the owner's
+authorized choice and date; it does not turn an unrun physical check into PASS.
 
 | ID | Source and keys | Environment | Tester/date | Expected | Actual | Result | Evidence |
 |---|---|---|---|---|---|---|---|
 | D-HISTORY | [M2](m2-acceptance.md#m2-daily-use-acceptance) `P1; P4; T1.R5; T3.R1; T3.R2`; [Linux](linux.md#release-deb-installation-m2-not-run) `N1; N2; N3` | Owner / historical `v0.1.0` conflict | NOT RUN | Preserve exact historical artifacts and owner installations, or commit an explicit owner-authorized plan amendment before using replacement evidence | NOT RUN | NOT RUN | NOT RUN |
 | D-R1 | [M12](../plan/15-milestones.md#15-milestones); [release contract](../../CICD.md#ci-and-releases) | Owner / release date and R1 preparation | NOT RUN | Supply actual date; approve dated notes, aligned 1.0.0 marketing versions and hook-managed Android code once, aligned retry, reviewed main and candidate dry run | NOT RUN | NOT RUN | NOT RUN |
-| D-SIGN | [macOS install](macos.md#m2-macos-artifacts-and-installation-not-run) `N3; N5`; [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R4` | Owner / actual macOS signing mode | NOT RUN | Choose documented ad-hoc or provision Developer ID; arrange notarization/stapling only if promised; require real quarantine/AX/Keychain update evidence; retain Android public signer | NOT RUN | NOT RUN | NOT RUN |
+| D-SIGN | [macOS install](macos.md#m2-macos-artifacts-and-installation-not-run) `N3; N5`; [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R4` | Owner / actual macOS signing mode | NOT RUN | Record signing choice; require real quarantine/AX/Keychain update evidence; retain Android public signer | v1.0.0 stays ad-hoc signed, without Developer ID or notarization; owner decision 2026-10-19. First-launch checks remain NOT RUN. | DECIDED | owner answer to supervisor, 2026-10-19 |
 | D-PRIVATE | [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `P1; T1.R1`; [Security](../../SECURITY.md#report-a-vulnerability-privately) | Owner / repository settings | NOT RUN | Enable and verify confidential reporting before release; the disabled source observation is historical, with no verified alternate contact | NOT RUN | NOT RUN | NOT RUN |
 | D-GHCR | [M7 prerequisites](m7-acceptance.md#owner-prerequisites) `T1.R7`; [image contract](../../CICD.md#ci-and-releases) | Owner / first GHCR package | NOT RUN | Approve package/token permissions and first-created-package public-visibility sequence; later prove anonymous pulls for both architectures | NOT RUN | NOT RUN | NOT RUN |
 
