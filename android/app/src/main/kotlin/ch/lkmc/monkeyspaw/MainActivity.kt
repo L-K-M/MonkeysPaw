@@ -14,10 +14,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ch.lkmc.monkeyspaw.core.AppIdentity
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncResolutionAction
 import ch.lkmc.monkeyspaw.data.AndroidKeyboardTileSetup
 import ch.lkmc.monkeyspaw.data.ForegroundProfileInstaller
 import ch.lkmc.monkeyspaw.data.SyncForegroundOwner
 import ch.lkmc.monkeyspaw.ui.account.*
+import ch.lkmc.monkeyspaw.ui.conflicts.*
 import ch.lkmc.monkeyspaw.entry.FillActivity
 import ch.lkmc.monkeyspaw.entry.FillLauncher
 import ch.lkmc.monkeyspaw.entry.InviteIntentDecoder
@@ -47,7 +49,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /** Launcher-only routes. Entry activities keep their local Library/Fill graph. */
-internal enum class MainDestination { LIBRARY, ACCOUNT, SYNC_DETAILS }
+internal enum class MainDestination { LIBRARY, ACCOUNT, SYNC_DETAILS, RESOLVE }
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -63,6 +65,7 @@ class MainActivity : ComponentActivity() {
     private val assistantImprove: ImproveViewModel by viewModels()
     private val accountDelegate = viewModels<AccountViewModel>()
     private val account by accountDelegate
+    private val resolver: ResolveViewModel by viewModels()
     private var destination by mutableStateOf(MainDestination.LIBRARY)
     private var foreground by mutableStateOf(false)
     private var ownsSync = false
@@ -101,6 +104,13 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    override fun onDestroy() {
+        // Routes and comparisons are not restored across activity recreation.
+        editor.cancelCloseThen()
+        if (destination == MainDestination.RESOLVE) resolver.close()
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         profiles.initialize()
@@ -117,6 +127,7 @@ class MainActivity : ComponentActivity() {
                 val startup = seedOffer.state.collectAsStateWithLifecycle().value
                 val setupState = setup.state.collectAsStateWithLifecycle().value
                 val editing = editor.state.collectAsStateWithLifecycle().value
+                val resolving = if (destination == MainDestination.RESOLVE) resolver.state.collectAsStateWithLifecycle().value else null
                 val assistant = assistantSettings.state.collectAsStateWithLifecycle().value
                 val writing = assistantWrite.state.collectAsStateWithLifecycle().value
                 val reviewing = assistantReview.state.collectAsStateWithLifecycle().value
@@ -145,6 +156,16 @@ class MainActivity : ComponentActivity() {
                             onSkip = setup::skip, onRetry = setup::retry, modifier = Modifier.padding(padding))
                     } else if (setupState.settingsOpen) {
                         SettingsScreen(onKeyboardTileSetup = setup::reopen, onBack = setup::closeSettings,
+                            modifier = Modifier.padding(padding))
+                    } else if (destination == MainDestination.RESOLVE) {
+                        ResolveScreen(state = checkNotNull(resolving),
+                            onKeepServer = { resolving.previewID?.let { resolver.choose(SyncResolutionAction.KEEP_SERVER, it) } },
+                            onKeepMine = { resolving.previewID?.let { resolver.choose(SyncResolutionAction.KEEP_MINE, it) } },
+                            onKeepBoth = { resolving.previewID?.let { resolver.choose(SyncResolutionAction.KEEP_BOTH, it) } },
+                            onRefresh = resolver::refresh, onCancel = resolver::cancel,
+                            onBack = { navigate(MainDestination.LIBRARY) },
+                            onConfirmClose = resolver::confirmClose, onDismissClose = resolver::dismissClose,
+                            onAccount = ::openAccount, onSyncDetails = { navigate(MainDestination.SYNC_DETAILS) },
                             modifier = Modifier.padding(padding))
                     } else if (destination == MainDestination.ACCOUNT) {
                         AccountScreen(state = checkNotNull(sync), onServer = account::setServer, onUsername = account::setUsername,
@@ -229,6 +250,7 @@ class MainActivity : ComponentActivity() {
                             onCreate = { assistantImprove.close(); assistantReview.close(); editor.createDraft() },
                             onSettings = setup::openSettings,
                             onAccount = ::openAccount,
+                            onResolve = ::openResolve,
                             onAssistantSettings = assistantSettings::open,
                             onWrite = { assistantImprove.close(); assistantReview.close(); assistantWrite.open() },
                         )
@@ -258,8 +280,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun navigate(next: MainDestination) {
+        if (destination == MainDestination.RESOLVE && next != destination) {
+            resolver.requestClose { showDestination(next) }
+            return
+        }
+        showDestination(next)
+    }
+
+    private fun showDestination(next: MainDestination) {
         if (destination == MainDestination.ACCOUNT && next != destination) account.hide()
         destination = next
+        if (next == MainDestination.LIBRARY && seedOffer.state.value == SeedOfferUiState.Ready) library.refresh()
+    }
+
+    private fun openResolve(selection: LibrarySelection) {
+        if (destination == MainDestination.RESOLVE) return
+        editor.closeThen {
+            if (isDestroyed) return@closeThen
+            navigate(MainDestination.RESOLVE)
+            resolver.open(selection)
+        }
     }
 
     private fun openFill(selection: LibrarySelection) {

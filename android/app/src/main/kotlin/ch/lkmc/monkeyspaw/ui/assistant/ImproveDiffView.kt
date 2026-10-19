@@ -26,9 +26,13 @@ private enum class DiffSide { CURRENT, CANDIDATE }
 
 /** Both panes stay present on phones; rows share a height even when long lines wrap. */
 @Composable
-internal fun ImproveDiffView(diff: ArtifactDiff) {
+internal fun ImproveDiffView(diff: ArtifactDiff,
+    currentLabel: Int = R.string.assistant_diff_current,
+    candidateLabel: Int = R.string.assistant_diff_candidate,
+    title: Int = R.string.assistant_diff_title,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.assistant_diff_title), style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(title), style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.assistant_diff_help), style = MaterialTheme.typography.bodySmall)
         for (warning in diff.placeholderWarnings) Text(when (warning) {
             is PlaceholderChange.Added -> stringResource(R.string.assistant_placeholder_added, warning.name)
@@ -42,8 +46,8 @@ internal fun ImproveDiffView(diff: ArtifactDiff) {
                 LazyColumn(Modifier.width(paneWidth * 2 + 1.dp).heightIn(max = 420.dp)) {
                     item {
                         Row {
-                            Text(stringResource(R.string.assistant_diff_current), Modifier.width(paneWidth).padding(8.dp))
-                            Text(stringResource(R.string.assistant_diff_candidate), Modifier.width(paneWidth).padding(8.dp))
+                            Text(stringResource(currentLabel), Modifier.width(paneWidth).padding(8.dp))
+                            Text(stringResource(candidateLabel), Modifier.width(paneWidth).padding(8.dp))
                         }
                     }
                     item { Text(stringResource(R.string.assistant_diff_front_matter), Modifier.padding(8.dp), style = MaterialTheme.typography.titleSmall) }
