@@ -217,7 +217,7 @@ android_adb() {
   local sdk_dir='' sdk
   if [[ -f android/local.properties ]]; then
     sdk_dir="$(sed -n 's/^[[:space:]]*sdk\.dir[[:space:]]*[=:][[:space:]]*//p' android/local.properties \
-      | tail -n 1 | sed 's/\\\(.\)/\1/g')"
+      | tail -n 1 | tr -d '\r' | sed 's/\\\(.\)/\1/g')"
   fi
   for sdk in "$sdk_dir" "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
     [[ -n "$sdk" && -x "$sdk/platform-tools/adb" ]] || continue

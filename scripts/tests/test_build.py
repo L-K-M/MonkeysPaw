@@ -346,7 +346,7 @@ printf 'local-adb %s\n' "$1" >> "$BUILD_CALLS"
 ''')
         (self.root / "android").mkdir()
         escaped = str(sdk).replace(":", "\\:")
-        (self.root / "android/local.properties").write_text(f"sdk.dir = {escaped}\n")
+        (self.root / "android/local.properties").write_bytes(f"sdk.dir = {escaped}\r\n".encode())
         result = self.run_build("android", "--install", FAKE_ANDROID_AVAILABLE="1")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls(), ["android", "local-adb get-state", "local-adb install"])
