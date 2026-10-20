@@ -59,6 +59,7 @@ Run these commands from the repository root:
 | Validate Linux desktop entry | `desktop-file-validate packaging/linux/ch.lkmc.monkeyspaw.desktop` |
 | Test Android Core on the JVM | `android/gradlew -p android :core:test` |
 | Test Android app logic on the JVM | `android/gradlew -p android testDebugUnitTest` |
+| Build native Android file-store regression APKs | `android/gradlew -p android :app:assembleDebug :app:assembleDebugAndroidTest` (execution: `docs/platform/android.md#native-file-store-regression`) |
 | Run the Android CI gate and build both APKs | `android/gradlew -p android :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease` |
 | Build server | `swift build --package-path server` |
 | Test server | `swift test --package-path server` |

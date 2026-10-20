@@ -3,6 +3,44 @@
 For installation and merged app behavior, see [README.android.md](../../README.android.md).
 This link changes no acceptance result below; all earlier owner rows remain.
 
+## Native file-store regression
+
+Host JVM tests cannot establish Android sandbox filesystem permissions.
+`FileStoreInstrumentation` exercises exclusive create/move, exact bytes,
+0600 permissions, collision preservation, and checked sync publication,
+viewer mode, replacement and directory rename in the actual app process.
+CI compiles the test APK; runtime execution is separate from the five-task
+JVM/lint/assembly gate and does not close the physical owner matrix below.
+
+Use a disposable emulator. The debug APK uses the production app ID and
+public signer, so it replaces an existing copy. From the repository root:
+
+```sh
+android/gradlew -p android :app:assembleDebug :app:assembleDebugAndroidTest
+adb -s '<test-serial>' install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb -s '<test-serial>' install -r -t android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s '<test-serial>' shell am instrument -w \
+  ch.lkmc.monkeyspaw.test/ch.lkmc.monkeyspaw.data.FileStoreInstrumentation
+```
+
+Require all three cases to report status `0`, final `tests=3`, `failures=0`
+and `INSTRUMENTATION_CODE: -1`. The adb command's exit status alone is not
+proof. The runner uses fresh private cache roots and reports only fixed
+case names, counts and exception types, never file payloads. A failed run
+reports case status `-2`, a positive failure count and final code `0`.
+
+On 2026-10-19, the supervisor ran this change against main `2ad595d5` on
+an isolated AOSP Android 8.0.0 / API26 x86_64 emulator (build 4931640).
+The original driver failed both initial native cases with `StoreError.IOFailure`;
+the corrected driver passed all three cases. The complete Android gate passed
+1,234 Core and 898 app JVM tests, zero failures/errors/skips, lint and both APK
+assemblies. Core's unchanged test output was reused on the final invocation.
+The signed, minified 0.1.0/code1 APK, SHA-256
+`cb83def49ba2a1697a738631f4923dfe4a4e63fba115e75dc00f64e62ef2cf77`,
+passed signer/metadata/checksum verification, installed ten starter prompts
+and retained the ten-prompt library after force-stop/relaunch. These are
+finite emulator results, not final-1.0.0 or physical owner acceptance.
+
 ## M8 acceptance record
 
 **M8 is code-complete, but NOT closed.** K1–K19 are merged. K20's owner

@@ -118,15 +118,18 @@ internal class AndroidStateIntegrationTest : TemporaryFiles() {
     }
 
     @Test
-    fun `failed move and failed link rollback explicitly require recovery`() {
+    fun `uncertain native move explicitly requires recovery`() {
         put(libraryDir.resolve("p.md"))
         val prompts = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
-            override fun unlink(path: Path) { throw IOException("unlink failed") }
+            override fun move(source: Path, destination: Path) {
+                super.move(source, destination)
+                throw IOException("postmove failure")
+            }
         })
         val library = library(prompts = prompts)
         val loaded = library.load("p.md")
         val result = assertIs<EditResult.Failed>(EditingService(library).move("p.md", "nested", loaded.stamp))
-        assertEquals("body", Files.readString(libraryDir.resolve("p.md")))
+        assertFalse(Files.exists(libraryDir.resolve("p.md")))
         assertEquals("body", Files.readString(libraryDir.resolve("nested/p.md")))
         assertSame(LibraryError.RecoveryRequired, result.error)
     }
