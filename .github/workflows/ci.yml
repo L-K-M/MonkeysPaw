@@ -981,6 +981,7 @@ jobs:
       - name: Start Compose and check health, login, push and pull
         run: |
           docker compose up -d --build --wait --wait-timeout 120
+          test "$(docker network inspect "$MONKEYSPAW_PROXY_NETWORK" --format '{{len .Containers}}')" -eq 1
           TMPDIR="$SMOKE_DIR" scripts/compose-smoke.sh http://127.0.0.1:8790 "$SMOKE_DIR/admin-password"
       - name: Show server logs on failure
         if: failure()

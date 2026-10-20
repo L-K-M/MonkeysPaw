@@ -183,10 +183,10 @@ MONKEYSPAW_PROXY_NETWORK=YOUR_NPM_NETWORK
 MONKEYSPAW_TRUSTED_PROXIES=YOUR_NPM_IPV4/32
 ```
 
-Find the proxy's address on that network, replacing both placeholders:
+Find the proxy's IPv4/IPv6 addresses on that network, replacing both placeholders:
 
 ```sh
-docker inspect NPM_CONTAINER --format '{{with index .NetworkSettings.Networks "YOUR_NPM_NETWORK"}}{{.IPAddress}}{{end}}'
+docker inspect NPM_CONTAINER --format '{{with index .NetworkSettings.Networks "YOUR_NPM_NETWORK"}}{{.IPAddress}} {{.GlobalIPv6Address}}{{end}}'
 ```
 
 Assign that proxy address statically in its own stack so recreation cannot
