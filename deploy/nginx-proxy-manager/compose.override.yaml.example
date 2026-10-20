@@ -1,0 +1,5 @@
+# Copy to the repository root as compose.override.yaml; keep the proxy separate.
+networks:
+  default:
+    external: true
+    name: ${MONKEYSPAW_PROXY_NETWORK:-npm_default}

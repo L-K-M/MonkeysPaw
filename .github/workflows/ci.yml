@@ -918,8 +918,8 @@ jobs:
       contents: read
     env:
       COMPOSE_PROJECT_NAME: monkeyspaw-compose-smoke
-      # TLS is configuration-only here; never start Caddy or request certificates.
       COMPOSE_PROFILES: ""
+      MONKEYSPAW_PROXY_NETWORK: monkeyspaw-compose-proxy-smoke
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -947,9 +947,7 @@ jobs:
           umask 077
           printf 'SMOKE_DIR=%s\n' "$SMOKE_DIR" >> "$GITHUB_ENV"
           mkdir -p "$SMOKE_DIR"
-          sudo install -d -m 0700 -o 1000 -g 1000 \
-            "$SMOKE_DIR/config/monkeyspaw" \
-            "$SMOKE_DIR/config/caddy/data" "$SMOKE_DIR/config/caddy/config"
+          sudo install -d -m 0700 -o 1000 -g 1000 "$SMOKE_DIR/config/monkeyspaw"
           python3 - <<'PY'
           import os
           import secrets
@@ -970,10 +968,16 @@ jobs:
           password_file.chmod(0o600)
           env_file.chmod(0o600)
           PY
-      - name: Validate default and TLS Compose configurations
+      - name: Validate server-only and external-proxy Compose configurations
         run: |
+          set -euo pipefail
           docker compose config --quiet
-          MONKEYSPAW_PUBLIC_URL=https://compose-smoke.invalid docker compose --profile tls config --quiet
+          test "$(docker compose config --services)" = monkeyspaw-server
+          test -z "$(docker compose config --profiles)"
+          docker network create "$MONKEYSPAW_PROXY_NETWORK"
+          cp deploy/nginx-proxy-manager/compose.override.yaml.example compose.override.yaml
+          MONKEYSPAW_PUBLIC_URL=https://compose-smoke.invalid docker compose config --quiet
+          test "$(docker compose config --services)" = monkeyspaw-server
       - name: Start Compose and check health, login, push and pull
         run: |
           docker compose up -d --build --wait --wait-timeout 120
@@ -989,7 +993,10 @@ jobs:
           SMOKE_DIR: ${{ runner.temp }}/monkeyspaw-compose-smoke
         run: |
           set -euo pipefail
-          trap 'rm -f .env; sudo rm -rf -- "$SMOKE_DIR"' EXIT
+          trap 'rm -f .env compose.override.yaml; sudo rm -rf -- "$SMOKE_DIR"' EXIT
           if [[ -f compose.yaml && -f .env ]]; then
-            timeout 60 docker compose --profile tls down -v --remove-orphans --timeout 10
+            timeout 60 docker compose down -v --remove-orphans --timeout 10
+          fi
+          if docker network inspect "$MONKEYSPAW_PROXY_NETWORK" >/dev/null 2>&1; then
+            docker network rm "$MONKEYSPAW_PROXY_NETWORK"
           fi

@@ -13,6 +13,7 @@ xcuserdata/
 /config/
 .env
 # Local deployment overrides, secrets and database/backup files.
+/compose.override.yaml
 /.env.*
 !/.env.example
 /secrets/

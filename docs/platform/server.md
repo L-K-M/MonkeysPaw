@@ -22,7 +22,7 @@ and [.env.example](../../.env.example). Run one server process per database.
 1. Set `umask 077`, copy `.env.example` to `.env`, and confirm mode 0600.
    Edit the file privately to supply a bootstrap admin password. Keep secrets
    out of shell history, argv, logs and this results record. Leave the HTTP
-   bind at `127.0.0.1` and `COMPOSE_PROFILES` unset for this first run.
+   bind at `127.0.0.1` for this first run.
 2. Provision `CONFIG_DIR/monkeyspaw` with the configured PUID/PGID ownership
    and mode 0700 (defaults: `sudo install -d -m 0700 -o 1000 -g 1000 ./config/monkeyspaw`).
    Confirm a missing bind directory fails rather than being created by Docker;
@@ -30,7 +30,7 @@ and [.env.example](../../.env.example). Run one server process per database.
    ownership on a disposable deployment and confirm UID 0 is refused.
 3. Run `./update.sh` using its documented branch selection. Confirm nonzero
    failures remain failures, the local server image is built without GTK,
-   `docker compose ps` reports a healthy server, and no Caddy service runs.
+   `docker compose ps` reports only a healthy `monkeyspaw-server` service.
 4. Run `curl --fail --silent --show-error --connect-timeout 5 --max-time 15 http://127.0.0.1:8790/api/health`.
    Require HTTP 200 with `status: ok` and a nonempty version; adjust the port
    if configured. Confirm the HTTP port is unreachable from another host.
@@ -40,30 +40,23 @@ and [.env.example](../../.env.example). Run one server process per database.
 
 ## Real-domain HTTPS and two update re-runs: NOT RUN
 
-1. Point a real domain at this host and permit TCP 80 and TCP/UDP 443.
-   Set the bare HTTPS `MONKEYSPAW_PUBLIC_URL` and `COMPOSE_PROFILES=tls`
-   privately in `.env`. Keep the server's host publication on loopback.
-2. Provision `CONFIG_DIR/caddy/data` and `CONFIG_DIR/caddy/config` with the
-   same PUID/PGID and mode 0700. Keep these directories across updates; they
-   hold certificate keys and Caddy state. Use only the documented Caddy peer
-   in `MONKEYSPAW_TRUSTED_PROXIES`, adjusting all bridge addresses together
-   if the subnet conflicts with host routes.
-3. Run `docker compose --profile tls config --quiet`, then `./update.sh`.
-   Require a healthy server and running Caddy. From another host, request
+1. Configure your existing proxy using the
+   [Nginx Proxy Manager setup](#nginx-proxy-manager) below. Set the bare HTTPS
+   `MONKEYSPAW_PUBLIC_URL` privately in `.env`; keep host HTTP on loopback.
+2. Confirm the server shares the proxy's existing Docker network and trusts
+   only its stable peer IP. Confirm other peers cannot select a client IP by
+   supplying forwarded headers. Retain certificate state in the proxy stack.
+3. Run `docker compose config --quiet`, then `./update.sh`.
+   Require a healthy server and your running proxy. From another host, request
    `https://YOUR_DOMAIN/api/health` with curl's connection/total deadlines;
    require 200 and a publicly trusted, hostname-matching certificate. Never
    use `--insecure`. Confirm HTTP redirects to HTTPS.
-4. Record the certificate fingerprint/expiry and the persistent bind paths,
-   then run `./update.sh` twice. After **each** run, require running Caddy,
-   a healthy server, trusted HTTPS health and unchanged persistent paths.
-   Confirm existing certificate state is reused and no files are lost;
-   an ordinary re-run should not request a new certificate unless renewal
-   is due. Record both results and any expected renewal.
-5. Test running-profile preservation too: remove `COMPOSE_PROFILES=tls`
-   from `.env` while Caddy is running, rerun `./update.sh`, and confirm Caddy
-   and HTTPS survive. Restore the explicit profile setting afterward.
-   Record certificate renewal when due; initial issuance alone is no proof
-   of renewal.
+4. Record the certificate fingerprint/expiry and proxy network, then run
+   `./update.sh` twice. After **each** run, require a healthy server, trusted
+   HTTPS health and the same external network. Confirm the proxy container
+   and its certificate state were not replaced by the server update.
+5. Record certificate renewal in your proxy when due; initial issuance alone
+   is no proof of renewal.
 
 ## Backup/restore drill: NOT RUN
 
@@ -118,7 +111,8 @@ Use Docker Engine on Linux with BuildKit enabled and **Docker Compose
 2.20.0 or newer** (`docker compose version`). This minimum includes the
 [environment-secret permission fix](https://github.com/docker/compose/releases/tag/v2.20.0),
 local image builds and bounded health waits. The server is built from this
-checkout as `monkeyspaw-server:local`; Caddy is the external `caddy:2` image.
+checkout as `monkeyspaw-server:local`. Compose runs only that server; use your
+existing reverse proxy for HTTPS.
 The owner removed GHCR publication on 2026-10-19; registry distribution is
 not provided yet. For a separate versioned local image, run
 `scripts/build.sh server-image` from the repository root. It stays in the
@@ -165,40 +159,72 @@ Provision these directories before every fresh deployment; do not use
 rendered `docker compose config` output as a replacement deployment file.
 Verify missing-path refusal on your actual Engine/Compose combination.
 
-For public HTTPS, point a domain's DNS at this host and allow TCP 80 and
-TCP/UDP 443. Set `MONKEYSPAW_PUBLIC_URL=https://prompts.example.com` to your
-bare HTTPS origin, with no path, query or fragment, and enable
-`COMPOSE_PROFILES=tls` in `.env`. Prepare Caddy's certificate and state directories, using your
-chosen `CONFIG_DIR`, `PUID` and `PGID` (defaults shown):
+### Nginx Proxy Manager
+
+Use the existing Docker network of your Nginx Proxy Manager container on the
+same host. This follows NPM's [shared-network setup](https://nginxproxymanager.com/advanced-config/#best-practice-use-a-docker-network)
+and keeps the server's host port on loopback. List networks with
+`docker network ls`; identify the one attached to the proxy container.
+
+Copy the network override from the repository root. If an override already
+exists, merge its network settings instead of replacing it:
 
 ```sh
-sudo install -d -m 0700 -o 1000 -g 1000 ./config/caddy/data ./config/caddy/config
-docker compose --profile tls config --quiet
-docker compose --profile tls up -d --build --wait --wait-timeout 120
-curl --fail https://prompts.example.com/api/health
+cp -n deploy/nginx-proxy-manager/compose.override.yaml.example compose.override.yaml
 ```
 
-Caddy refuses startup with UID 0 or a non-HTTPS public URL. The check runs
-only when Caddy starts, so default non-TLS Compose configuration still works.
+The root `compose.override.yaml` is ignored by Git and loaded automatically
+by Compose, including through `update.sh`. Set these values in your private
+`.env`, replacing the network and IP placeholders:
 
-[Caddyfile.example](../../deploy/caddy/Caddyfile.example) obtains and renews
-certificates through [Caddy's automatic HTTPS](https://caddyserver.com/docs/automatic-https).
-Caddy runs as the configured UID/GID with no added capabilities; a container
-network sysctl permits its non-root listeners on 80/443. Leave the server's
-host publication on loopback even with TLS. The dedicated bridge defaults
-to `172.30.80.0/29`, Caddy's fixed address to `172.30.80.3`, and the server's
-trusted proxies to that peer alone (`172.30.80.3/32`). Caddy
-[discards incoming forwarded headers](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#defaults)
-before supplying its own. If the subnet overlaps a host or VPN route,
-change `MONKEYSPAW_PROXY_SUBNET`, `MONKEYSPAW_SERVER_IP` (default
-`172.30.80.2`), `MONKEYSPAW_CADDY_IP` and `MONKEYSPAW_TRUSTED_PROXIES`
-together. The server has a fixed address so it cannot take Caddy's peer while
-TLS is disabled. Do not attach unrelated containers to
-this bridge or trust all private networks. When using your own proxy, trust
-only its observed peer address and ensure it strips client-supplied forwarded
-headers; set the public URL to the origin your clients use. Never expose
-plain HTTP directly to the Internet. Apply any needed volumetric rate limits
-at your public ingress; this example Caddyfile does not add a rate limiter.
+```dotenv
+MONKEYSPAW_PUBLIC_URL=https://prompts.example.com
+MONKEYSPAW_PROXY_NETWORK=YOUR_NPM_NETWORK
+MONKEYSPAW_TRUSTED_PROXIES=YOUR_NPM_IPV4/32
+```
+
+Find the proxy's address on that network, replacing both placeholders:
+
+```sh
+docker inspect NPM_CONTAINER --format '{{with index .NetworkSettings.Networks "YOUR_NPM_NETWORK"}}{{.IPAddress}}{{end}}'
+```
+
+Assign that proxy address statically in its own stack so recreation cannot
+change it. Use `/128` for an IPv6 peer. Trust only the proxy's exact address,
+never its whole network. NPM must append or replace `X-Forwarded-For` with
+the actual client's address; its default configuration appends it. The
+server walks trusted hops from the right and ignores spoofed prefixes.
+
+Start the server:
+
+```sh
+docker compose config --quiet
+docker compose up -d --build --remove-orphans --wait --wait-timeout 120
+```
+
+Create an NPM **Proxy Host**:
+
+| Setting | Value |
+|---|---|
+| Domain Names | Your domain, for example `prompts.example.com` |
+| Scheme | `http` |
+| Forward Hostname / IP | `monkeyspaw-server` |
+| Forward Port | `8080` |
+| SSL | Select or request a certificate, then enable **Force SSL** |
+
+The proxy uses Docker DNS and container port `8080`, not the host's
+loopback port `8790`. Keep the `monkeyspaw-server` network alias unique.
+Point public DNS at NPM and manage public ports and certificates there.
+Verify `https://prompts.example.com/api/health` with normal certificate
+validation. Apply any needed volumetric rate limits at your public ingress.
+
+For an older bundled-Caddy deployment, remove `COMPOSE_PROFILES=tls`,
+`MONKEYSPAW_PROXY_SUBNET`, `MONKEYSPAW_SERVER_IP` and `MONKEYSPAW_CADDY_IP`
+from `.env`, and replace the old trusted IP with NPM's peer. The updater's
+`--remove-orphans` removes the old Caddy container; its host certificate
+directories remain. Configure NPM before relying on public HTTPS again.
+
+### Operations
 
 Run **one server process per database**. Compose is a single-host deployment,
 not a replicated service. The server stores prompt content, history and
@@ -206,9 +232,9 @@ backups as plaintext SQLite data, with no end-to-end encryption. Encrypt
 disks and backups yourself. The host operator can read all prompts; an admin
 who resets an account's password can also access that account. API permissions
 protect users from each other, not from the operator. Passwords are bcrypt
-hashes and device tokens are hashed. Protect Caddy's certificate keys too.
-Neither the server nor this Caddyfile enables request access logs; never add
-logging of credentials, tokens, prompt bodies or field values.
+hashes and device tokens are hashed. Protect your proxy's certificate keys
+too. The server does not enable request access logs; configure your proxy
+to avoid logging credentials, tokens, prompt bodies or field values.
 
 Take consistent online snapshots with `scripts/backup.sh` or
 `monkeyspaw-server backup`, and restore only with the server stopped; restore
@@ -234,26 +260,24 @@ untracked local changes and commits ahead of or diverged from the fetched
 named branch and refuses a branch/tag collision that leaves a detached HEAD.
 It uses `gh repo sync --branch`, falling back to
 `git pull --ff-only origin <branch>` if `gh` is unavailable or sync fails.
-It pulls only external images, builds the server with fresh base images,
+It builds the server with fresh base images,
 waits up to 120 seconds for startup health, prunes dangling Docker images,
 and shows Compose status. A failure stops later steps and exits nonzero;
 completed steps are not rolled back automatically.
 
-For the owner TLS check, configure HTTPS and provision Caddy as above,
+For the owner TLS check, configure your existing proxy as above,
 then run `./update.sh main` twice and check your HTTPS `/api/health` after
-each run. Confirm unprofiled `docker compose ps --services --status running`
-still lists `caddy`. Check both persisted `COMPOSE_PROFILES=tls` and Caddy
-started only with `--profile tls` (with `COMPOSE_PROFILES` unset in `.env`
-and the environment); the updater preserves either by inspecting services.
+each run. Confirm the server remains on the proxy's external Docker network
+and the proxy container and certificate state are unchanged.
 CI's fake-command tests verify the updater without operating a deployment;
 the fresh-host and TLS re-run checks require an owner Docker host.
 
-Deployment validation needs a Docker host: run both Compose configurations,
-check default and overridden ownership, confirm UID 0 fails, and exercise
+Deployment validation needs a Docker host: run the default and proxy-network
+configurations, check default and overridden ownership, confirm UID 0 fails, and exercise
 HTTPS certificate issuance, renewal and restart. YAML/static checks on the
 implementation host do not prove a real Compose run. CI builds the server
 image and checks `/api/health`; the Compose smoke gate and owner HTTPS check
-complete runtime verification in subsequent M5 slices.
+complete runtime verification.
 
 ## Server backup and restore
 

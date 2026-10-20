@@ -164,7 +164,8 @@ MonkeysPaw/
     Sources/monkeyspaw-server/  entry point: serve | migrate | healthcheck | user | group | backup
     Tests/MonkeysPawServerTests/
     Dockerfile
-  compose.yaml  .env.example  update.sh  deploy/caddy/Caddyfile.example
+  compose.yaml  .env.example  update.sh
+  deploy/nginx-proxy-manager/compose.override.yaml.example
   packaging/debian/  flatpak/ch.lkmc.monkeyspaw.yml  scripts/  media-sources/  seed/  docs/platform/
   android/                      Gradle root: settings, version catalog, wrapper
     core/                       kotlin("jvm") module: the Kotlin port of the core domain + sync engine

@@ -13,6 +13,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the deb or (when the deb is not targeted) the Flatpak bundle, and the APK on
   the connected device.
 
+### Changed
+
+- Compose runs only the sync server behind your existing HTTPS proxy.
+  Removed bundled Caddy and added Nginx Proxy Manager network/setup guidance.
+
 ## [1.0.0] - 2026-10-20
 
 ### Added

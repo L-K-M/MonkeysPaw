@@ -61,7 +61,7 @@ normal TLS certificate validation enabled.
 
 Run one server process per SQLite database on local storage. Keep the default
 HTTP host binding on loopback; use the documented HTTPS reverse proxy for
-remote access. Protect `.env`, Caddy certificate keys, the data volume and
+remote access. Protect `.env`, your proxy's certificate keys, the data volume and
 off-host backups. Configure public-ingress rate limiting yourself. Take online
 snapshots with the backup command, then restore with the server stopped;
 copying a live database is unsafe. See [hosting and recovery](docs/platform/server.md#host-the-sync-server).

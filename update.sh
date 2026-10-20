@@ -64,21 +64,7 @@ else
   git pull --ff-only origin "$branch"
 fi
 
-configured_services=$(docker compose config --services)
-# No profile filter: Caddy may have been started with --profile tls only once.
-running_services=$(docker compose ps --services --status running)
-set --
-case "
-$configured_services
-$running_services
-" in
-  *"
-caddy
-"*) set -- --profile tls ;;
-esac
-
-docker compose "$@" pull --ignore-buildable
-docker compose "$@" build --pull
-docker compose "$@" up -d --remove-orphans --wait --wait-timeout 120
+docker compose build --pull
+docker compose up -d --remove-orphans --wait --wait-timeout 120
 docker image prune -f
-docker compose "$@" ps
+docker compose ps
