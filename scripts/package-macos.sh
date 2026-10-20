@@ -64,7 +64,12 @@ printf '==> Building MonkeysPaw %s (%s) for arm64 and x86_64\n' "$version" "$bui
 built_app="$derived_data/Build/Products/Release/MonkeysPaw.app"
 [[ -d "$built_app" ]] || fail 'Release build did not produce MonkeysPaw.app'
 /usr/bin/ditto "$built_app" "$app"
-/usr/bin/lipo "$app/Contents/MacOS/MonkeysPaw" -verify_arch arm64 x86_64
+# -archs, not a multi-arch -verify_arch: Xcode 27's lipo rejects
+# "-verify_arch arm64 x86_64" with "requires exactly one input file".
+architectures=" $(/usr/bin/lipo -archs "$app/Contents/MacOS/MonkeysPaw") "
+for architecture in arm64 x86_64; do
+  [[ "$architectures" == *" $architecture "* ]] || fail "Release build lacks the $architecture slice (has:$architectures)"
+done
 
 # Preserve the raw release version even if Xcode omits a custom generated key.
 plist="$app/Contents/Info.plist"

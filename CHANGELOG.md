@@ -18,6 +18,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Local macOS builds no longer need create-dmg. Without it, the dmg has the
   app and the Applications link but no window layout. CI still requires it.
 
+### Fixed
+
+- macOS packaging checks the universal slices with `lipo -archs`; Xcode 27's
+  `lipo` rejected the multi-arch `-verify_arch` form and failed the build.
+
 ## [1.0.0] - 2026-10-20
 
 ### Added
