@@ -25,6 +25,7 @@ class BuildTests(unittest.TestCase):
         shutil.copy(ROOT / "scripts/build.sh", self.root / "scripts/build.sh")
         for name in ("dirname", "basename", "rm", "mkdir", "sha256sum", "awk", "sed", "tail"):
             (self.bin / name).symlink_to(shutil.which(name))
+        self.script(self.bin / "id", 'if [[ "$1" == -u ]]; then echo "${FAKE_UID:-1000}"; else exit 1; fi\n')
         (self.bin / "python3").symlink_to(sys.executable)
         for name in ("swift", "dpkg-deb", "dpkg-shlibdeps", "readelf", "strip", "flatpak-builder", "pkg-config"):
             self.script(self.bin / name, "exit 0\n")
@@ -317,7 +318,7 @@ else:
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(self.calls(), ["deb", "flatpak", deb_install])
                 self.assertIn("install deb: ok (apt-get)", result.stdout)
-                self.assertIn("install flatpak: skipped (the deb is installed", result.stdout)
+                self.assertIn("install flatpak: skipped (deb is also targeted", result.stdout)
 
     def test_install_flatpak_alone_installs_the_user_bundle(self):
         result = self.run_build("flatpak", "--install")
@@ -350,6 +351,13 @@ printf 'local-adb %s\n' "$1" >> "$BUILD_CALLS"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls(), ["android", "local-adb get-state", "local-adb install"])
 
+        # An sdk.dir without platform-tools falls through to ANDROID_HOME.
+        self.clear_calls()
+        (sdk / "platform-tools/adb").unlink()
+        result = self.run_build("android", "--install", FAKE_ANDROID_AVAILABLE="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls()[1], "adb get-state")
+
     def test_install_failures_fail_the_run_after_every_build(self):
         result = self.run_build("android", "deb", "--install", FAKE_ANDROID_AVAILABLE="1", FAKE_ADB_STATE="none")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -368,6 +376,13 @@ printf 'local-adb %s\n' "$1" >> "$BUILD_CALLS"
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(self.calls(), ["deb"])
         self.assertIn("install deb: FAILED (missing sudo", result.stdout)
+
+        # root needs no sudo: apt-get runs directly.
+        self.clear_calls()
+        self.script(self.bin / "apt-get", 'printf "apt-get %s\\n" "$*" >> "$BUILD_CALLS"\n')
+        result = self.run_build("deb", "--install", FAKE_UID="0")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["deb", "apt-get install -y --reinstall ./dist/monkeyspaw_0.2.0~rc~1_amd64.deb"])
 
     def test_install_skips_failed_builds_and_points_the_server_to_update(self):
         self.install_docker()

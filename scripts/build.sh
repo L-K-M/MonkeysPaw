@@ -193,13 +193,16 @@ install_mac() {
 }
 
 install_deb() {
-  local tool
-  for tool in sudo apt-get; do
+  local elevate=(sudo) tool
+  [[ "$(id -u)" -ne 0 ]] || elevate=()
+  for tool in ${elevate[@]+"${elevate[@]}"} apt-get; do
     command -v "$tool" >/dev/null 2>&1 || { reason="missing $tool; install ./$deb_path yourself"; return 1; }
   done
 
   # ./ makes apt read the local file and resolve its dependencies.
-  sudo apt-get install -y --reinstall "./$deb_path" || { reason='apt-get install failed'; return 1; }
+  ${elevate[@]+"${elevate[@]}"} apt-get install -y --reinstall "./$deb_path" || {
+    reason='apt-get install failed'; return 1;
+  }
 }
 
 install_flatpak() {
@@ -208,19 +211,19 @@ install_flatpak() {
   flatpak install --user --assumeyes --reinstall --bundle "$bundle" || { reason='flatpak install failed'; return 1; }
 }
 
-# Same precedence as Gradle and package-android.sh: sdk.dir, then the
-# environment. Prints the SDK's adb, else the one on PATH.
+# Prints the first adb found in sdk.dir, ANDROID_HOME, ANDROID_SDK_ROOT
+# (Gradle's SDK precedence), then PATH.
 android_adb() {
-  local sdk=
+  local sdk_dir='' sdk
   if [[ -f android/local.properties ]]; then
-    sdk="$(sed -n 's/^[[:space:]]*sdk\.dir[[:space:]]*[=:][[:space:]]*//p' android/local.properties \
+    sdk_dir="$(sed -n 's/^[[:space:]]*sdk\.dir[[:space:]]*[=:][[:space:]]*//p' android/local.properties \
       | tail -n 1 | sed 's/\\\(.\)/\1/g')"
   fi
-  sdk="${sdk:-${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}}"
-  if [[ -n "$sdk" && -x "$sdk/platform-tools/adb" ]]; then
+  for sdk in "$sdk_dir" "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
+    [[ -n "$sdk" && -x "$sdk/platform-tools/adb" ]] || continue
     printf '%s\n' "$sdk/platform-tools/adb"
     return 0
-  fi
+  done
   command -v adb
 }
 
@@ -280,7 +283,7 @@ if [[ "$install" == true ]]; then
       flatpak)
         case " ${targets[*]} " in
           *" deb "*)
-            results+=("install flatpak: skipped (the deb is installed; use one route per user)")
+            results+=("install flatpak: skipped (deb is also targeted; use one route per user)")
             continue
             ;;
         esac
