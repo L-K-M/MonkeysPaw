@@ -23,8 +23,9 @@
 #
 # Versions come from the committed Xcode settings; packaging needs no lkm-build.
 # Files go to dist/; server-image goes to Docker's image store and prints its tag.
-# Set SWIFT to another Swift executable for deb builds. Install Linux tooling
-# as described in docs/plan/14-repository-packaging-ci-release.md.
+# Set SWIFT to another Swift executable for deb builds, XCODEBUILD to another
+# xcodebuild for mac builds. Install Linux tooling as described in
+# docs/plan/14-repository-packaging-ci-release.md.
 # Set JAVA_HOME/ANDROID_HOME for Android, or configure android/local.properties.
 #
 # App-only compatibility path: scripts/build.sh app [lkm-build flags]
@@ -93,7 +94,7 @@ feasible() {
   case "$target" in
     mac)
       [[ "$host" == Darwin ]] || { reason='requires macOS'; return 1; }
-      /usr/bin/xcodebuild -version >/dev/null 2>&1 || {
+      "${XCODEBUILD:-/usr/bin/xcodebuild}" -version >/dev/null 2>&1 || {
         reason='requires Xcode (select it with xcode-select)'; return 1;
       }
       ;;

@@ -12,6 +12,7 @@
 # MACOS_SIGNING_KEYCHAIN optionally selects its keychain when using an identity.
 # CI callers must export signing variables only when their secrets are non-empty.
 # Uses xcodebuild directly: no lkm-build installation or certificate import needed.
+# XCODEBUILD selects another xcodebuild than /usr/bin/xcodebuild.
 set -euo pipefail
 
 fail() {
@@ -53,7 +54,7 @@ app="$staging_directory/MonkeysPaw.app"
 mkdir -p "$staging_directory" "$work_directory/artifacts"
 
 printf '==> Building MonkeysPaw %s (%s) for arm64 and x86_64\n' "$version" "$build_number"
-/usr/bin/xcodebuild \
+"${XCODEBUILD:-/usr/bin/xcodebuild}" \
   -project "$project" -scheme MonkeysPaw -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath "$derived_data" \
   ONLY_ACTIVE_ARCH=NO ARCHS="arm64 x86_64" \
@@ -104,7 +105,7 @@ if [[ "$dmg_tool" == hdiutil ]]; then
   printf -- '-- create-dmg not installed; packaging a plain dmg\n'
   ln -s /Applications "$staging_directory/Applications"
   /usr/bin/hdiutil create -volname "$volume_name" -srcfolder "$staging_directory" \
-    -format UDZO "$dmg" >/dev/null
+    -format UDZO "$dmg" >/dev/null || fail 'hdiutil could not create the dmg'
 else
   dmg_arguments=(--volname "$volume_name" --window-size 540 380
     --icon-size 100 --icon MonkeysPaw.app 150 185 --app-drop-link 390 185)

@@ -94,7 +94,9 @@ else
 fi
 ''')
         self.script(self.bin / "engine", 'printf "%s\\n" "$BUILD_APP_NAME" "$BUILD_KIND" "$BUILD_XCODE_SCHEME" "$@" > "$BUILD_CALLS"\n')
+        # XCODEBUILD names a missing stub, so a Mac's own Xcode stays out.
         self.env = os.environ | {"PATH": str(self.bin), "SWIFT": "swift",
+                                 "XCODEBUILD": str(self.bin / "xcodebuild"),
                                  "BUILD_CALLS": str(self.root / "calls"), "LKM_BUILD_BIN": "engine",
                                  "DOCKER_CALLS": str(self.root / "docker-calls"),
                                  "ANDROID_HOME": str(sdk)}
@@ -182,8 +184,9 @@ else:
                 if host == "Darwin":
                     self.assertIn("deb: skipped (requires Linux)", result.stdout)
                     self.assertIn("flatpak: skipped (requires Linux)", result.stdout)
-                    # A local dmg falls back to hdiutil; only CI needs create-dmg.
-                    self.assertNotIn("create-dmg", result.stdout)
+                    # Xcode is mac's only local requirement: without create-dmg,
+                    # which only CI needs, the dmg falls back to hdiutil.
+                    self.assertIn("mac: skipped (requires Xcode", result.stdout)
 
     def test_missing_docker_skips_defaults_and_fails_named_target_on_both_hosts(self):
         for host in ("Linux", "Darwin"):
