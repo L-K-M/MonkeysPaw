@@ -45,6 +45,7 @@ Run these commands from the repository root:
 | Build macOS dmg, zip and checksums | `scripts/build.sh mac [--no-open]` |
 | Build Linux deb and checksum | `scripts/build.sh deb` (set `SWIFT` on the Paseo host) |
 | Build Flatpak and checksum, building the deb once | `scripts/build.sh flatpak` (x86_64 Linux, Flatpak/flatpak-builder, GNOME Platform/SDK 50) |
+| Build, then install what was built (app, deb or Flatpak, APK via adb) | `scripts/build.sh [targets] --install` |
 | Use the app-only shared build engine | `scripts/build.sh app [lkm-build flags]` |
 | Build macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build` |
 | Test macOS app | `xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO clean test` |

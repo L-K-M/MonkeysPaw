@@ -152,8 +152,13 @@ and rerunning; the workflow refuses to overwrite an existing release.
 without `--push` still commits and tags, so integration tests use disposable
 repositories rather than an implementation checkout.
 
-Local builds use `scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--no-open]`,
-with file outputs in `dist/`. The default skips targets this host cannot build;
+Local builds use `scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--install] [--no-open]`,
+with file outputs in `dist/`. `--install` installs what the run built: the
+macOS app into `/Applications`, the deb with `sudo apt-get`, the Flatpak bundle
+for your user only when `deb` is not targeted (both share the app ID), and the
+APK with `adb install -r` on the one ready device (`ANDROID_SERIAL` selects
+one). `server-image` installs nothing; deploy the server with `./update.sh`.
+Install failures fail the run after every build. The default skips targets this host cannot build;
 explicitly named targets fail when requirements are missing. The default builds
 deb then Flatpak once when both are feasible. `flatpak` requires x86_64 Linux, the deb toolchain,
 Flatpak/flatpak-builder and user-installed GNOME Platform/SDK 50; it reuses only

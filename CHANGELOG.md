@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/build.sh --install` installs what the run built: the macOS app,
+  the deb or (when the deb is not targeted) the Flatpak bundle, and the APK on
+  the connected device.
+
 ## [1.0.0] - 2026-10-20
 
 ### Added

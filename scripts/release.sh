@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Cuts a release: bumps the version, commits, and tags v<version>.
-# With --push, CI publishes the tag via release.yml once that workflow lands
-# in M2. This M0c stub configures the shared engine; it does not publish assets.
-# The tag supplies CI's release version; MARKETING_VERSION and the README marker
-# keep local builds in step. See docs/plan/14-repository-packaging-ci-release.md.
+# With --push, the tag triggers release.yml, which tests, packages and
+# publishes the GitHub Release. The tag supplies CI's release version;
+# MARKETING_VERSION, Android's version (post-bump hook) and the README marker
+# keep local builds in step. See CICD.md and
+# docs/plan/14-repository-packaging-ci-release.md.
 #
 # Usage: scripts/release.sh [X.Y.Z] [--push] | --check
 # --check reports engine configuration only; it does not exercise the hook.
@@ -15,7 +16,7 @@ export RELEASE_KIND="xcode"
 export RELEASE_XCODE_PROJECT="MonkeysPaw.xcodeproj"
 export RELEASE_XCODE_SCHEME="MonkeysPaw"
 export RELEASE_POST_BUMP="scripts/sync-android-version.sh"
-export RELEASE_CI_NOTE="CI (release.yml, from M2) publishes the GitHub Release for the tag once configured."
+export RELEASE_CI_NOTE="CI (release.yml) tests, packages and publishes the GitHub Release for the tag."
 export RELEASE_INVOKED_AS="scripts/release.sh"
 
 BIN="${LKM_RELEASE_BIN:-lkm-release}"

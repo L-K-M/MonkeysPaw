@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build every Monkey's Paw artifact this host can produce.
 #
-# Usage: scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--no-open]
+# Usage: scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--install] [--no-open]
 #   No targets: build every feasible target; skip unavailable toolchains.
 #   Named targets: an unavailable toolchain fails the run.
 #   mac        universal Release dmg, zip and .sha256 (macOS, Xcode, create-dmg)
@@ -9,6 +9,14 @@
 #   flatpak    GNOME 50 x86_64 bundle and checksum, reusing this run's deb
 #   android    signed release APK and .apk.sha256 (wrapper, JDK 17+, Android SDK)
 #   server-image  versioned local server image (Docker with a Linux engine, git)
+#   --install  after building, install what this run built:
+#              mac      /Applications/MonkeysPaw.app, replaced from the zip
+#              deb      sudo apt-get install (needs sudo and apt-get)
+#              flatpak  flatpak install --user, only when deb is not targeted:
+#                       both routes share ch.lkmc.monkeyspaw, so one per user
+#              android  adb install -r on the one ready device (ANDROID_SERIAL
+#                       picks one); adb comes from the SDK, then PATH
+#              server-image  nothing; deploy the server with ./update.sh
 #   --no-open  do not open dist/ in Finder after a successful macOS build
 #   --help     print this header
 #
@@ -47,6 +55,7 @@ fi
 
 targets=()
 explicit=false
+install=false
 no_open=false
 for argument in "$@"; do
   case "$argument" in
@@ -57,9 +66,10 @@ for argument in "$@"; do
         *) targets+=("$argument") ;;
       esac
       ;;
+    --install) install=true ;;
     --no-open) no_open=true ;;
     -h|--help) usage; exit 0 ;;
-    --clean|--debug|--run|--install|--zip|--dmg)
+    --clean|--debug|--run|--zip|--dmg)
       printf '!! %s belongs to the app engine: use scripts/build.sh app %s\n' "$argument" "$argument" >&2; exit 2 ;;
     *) printf '!! Unknown argument: %s (see --help)\n' "$argument" >&2; exit 2 ;;
   esac
@@ -162,9 +172,76 @@ build_server_image() {
     --build-arg "CREATED=$created" -f server/Dockerfile .
 }
 
+# --install helpers. Each sets reason and returns nonzero on failure.
+mac_app=/Applications/MonkeysPaw.app
+
+install_mac() {
+  local zip="dist/MonkeysPaw-$version.zip" staging incoming=/Applications/.MonkeysPaw.app.incoming status
+  [[ -s "$zip" ]] || { reason="missing $zip"; return 1; }
+  staging="$(mktemp -d)" || { reason='mktemp failed'; return 1; }
+
+  # Copy beside the old app, then swap, so a failed copy keeps it intact.
+  /usr/bin/ditto -x -k "$zip" "$staging" \
+    && rm -rf "$incoming" \
+    && /usr/bin/ditto "$staging/MonkeysPaw.app" "$incoming" \
+    && rm -rf "$mac_app" \
+    && mv "$incoming" "$mac_app"
+  status=$?
+  rm -rf "$staging"
+  [[ "$status" -eq 0 ]] || reason="could not replace $mac_app"
+  return "$status"
+}
+
+install_deb() {
+  local elevate=(sudo) tool
+  [[ "$(id -u)" -ne 0 ]] || elevate=()
+  for tool in ${elevate[@]+"${elevate[@]}"} apt-get; do
+    command -v "$tool" >/dev/null 2>&1 || { reason="missing $tool; install ./$deb_path yourself"; return 1; }
+  done
+
+  # ./ makes apt read the local file and resolve its dependencies.
+  ${elevate[@]+"${elevate[@]}"} apt-get install -y --reinstall "./$deb_path" || {
+    reason='apt-get install failed'; return 1;
+  }
+}
+
+install_flatpak() {
+  local bundle="dist/monkeyspaw_${version}_x86_64.flatpak"
+  [[ -s "$bundle" ]] || { reason="missing $bundle"; return 1; }
+  flatpak install --user --assumeyes --reinstall --bundle "$bundle" || { reason='flatpak install failed'; return 1; }
+}
+
+# Prints the first adb found in sdk.dir, ANDROID_HOME, ANDROID_SDK_ROOT
+# (Gradle's SDK precedence), then PATH.
+android_adb() {
+  local sdk_dir='' sdk
+  if [[ -f android/local.properties ]]; then
+    sdk_dir="$(sed -n 's/^[[:space:]]*sdk\.dir[[:space:]]*[=:][[:space:]]*//p' android/local.properties \
+      | tail -n 1 | tr -d '\r' | sed 's/\\\(.\)/\1/g')"
+  fi
+  for sdk in "$sdk_dir" "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
+    [[ -n "$sdk" && -x "$sdk/platform-tools/adb" ]] || continue
+    printf '%s\n' "$sdk/platform-tools/adb"
+    return 0
+  done
+  command -v adb
+}
+
+install_android() {
+  local apk="dist/monkeyspaw-v$version.apk" adb state
+  [[ -s "$apk" ]] || { reason="missing $apk"; return 1; }
+  adb="$(android_adb)" || { reason='adb not found (install SDK platform-tools)'; return 1; }
+
+  # get-state fails unless exactly one device is attached or ANDROID_SERIAL names one.
+  state="$("$adb" get-state 2>/dev/null)" || { reason='no single ready device (connect one or set ANDROID_SERIAL)'; return 1; }
+  [[ "$state" == device ]] || { reason="device is $state, not ready"; return 1; }
+  "$adb" install -r "$apk" || { reason='adb install failed'; return 1; }
+}
+
 results=()
 failed=0
 built=0
+built_targets=()
 for target in "${targets[@]}"; do
   if ! feasible "$target"; then
     if [[ "$explicit" == true ]]; then
@@ -185,6 +262,7 @@ for target in "${targets[@]}"; do
     server-image) build_command=(build_server_image) ;;
   esac
   if "${build_command[@]}"; then
+    built_targets+=("$target")
     if [[ "$target" == server-image ]]; then
       results+=("$target: ok (Docker image: $server_image)")
     else
@@ -196,6 +274,37 @@ for target in "${targets[@]}"; do
     failed=1
   fi
 done
+
+if [[ "$install" == true ]]; then
+  for target in ${built_targets[@]+"${built_targets[@]}"}; do
+    case "$target" in
+      mac) install_command=(install_mac); destination="$mac_app" ;;
+      deb) install_command=(install_deb); destination=apt-get ;;
+      flatpak)
+        case " ${targets[*]} " in
+          *" deb "*)
+            results+=("install flatpak: skipped (deb is also targeted; use one route per user)")
+            continue
+            ;;
+        esac
+        install_command=(install_flatpak); destination='flatpak --user'
+        ;;
+      android) install_command=(install_android); destination=adb ;;
+      server-image)
+        results+=("install server-image: skipped (deploy the server with ./update.sh)")
+        continue
+        ;;
+    esac
+
+    printf '==> Installing %s\n' "$target"
+    if "${install_command[@]}"; then
+      results+=("install $target: ok ($destination)")
+    else
+      results+=("install $target: FAILED ($reason)")
+      failed=1
+    fi
+  done
+fi
 
 if [[ "$host" == Darwin && "$built" -gt 0 && "$no_open" == false ]]; then
   open "$repo_root/dist" || printf '!! Could not open dist/ in Finder\n' >&2
