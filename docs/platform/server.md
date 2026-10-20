@@ -102,9 +102,10 @@ working database. Wait for the S16/S17 commands and follow [§8.6](../plan/08-sy
 ## Client filenames after M6: NOT RUN
 
 §8.4 requires client sanitization before group names become local folder
-names or device names appear in filenames. M5's server tests do not assert
-that client boundary. Use disposable data after M6 supplies it; record the
-client version, platform and resulting paths without prompt contents.
+names or device names appear in filenames. M6/M10 now supply the
+[automated client proof](m5-acceptance.md#m5-server-acceptance). The checks
+below still require native/deployed observations on disposable data; record
+the client version, platform and resulting paths without prompt contents.
 
 | Check | Status | Required observation |
 |---|---|---|

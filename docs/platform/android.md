@@ -152,15 +152,22 @@ jobs, queried with `gh pr view <n> --repo L-K-M/MonkeysPaw --json mergeCommit,st
 | N8 | [#256](https://github.com/L-K-M/MonkeysPaw/pull/256), `dee05a8f` | [Run 38792521260 / job](https://github.com/L-K-M/MonkeysPaw/actions/runs/38792521260/job/116623912299) |
 
 These are build-job results, not reviewer approvals. N4's completed first
-review led to merged fixes, but its [final automated review run](https://github.com/L-K-M/MonkeysPaw/actions/runs/38694637306)
-failed without findings; final-revision review coverage is a gap, not approval.
+review led to merged fixes; its [final automated review run](https://github.com/L-K-M/MonkeysPaw/actions/runs/38694637306)
+failed without findings. A [Devin SWE-2 Max source review](https://github.com/L-K-M/MonkeysPaw/pull/212#issuecomment-6274744502)
+on main `2ad595d5a4b6311b11d000bb20dc2aee5b7c0e00` approved the unchanged
+final N4 implementation on 2026-10-19, with no actionable findings. This
+closes the missing source-review coverage; no device acceptance is asserted.
 
 `gh run list --repo L-K-M/MonkeysPaw --branch main --workflow ci.yml -L 5`
 reports recent green main runs [38797937478](https://github.com/L-K-M/MonkeysPaw/actions/runs/38797937478)
 at `283c8fa3` and [38783075632](https://github.com/L-K-M/MonkeysPaw/actions/runs/38783075632)
 at `9829219c`. At collection, current-main [run 38809530240](https://github.com/L-K-M/MonkeysPaw/actions/runs/38809530240)
 was pending; N8's main [run 38809381519](https://github.com/L-K-M/MonkeysPaw/actions/runs/38809381519)
-was cancelled. The earlier green runs do not establish latest-main CI.
+was cancelled. Those earlier green runs do not establish latest-main CI.
+The complete [main run 39252129016](https://github.com/L-K-M/MonkeysPaw/actions/runs/39252129016)
+subsequently passed at the exact `2ad595d5` source-review SHA, including the
+Android gate and the separate real-server `android-sync` job. Later code
+changes require affected revalidation; physical owner rows remain NOT RUN.
 
 **N8 plan deviation:** the external N8 row requested “absent INTERNET”.
 The app legitimately declares exactly `android.permission.INTERNET` for
