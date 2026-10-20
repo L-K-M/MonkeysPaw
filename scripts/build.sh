@@ -4,7 +4,8 @@
 # Usage: scripts/build.sh [mac|deb|flatpak|android|server-image ...] [--install] [--no-open]
 #   No targets: build every feasible target; skip unavailable toolchains.
 #   Named targets: an unavailable toolchain fails the run.
-#   mac        universal Release dmg, zip and .sha256 (macOS, Xcode, create-dmg)
+#   mac        universal Release dmg, zip and .sha256 (macOS, Xcode; create-dmg
+#              lays out the dmg window, else the dmg is plain)
 #   deb        Ubuntu 24.04+ deb and .deb.sha256 (Linux, Swift 6.4, GTK 4, dpkg-dev)
 #   flatpak    GNOME 50 x86_64 bundle and checksum, reusing this run's deb
 #   android    signed release APK and .apk.sha256 (wrapper, JDK 17+, Android SDK)
@@ -92,9 +93,6 @@ feasible() {
   case "$target" in
     mac)
       [[ "$host" == Darwin ]] || { reason='requires macOS'; return 1; }
-      command -v create-dmg >/dev/null 2>&1 || {
-        reason='install create-dmg with: brew install create-dmg'; return 1;
-      }
       /usr/bin/xcodebuild -version >/dev/null 2>&1 || {
         reason='requires Xcode (select it with xcode-select)'; return 1;
       }

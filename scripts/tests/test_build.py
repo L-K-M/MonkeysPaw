@@ -182,6 +182,8 @@ else:
                 if host == "Darwin":
                     self.assertIn("deb: skipped (requires Linux)", result.stdout)
                     self.assertIn("flatpak: skipped (requires Linux)", result.stdout)
+                    # A local dmg falls back to hdiutil; only CI needs create-dmg.
+                    self.assertNotIn("create-dmg", result.stdout)
 
     def test_missing_docker_skips_defaults_and_fails_named_target_on_both_hosts(self):
         for host in ("Linux", "Darwin"):

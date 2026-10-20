@@ -13,6 +13,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the deb or (when the deb is not targeted) the Flatpak bundle, and the APK on
   the connected device.
 
+### Changed
+
+- Local macOS builds no longer need create-dmg. Without it, the dmg has the
+  app and the Applications link but no window layout. CI still requires it.
+
 ## [1.0.0] - 2026-10-20
 
 ### Added

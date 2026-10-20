@@ -264,8 +264,8 @@ Rollout by milestone:
     `xdotool`, `x11-utils`. Prerelease versions use a tilde (every prerelease hyphen
     becomes `~`), so they sort below the release; dpkg compares digit runs
     numerically (`~beta.9` < `~beta.10`).
-- **macOS packaging.** On a Mac with Xcode and `brew install create-dmg`,
-  run `scripts/package-macos.sh [version [build-number]]`. It calls
+- **macOS packaging.** On a Mac with Xcode, run
+  `scripts/package-macos.sh [version [build-number]]`. It calls
   `xcodebuild` directly so packaging does not need the external `lkm-build`
   engine used by `scripts/build.sh app`. Release builds use
   `ONLY_ACTIVE_ARCH=NO` and `ARCHS="arm64 x86_64"`. Without arguments, versions
@@ -282,12 +282,14 @@ Rollout by milestone:
     this script. CI must export signing variables only when their secrets
     are non-empty; the artifact proof job needs no signing secrets.
   - `ditto -c -k --keepParent` produces `dist/MonkeysPaw-<version>.zip`.
-    `create-dmg` receives a staging folder containing `MonkeysPaw.app` and
-    adds the `/Applications` link, producing
+    `create-dmg` (`brew install create-dmg`) receives a staging folder
+    containing `MonkeysPaw.app` and adds the `/Applications` link, producing
     `dist/MonkeysPaw-<version>.dmg`. CI skips Finder styling with
     `--skip-jenkins`. A nonzero `create-dmg` status is tolerated only if a
     newly created image exists and passes `hdiutil verify`; stale output
-    cannot satisfy this check. Only verified artifacts are copied to `dist/`.
+    cannot satisfy this check. CI requires `create-dmg`; a local build
+    without it uses `hdiutil create` for an image with the same app and
+    link but no window layout. Only verified artifacts are copied to `dist/`.
     `dist/MonkeysPaw-<version>.sha256` records both files; download all three
     together and run `shasum -a 256 -c MonkeysPaw-<version>.sha256` before
     installation (`docs/platform/macos.md`).
