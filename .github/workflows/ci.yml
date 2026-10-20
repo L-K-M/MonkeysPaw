@@ -542,6 +542,8 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: Test, lint and assemble both APKs
         run: ./gradlew :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
+      - name: Compile native file-store regression APK
+        run: ./gradlew :app:assembleDebugAndroidTest
       - name: Stage and verify the signed release APK and checksum
         id: release
         run: |

@@ -217,6 +217,7 @@ obligations. The two automated-only sync sections are listed separately below.
 | [AND22](android.md#android-sync-scheduling-m10-z20-not-run) `P[1,2,3]; T1.R[1,2,3,4,5,6,7,8].C2` | C/P-AND22-01, C/P-AND22-02 |
 | [AND23](android.md#android-invite-links-m10-z23-not-run) `P[1]; T1.R[1,2,3,4,5,6].C2` | C/P-AND23-01 |
 | [AND24](android.md#android-sync-m10-not-run-owner) `P[1,2,3]; T1.R[1,2,3,4,5,6].C2; T2.R[1,2,3,4,5,6,7,8,9,10].C2` | C/P-AND24-API26-27, C/P-AND24-API28+-StrongBox-capable |
+| [AND25](android.md#native-file-store-regression) | No pending owner obligation: automated sandbox driver regression and its execution procedure; existing physical/native owner rows remain separate. |
 | [AS01](assistant.md#m4-assistant-owner-checks) `B[1,2,3,4,5]; P[1,2]; T1.R[1,2,3,4].C2; T1.R[1,2,3,4].C3; T1.R[1,2,3,4].C4; T1.R[1,2,3,4].C5` | C/P-AS01-1-MAC-dmg, C/P-AS01-2-MAC-dmg, C/P-AS01-3-X11, C/P-AS01-3-GNOME-W, C/P-AS01-3-KDE-W, C/P-AS01-4-X11, C/P-AS01-4-GNOME-W, C/P-AS01-4-KDE-W |
 | [AS02](assistant.md#library-flows) `P[1]; U[1,2,3,4,5,6,7]` | C/P-AS01-1-MAC-dmg, C/P-AS01-2-MAC-dmg, C/P-AS01-3-X11, C/P-AS01-3-GNOME-W, C/P-AS01-3-KDE-W, C/P-AS01-4-X11, C/P-AS01-4-GNOME-W, C/P-AS01-4-KDE-W |
 | [AS03](assistant.md#key-tiers-and-profile-lifecycle) `P[1,2,3]; T1.R[1,2,3,4,5,6].C2; T1.R[1,2,3,4,5,6,7,8].C3` | C/P-AS03-MAC-dmg, C/P-AS03-GNOME-W, C/P-AS03-KDE-W, C/P-AS03-X11 |

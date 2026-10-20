@@ -125,6 +125,7 @@ android {
         targetSdk = 37
         versionCode = 2
         versionName = "1.0.0"
+        testInstrumentationRunner = "ch.lkmc.monkeyspaw.data.FileStoreInstrumentation"
     }
 
     // Packaging keeps the committed numeric version/code and injects the tag suffix.

@@ -268,6 +268,20 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
     }
 
     @Test
+    fun `an occupied publication is refused even when it names the staged inode`() {
+        val publication = object : AtomicPublication() {
+            override fun create(temporary: Path, destination: Path) {
+                Files.createLink(destination, temporary)
+                super.create(temporary, destination)
+            }
+        }
+        val store = AndroidPromptStore(libraryDir.toFile(), publication)
+        assertFailsWith<StoreError.AlreadyExists> { store.create("kept".encodeToByteArray(), "p.md") }
+        assertEquals("kept", store.read("p.md").decodeToString())
+        assertOnlyLeaf(libraryDir, "p.md")
+    }
+
+    @Test
     fun `move creates parents and collisions leave both files intact`() {
         val store = AndroidPromptStore(libraryDir.toFile())
         store.create("source".encodeToByteArray(), "p.md")
@@ -284,9 +298,9 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
     fun `move publication race preserves the source and occupied destination`() {
         put(libraryDir.resolve("p.md"))
         val publication = object : AtomicPublication() {
-            override fun create(temporary: Path, destination: Path) {
+            override fun move(source: Path, destination: Path) {
                 Files.write(destination, byteArrayOf(3))
-                super.create(temporary, destination)
+                super.move(source, destination)
             }
         }
         val store = AndroidPromptStore(libraryDir.toFile(), publication)
@@ -296,12 +310,11 @@ internal class AndroidFileStoreTest : TemporaryFiles() {
     }
 
     @Test
-    fun `failed source unlink removes the published link without losing the source`() {
+    fun `failed exclusive move preserves the source and missing destination`() {
         put(libraryDir.resolve("p.md"))
         val store = AndroidPromptStore(libraryDir.toFile(), object : AtomicPublication() {
-            override fun unlink(path: Path) {
-                if (path == libraryDir.resolve("p.md")) throw IOException("source unlink failed")
-                super.unlink(path)
+            override fun move(source: Path, destination: Path) {
+                throw IOException("move failed")
             }
         })
         assertFailsWith<StoreError.IOFailure> { store.move("p.md", "new.md") }
