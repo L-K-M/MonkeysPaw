@@ -23,7 +23,7 @@ class BuildTests(unittest.TestCase):
         (self.root / "scripts").mkdir()
         (self.root / "packaging").mkdir()
         shutil.copy(ROOT / "scripts/build.sh", self.root / "scripts/build.sh")
-        for name in ("dirname", "basename", "rm", "mkdir", "sha256sum", "awk", "sed", "tail"):
+        for name in ("dirname", "basename", "rm", "mkdir", "sha256sum", "awk", "sed", "tail", "tr"):
             (self.bin / name).symlink_to(shutil.which(name))
         self.script(self.bin / "id", 'if [[ "$1" == -u ]]; then echo "${FAKE_UID:-1000}"; else exit 1; fi\n')
         (self.bin / "python3").symlink_to(sys.executable)
