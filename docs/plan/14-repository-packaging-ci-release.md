@@ -314,7 +314,9 @@ Rollout by milestone:
   architectures.
   `scripts/build.sh app [lkm-build flags]` preserves the
   app-only engine path, including `--clean`, `--debug`, `--run`, `--install`,
-  `--zip` and `--dmg`.
+  `--zip` and `--dmg`. The orchestrator's own `--install` installs this run's
+  successful artifacts on the host or the one ready Android device, one Linux
+  route per user; `server-image` deploys through `./update.sh` instead.
 - **Local Android packaging.** `scripts/package-android.sh [version]` builds
   `:app:assembleRelease` through `android/gradlew` with two workers. It
   requires executable wrapper/JDK 17+ tools, SDK platform `android-37.0`

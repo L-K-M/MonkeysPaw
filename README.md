@@ -70,6 +70,7 @@ receipt. Follow your platform guide above, the [Assistant checklist](docs/platfo
 [Android checklist](docs/platform/android.md) or [server procedures](docs/platform/server.md).
 Read [Security](SECURITY.md) for trust boundaries and signing limits.
 
-[Builds and releases](CICD.md) describes local prerequisites, CI and artifacts.
+[Builds and releases](CICD.md) describes local prerequisites, CI and artifacts;
+`scripts/build.sh --install` builds and installs from source.
 The [M7 acceptance ledger](docs/platform/m7-acceptance.md) starts entirely
 NOT RUN; code and green automated checks do not close owner acceptance.

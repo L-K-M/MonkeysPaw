@@ -23,7 +23,7 @@ class BuildTests(unittest.TestCase):
         (self.root / "scripts").mkdir()
         (self.root / "packaging").mkdir()
         shutil.copy(ROOT / "scripts/build.sh", self.root / "scripts/build.sh")
-        for name in ("dirname", "basename", "rm", "mkdir", "sha256sum", "awk"):
+        for name in ("dirname", "basename", "rm", "mkdir", "sha256sum", "awk", "sed", "tail"):
             (self.bin / name).symlink_to(shutil.which(name))
         (self.bin / "python3").symlink_to(sys.executable)
         for name in ("swift", "dpkg-deb", "dpkg-shlibdeps", "readelf", "strip", "flatpak-builder", "pkg-config"):
@@ -39,7 +39,28 @@ esac
 ''')
         self.script(self.bin / "open", 'printf "open\\n" >> "$BUILD_CALLS"\n')
         self.script(self.bin / "dpkg", "echo amd64\n")
-        self.script(self.bin / "flatpak", '[[ "${FAKE_MISSING_RUNTIME:-}" != 1 ]]\n')
+        self.script(self.bin / "flatpak", '''
+if [[ "$1" == install ]]; then
+  printf 'flatpak %s\n' "$*" >> "$BUILD_CALLS"
+  [[ "${FAKE_INSTALL_FAILURE:-}" != 1 ]]
+else
+  [[ "${FAKE_MISSING_RUNTIME:-}" != 1 ]]
+fi
+''')
+        self.script(self.bin / "sudo", '''
+printf 'sudo %s\n' "$*" >> "$BUILD_CALLS"
+[[ "${FAKE_INSTALL_FAILURE:-}" != 1 ]]
+''')
+        self.script(self.bin / "apt-get", "exit 0\n")
+        sdk = self.root / "sdk"
+        (sdk / "platform-tools").mkdir(parents=True)
+        self.script(sdk / "platform-tools/adb", '''
+printf 'adb %s\n' "$*" >> "$BUILD_CALLS"
+if [[ "$1" == get-state ]]; then
+  [[ "${FAKE_ADB_STATE:-device}" != none ]] || exit 1
+  echo "${FAKE_ADB_STATE:-device}"
+fi
+''')
         self.script(self.root / "scripts/check-version.py", "\n".join((
             f"#!{sys.executable}", "import sys",
             'print("0.2.0-rc-1" if sys.argv[1] == "--committed-version" else sys.argv[2].replace("-", "~"))',
@@ -60,18 +81,23 @@ fi
 [[ "$(< "$1")" == 'fresh deb' ]] || exit 1
 printf 'flatpak\n' >> "$BUILD_CALLS"
 [[ "${FAKE_FLATPAK_FAILURE:-}" != 1 ]]
+printf 'bundle' > dist/monkeyspaw_0.2.0-rc-1_x86_64.flatpak
 ''')
         self.script(self.root / "scripts/package-android.sh", '''
 if [[ "$1" == --check ]]; then
   [[ "${FAKE_ANDROID_AVAILABLE:-}" == 1 ]] || { echo '!! no Android SDK'; exit 1; }
 else
   printf 'android\n' >> "$BUILD_CALLS"
+  mkdir -p dist
+  printf 'apk' > "dist/monkeyspaw-v$1.apk"
 fi
 ''')
         self.script(self.bin / "engine", 'printf "%s\\n" "$BUILD_APP_NAME" "$BUILD_KIND" "$BUILD_XCODE_SCHEME" "$@" > "$BUILD_CALLS"\n')
         self.env = os.environ | {"PATH": str(self.bin), "SWIFT": "swift",
                                  "BUILD_CALLS": str(self.root / "calls"), "LKM_BUILD_BIN": "engine",
-                                 "DOCKER_CALLS": str(self.root / "docker-calls")}
+                                 "DOCKER_CALLS": str(self.root / "docker-calls"),
+                                 "ANDROID_HOME": str(sdk)}
+        self.env.pop("ANDROID_SDK_ROOT", None)
 
     def script(self, path, body, shebang=True):
         path.write_text(("#!/bin/bash\nset -euo pipefail\n" if shebang else "") + body)
@@ -281,6 +307,83 @@ else:
         result = self.run_build("app", "--debug", "--run")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls(), ["MonkeysPaw", "xcode", "MonkeysPaw", "--debug", "--run"])
+
+    def test_install_puts_the_deb_on_linux_and_never_a_second_route(self):
+        deb_install = "sudo apt-get install -y --reinstall ./dist/monkeyspaw_0.2.0~rc~1_amd64.deb"
+        for args in (("--install",), ("flatpak", "deb", "--install")):
+            with self.subTest(args=args):
+                self.clear_calls()
+                result = self.run_build(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.calls(), ["deb", "flatpak", deb_install])
+                self.assertIn("install deb: ok (apt-get)", result.stdout)
+                self.assertIn("install flatpak: skipped (the deb is installed", result.stdout)
+
+    def test_install_flatpak_alone_installs_the_user_bundle(self):
+        result = self.run_build("flatpak", "--install")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), [
+            "deb", "flatpak",
+            "flatpak install --user --assumeyes --reinstall --bundle dist/monkeyspaw_0.2.0-rc-1_x86_64.flatpak",
+        ])
+        self.assertIn("install flatpak: ok (flatpak --user)", result.stdout)
+
+    def test_install_android_uses_the_sdk_adb_on_one_ready_device(self):
+        result = self.run_build("android", "--install", FAKE_ANDROID_AVAILABLE="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), [
+            "android", "adb get-state", "adb install -r dist/monkeyspaw-v0.2.0-rc-1.apk",
+        ])
+        self.assertIn("install android: ok (adb)", result.stdout)
+
+    def test_install_android_prefers_the_local_properties_sdk(self):
+        sdk = self.root / "local sdk"
+        (sdk / "platform-tools").mkdir(parents=True)
+        self.script(sdk / "platform-tools/adb", '''
+printf 'local-adb %s\n' "$1" >> "$BUILD_CALLS"
+[[ "$1" != get-state ]] || echo device
+''')
+        (self.root / "android").mkdir()
+        escaped = str(sdk).replace(":", "\\:")
+        (self.root / "android/local.properties").write_text(f"sdk.dir = {escaped}\n")
+        result = self.run_build("android", "--install", FAKE_ANDROID_AVAILABLE="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["android", "local-adb get-state", "local-adb install"])
+
+    def test_install_failures_fail_the_run_after_every_build(self):
+        result = self.run_build("android", "deb", "--install", FAKE_ANDROID_AVAILABLE="1", FAKE_ADB_STATE="none")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("adb install -r dist/monkeyspaw-v0.2.0-rc-1.apk", self.calls())
+        self.assertIn("install android: FAILED (no single ready device", result.stdout)
+        self.assertIn("install deb: ok (apt-get)", result.stdout)
+
+        self.clear_calls()
+        result = self.run_build("deb", "--install", FAKE_INSTALL_FAILURE="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("install deb: FAILED (apt-get install failed)", result.stdout)
+
+        self.clear_calls()
+        (self.bin / "sudo").unlink()
+        result = self.run_build("deb", "--install")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["deb"])
+        self.assertIn("install deb: FAILED (missing sudo", result.stdout)
+
+    def test_install_skips_failed_builds_and_points_the_server_to_update(self):
+        self.install_docker()
+        result = self.run_build("deb", "server-image", "--install", FAKE_DEB_FAILURE="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["deb", "server-image"])
+        self.assertNotIn("install deb", result.stdout)
+        self.assertIn("install server-image: skipped (deploy the server with ./update.sh)", result.stdout)
+
+    def test_app_engine_keeps_its_install_flag_and_other_app_flags_still_redirect(self):
+        result = self.run_build("app", "--install")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["MonkeysPaw", "xcode", "MonkeysPaw", "--install"])
+        result = self.run_build("--run")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("belongs to the app engine", result.stderr)
 
 
 class FlatpakRepackTests(unittest.TestCase):
