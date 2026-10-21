@@ -172,7 +172,7 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertNil(picker.requestedIntent)
         XCTAssertTrue(launched.isEmpty)
         XCTAssertEqual(delegate.libraryWindow?.presentation.editorState.prompt?.relativePath, RelativePath(path))
-        XCTAssertEqual(delegate.libraryWindow?.presentation.editorTab, .edit)
+        XCTAssertEqual(delegate.libraryWindow?.presentation.editorMode, .edit)
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
 

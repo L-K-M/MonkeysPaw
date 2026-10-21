@@ -55,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let makeHotkeyBackend: (() -> MacHotkeyBackend)?
     private let pasteInjectors: [PasteInjector]?
     private let editorDialog: LibraryWindowController.DialogPresenter
-    private let importChooser: LibraryWindowController.ImportChooser
+    private let importChooser: LibraryWindowController.ImportChooser?
     private let replyToTermination: (Bool) -> Void
     private let revealLibraryURI: (URL) -> Void
     private let folderChooser: SettingsWindowController.FolderChooser
@@ -103,7 +103,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var onboardingModel: OnboardingModel?
     private var libraryStatusObserver: UUID?
     private var libraryMenuItems: [NSMenuItem] = []
-    private var importMenuItem: NSMenuItem?
     private var isShutDown = false
     private var onboardingStarted = false
     private var presentedOnboardingStep: OnboardingModel.Step?
@@ -156,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
          makeUpdateScheduler: (MainThread) -> MacUpdateScheduler = { MacUpdateScheduler(mainThread: $0) },
          makeSelfTestTarget: @escaping () -> SelfTestTarget = { TextFieldSelfTestTarget() },
          editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
-         importChooser: @escaping LibraryWindowController.ImportChooser = MacImportChooser.choose,
+         importChooser: LibraryWindowController.ImportChooser? = nil,
          replyToTermination: @escaping (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) },
          revealLibrary: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
          folderChooser: @escaping SettingsWindowController.FolderChooser = SettingsWindowController.chooseFolder,
@@ -946,7 +945,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 presentDialog: editorDialog, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
                 conflictProvider: conflictProvider,
                 syncStatus: makeSyncStatus(.library),
-                importChooser: importChooser,
+                importChooser: { [weak self] window, done in
+                    guard let self else { done([]); return {} }
+                    if let chooser = self.importChooser { return chooser(window, done) }
+                    let imports = self.libraryWindow?.presentation.imports
+                    return MacImportChooser.choose(in: window,
+                        destinations: imports?.destinations.map(\.string) ?? [],
+                        destination: imports?.destination.string ?? ImportStrings.defaultDestination,
+                        selectDestination: { [weak imports] path in imports?.selectDestination(RelativePath(path)) },
+                        done: done)
+                },
+                revealPrompt: { [weak self] path in
+                    guard let self, (try? FileStorePath.validate(path.string)) != nil else { return }
+                    self.revealLibraryURI(self.libraryDirectory.appendingPathComponent(path.string))
+                },
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
         updateLibraryMenuItems()
@@ -1194,55 +1206,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func installMainMenu() {
-        // AppKit routes editing key equivalents through the main menu even
-        // while the accessory policy hides it.
-        let mainMenu = NSMenu()
-        let appItem = NSMenuItem()
-        let appMenu = NSMenu()
-        // Library status owns availability, including runtime root loss.
-        appMenu.autoenablesItems = false
-        addRepeatItem(to: appMenu)
-        addLibraryItem(to: appMenu, keyEquivalent: "l")
-        let importItem = appMenu.addItem(withTitle: ImportStrings.action, action: #selector(importFromMenu), keyEquivalent: "i")
-        importItem.target = self
-        importItem.keyEquivalentModifierMask = [.command, .shift]
-        importMenuItem = importItem
-        updateLibraryMenuItems()
-        addSettingsItem(to: appMenu)
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit \(AppIdentity.displayName)",
-                        action: #selector(NSApplication.terminate(_:)),
-                        keyEquivalent: "q")
-        appItem.submenu = appMenu
-        mainMenu.addItem(appItem)
-
-        mainMenu.addItem(makeLibraryFileMenu())
-
-        // Leave targets unset so the responder chain finds the focused text view.
-        let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
-        editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All",
-                         action: #selector(NSStandardKeyBindingResponding.selectAll(_:)),
-                         keyEquivalent: "a")
-        editItem.submenu = editMenu
-        mainMenu.addItem(editItem)
-
-        NSApp.mainMenu = mainMenu
+        // Editing commands need the responder chain even while accessory policy
+        // hides the menu bar. MainMenu also registers Services, Window and Help.
+        MainMenu.install()
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(saveLibraryPrompt), #selector(renameLibraryPrompt),
-             #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt), #selector(showLibraryAssistant):
-            return validateLibraryFileMenuItem(menuItem, in: NSApp.keyWindow)
         case #selector(importFromMenu):
             return libraryWindow?.presentation.imports?.canImport == true
+                && NSApp.keyWindow?.attachedSheet == nil
+                && (NSApp.keyWindow?.firstResponder as? NSTextInputClient)?.hasMarkedText() != true
+                && libraryWindow?.presentation.fileCommandRequest == nil
+                && libraryWindow?.presentation.editorState.pendingDecision == nil
+                && libraryWindow?.presentation.isScopeDropPending == false
+        case #selector(checkForUpdates(_:)):
+            return currentReleaseVersion.flatMap(ReleaseVersion.init) != nil
+                && settingsWindow?.presentation.updates.state.update?.isChecking != true
+        case #selector(openHelp(_:)):
+            return true
         case #selector(openLibraryFromMenu), #selector(showLibrary):
             return libraryStatusModel?.libraryAvailable == true
         case #selector(showPanel), #selector(showSetup), #selector(showSettings), #selector(repeatLast):
@@ -1289,7 +1271,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.title = libraryStatusModel?.menuLabel ?? OnboardingStrings.libraryUnavailableMenu
             item.isEnabled = libraryStatusModel?.libraryAvailable == true
         }
-        importMenuItem?.isEnabled = libraryWindow?.presentation.imports?.canImport == true
     }
 
     @objc private func importFromMenu() {
@@ -1466,6 +1447,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindow?.show()
         onboardingModel?.markSetupPresented()
         recordLegacySetup()
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        guard currentReleaseVersion.flatMap(ReleaseVersion.init) != nil else { return }
+        mainThread.run { [weak self] in
+            guard let self, !self.isShutDown else { return }
+            self.cancelPickerForOwnedWindow()
+            self.settingsWindow?.presentation.selectedTab = .general
+            self.settingsWindow?.show()
+            self.settingsWindow?.presentation.updates.model.checkNow()
+        }
+    }
+
+    @objc func openHelp(_ sender: Any?) {
+        guard let url = URL(string: "https://github.com/L-K-M/MonkeysPaw#readme") else { return }
+        launchURI(url)
     }
 
     @objc func showSettings() {

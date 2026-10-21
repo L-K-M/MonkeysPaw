@@ -50,12 +50,15 @@ final class MacConflictViewTests: XCTestCase {
             accessibilityReady.fulfill()
         }
         wait(for: [accessibilityReady], timeout: 5)
-        let expectedHeadings: Set<String> = ["Resolve conflict", "Comparison"]
-        var headings = Set<String>()
+        let expectedIdentifiers: Set<String> = ["library-conflict-status", "library-conflict-compare",
+            "library-conflict-keep-server", "library-conflict-keep-mine", "library-conflict-keep-both",
+            "library-conflict-refresh"]
+        var identifiers = Set<String>()
         XCTAssertTrue(h.spin {
-            headings = self.accessibilityHeadings(host)
-            return expectedHeadings.isSubset(of: headings)
-        }, "Expected distinct conflict and comparison headings; observed: \(headings.sorted())")
+            identifiers = self.accessibilityIdentifiers(host)
+            return expectedIdentifiers.isSubset(of: identifiers)
+        }, "Expected the compact conflict controls; observed: \(identifiers.sorted())")
+        XCTAssertFalse(identifiers.contains("library-conflict-diff"), "Compare starts collapsed")
         XCTAssertTrue(h.transport.originalPuts.isEmpty)
         view.requestResolution(.keepMine)
         h.drainResolver()
@@ -371,31 +374,22 @@ final class MacConflictViewTests: XCTestCase {
         wait(for: [finished], timeout: 5)
     }
 
-    private func accessibilityHeadings(_ element: NSObject) -> Set<String> {
-        var headings = Set<String>()
-        // SwiftUI children expose accessibility selectors without full protocol conformance.
-        let roleSelector = #selector(NSAccessibilityProtocol.accessibilityRole)
-        if element.responds(to: roleSelector),
-           let role = element.perform(roleSelector)?.takeUnretainedValue() as? String,
-           role == kAXHeadingRole {
-            // Native text can expose its content as a value rather than a label or title.
-            for selector in [#selector(NSAccessibilityProtocol.accessibilityLabel),
-                             #selector(NSAccessibilityProtocol.accessibilityTitle),
-                             #selector(NSAccessibilityProtocol.accessibilityValue)] {
-                guard element.responds(to: selector),
-                      let value = element.perform(selector)?.takeUnretainedValue() else { continue }
-                let name = (value as? String) ?? (value as? NSAttributedString)?.string
-                if let name, !name.isEmpty { headings.insert(name); break }
-            }
+    private func accessibilityIdentifiers(_ element: NSObject) -> Set<String> {
+        var identifiers = Set<String>()
+        // SwiftUI exposes selectors even when a node lacks full protocol conformance.
+        let identifierSelector = Selector(("accessibilityIdentifier"))
+        if element.responds(to: identifierSelector),
+           let identifier = element.perform(identifierSelector)?.takeUnretainedValue() as? String {
+            identifiers.insert(identifier)
         }
         let childrenSelector = #selector(NSAccessibilityProtocol.accessibilityChildren)
         if element.responds(to: childrenSelector),
            let children = element.perform(childrenSelector)?.takeUnretainedValue() as? [Any] {
             for child in children {
-                if let child = child as? NSObject { headings.formUnion(accessibilityHeadings(child)) }
+                if let child = child as? NSObject { identifiers.formUnion(accessibilityIdentifiers(child)) }
             }
         }
-        return headings
+        return identifiers
     }
 }
 

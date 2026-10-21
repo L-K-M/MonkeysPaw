@@ -1,16 +1,14 @@
 import AppKit
-import Carbon.HIToolbox
+import Combine
 import MonkeysPawCore
 import SwiftUI
 
-final class LibraryWindowController: NSObject, NSWindowDelegate {
+final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     typealias DialogPresenter = (NSWindow, LibraryEditorDialog, @escaping (LibraryEditorResponse) -> Void) -> (() -> Void)
     typealias ImportChooser = (NSWindow, @escaping ([URL]) -> Void) -> (() -> Void)
     let presentation: LibraryViewState
-    private(set) var window: NSWindow?
     private let mainThread: MainThread
     private let activation: WindowActivationCoordinator
-    private var keyMonitor: Any?
     private var isTornDown = false
     private let presentDialog: DialogPresenter
     private let importChooser: ImportChooser
@@ -19,6 +17,19 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     private var dialogRevision: UInt64 = 0
     private var closeRequested = false
     private var dismissedConflict: EditorConflict?
+    private(set) var splitController: NSSplitViewController?
+    private(set) var promptList: LibraryPromptListController?
+    private(set) var inspectorItem: NSSplitViewItem?
+    private var inspectorObservation: NSKeyValueObservation?
+    private var presentationObservation: AnyCancellable?
+    private var presentationUpdatePending = false
+    private var appliedSearchFocusRevision: UInt64 = 0
+    var searchItem: NSSearchToolbarItem? {
+        window?.toolbar?.items.first { $0.itemIdentifier == .librarySearch } as? NSSearchToolbarItem
+    }
+    private var modeItem: NSToolbarItemGroup? {
+        window?.toolbar?.items.first { $0.itemIdentifier == .libraryEditorMode } as? NSToolbarItemGroup
+    }
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, activation: WindowActivationCoordinator,
@@ -29,6 +40,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
          conflictProvider: LibraryViewState.ConflictProvider? = nil,
          syncStatus: SyncStatusViewState? = nil,
          importChooser: @escaping ImportChooser = MacImportChooser.choose,
+         revealPrompt: @escaping (RelativePath) -> Void = { _ in },
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
         self.activation = activation
@@ -37,19 +49,21 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         presentation = LibraryViewState(model: model, editor: editor, libraryPath: libraryPath, available: available,
             mainThread: mainThread, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
             conflictProvider: conflictProvider, syncStatus: syncStatus,
-            revealLibrary: revealLibrary)
-        super.init()
+            revealPrompt: revealPrompt, revealLibrary: revealLibrary)
+        super.init(window: nil)
         connectImportChooser()
         presentation.onEditorChange = { [weak self] in self?.updateDialog() }
-        presentation.onAssistantVisibilityChange = { [weak self] in self?.updateAssistantWindowSize() }
-        presentation.onConflictVisibilityChange = { [weak self] in self?.updateAssistantWindowSize() }
         presentation.onConflictRequested = { [weak self] in
             self?.dismissedConflict = nil
             self?.updateDialog()
         }
+        presentationObservation = presentation.objectWillChange.sink { [weak self] _ in
+            self?.schedulePresentationUpdate()
+        }
     }
 
-    deinit { if let keyMonitor { NSEvent.removeMonitor(keyMonitor) } }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     func rebind(to model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
                 imports: LibraryImportViewState? = nil, makeAssistant: LibraryViewState.AssistantFactory? = nil,
@@ -71,17 +85,20 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    // Window construction is explicit in show(); reading window before the first
+    // show must not attempt to load a nib in hosted tests or during app launch.
+    override func loadWindow() {}
+
     func show() {
         mainThread.run { [weak self] in
             guard let self, !self.isTornDown else { return }
             self.presentation.didShow()
             let window = self.window ?? self.makeWindow()
-            if self.window == nil { window.center() }
             self.window = window
-            self.updateAssistantWindowSize()
+            self.refreshWindowPresentation()
             if window.isMiniaturized { window.deminiaturize(nil) }
-            self.observeKeys()
             self.activation.show(window)
+            self.refreshWindowPresentation()
             self.updateDialog()
         }
     }
@@ -91,7 +108,6 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         isTornDown = true
         endDialog()
         presentation.deactivate()
-        removeKeyMonitor()
         (window as? LibraryWindow)?.closeAfterApproval()
     }
 
@@ -105,7 +121,6 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         presentation.retireAssistant()
         presentation.imports?.cancelChoosing()
         endDialog()
-        removeKeyMonitor()
     }
 
     func windowDidDeminiaturize(_ notification: Notification) { refreshDialogsAfterVisibilityChange() }
@@ -144,8 +159,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
                 || state.conflict?.isLoading == true || awaitingConflict {
                 desired = nil
             } else if let conflict = state.conflict, conflict != self.dismissedConflict {
-                desired = .conflict(conflict, status: state.status)
-            } else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status) }
+                desired = .conflict(conflict, status: state.status, title: self.presentation.displayTitle)
+            } else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status, title: self.presentation.displayTitle) }
             else if let request = self.presentation.fileCommandRequest { desired = .fileCommand(request) }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
@@ -162,11 +177,11 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
                     self.cancelDialog = nil
                     self.dialogRevision &+= 1
                     switch (desired, response) {
-                    case (.decision(let decision, _), .decision(let choice)):
+                    case (.decision(let decision, _, _), .decision(let choice)):
                         self.presentation.editor.resolveDecision(choice, id: decision.id)
                     case (.conflict, .conflict(let choice)):
                         self.presentation.editor.resolveConflict(choice)
-                    case (.conflict(let conflict, _), .dismissConflict):
+                    case (.conflict(let conflict, _, _), .dismissConflict):
                         self.dismissedConflict = conflict
                         if let decision = self.presentation.editor.state.pendingDecision {
                             self.presentation.editor.resolveDecision(.cancel, id: decision.id)
@@ -189,72 +204,57 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         cancel?()
     }
 
-    private func updateAssistantWindowSize() {
-        guard let window else { return }
-        let size = Limits.setupWindowSize
-        var width = CGFloat(size.width)
-        if presentation.isAssistantVisible { width += 320 }
-        if presentation.conflict != nil { width += 520 }
-        window.contentMinSize = NSSize(width: width, height: CGFloat(size.height))
-        let current = window.contentRect(forFrameRect: window.frame).size
-        if current.width < width { window.setContentSize(NSSize(width: width, height: current.height)) }
-    }
-
-    /// Explicit routing seam: hosted tests call this directly because sendEvent
-    /// does not pass through local monitors or guarantee a regular key window.
-    @discardableResult
-    func handleKeyEvent(_ event: NSEvent) -> Bool {
-        guard !isTornDown, let window, window.isVisible, event.window === window else { return false }
-        if let client = window.firstResponder as? NSTextInputClient, client.hasMarkedText() { return false }
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            .subtracting([.capsLock, .numericPad, .function])
-        if event.keyCode == UInt16(kVK_Escape), flags.isEmpty {
-            guard activeDialog == nil else { return false }
-            escape()
-            return true
-        }
-        if flags == [.command],
-           event.keyCode == UInt16(kVK_ANSI_S) || event.charactersIgnoringModifiers?.lowercased() == "s" {
-            presentation.save()
-            return true
-        }
-        if flags == [.command],
-           event.keyCode == UInt16(kVK_ANSI_W) || event.charactersIgnoringModifiers?.lowercased() == "w" {
-            requestClose()
-            return true
-        }
-        if flags == [.command, .shift],
-           event.keyCode == UInt16(kVK_ANSI_A) || event.charactersIgnoringModifiers?.lowercased() == "a" {
-            guard activeDialog == nil,
-                  presentation.isAssistantVisible || presentation.canShowAssistant else { return false }
-            presentation.toggleAssistant()
-            return true
-        }
-        if flags == [.command, .shift],
-           event.keyCode == UInt16(kVK_ANSI_F) || event.charactersIgnoringModifiers?.lowercased() == "f" {
-            presentation.toggleFavorite()
-            return true
-        }
-        return false
-    }
-
-    private func escape() {
-        if presentation.isAssistantVisible { presentation.closeAssistant(); return }
-        guard !isTornDown, !presentation.clearFilterForEscape() else { return }
-        requestClose()
-    }
-
-    private func observeKeys() {
-        removeKeyMonitor()
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.window?.isKeyWindow == true else { return event }
-            return self.handleKeyEvent(event) ? nil : event
+    // objectWillChange fires before @Published assigns. One run-loop callback
+    // reads the completed batch, then uses the injected UI-thread boundary.
+    private func schedulePresentationUpdate() {
+        guard !presentationUpdatePending else { return }
+        presentationUpdatePending = true
+        RunLoop.main.perform(inModes: [.common]) { [weak self] in
+            self?.mainThread.run { [weak self] in
+                guard let self else { return }
+                self.presentationUpdatePending = false
+                self.refreshWindowPresentation()
+            }
         }
     }
 
-    private func removeKeyMonitor() {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        keyMonitor = nil
+    override func performTextFinderAction(_ sender: Any?) { routeTextFinder(sender) }
+
+    func enqueueUIAction(_ work: @escaping () -> Void) {
+        RunLoop.main.perform(inModes: [.common]) { [mainThread] in mainThread.run(work) }
+    }
+
+    func refreshWindowPresentation() {
+        guard !isTornDown, let window else { return }
+        let state = presentation.editorState
+        if let prompt = state.prompt {
+            window.title = presentation.displayTitle
+            window.subtitle = prompt.relativePath.string
+            window.representedURL = URL(fileURLWithPath: presentation.activeLibraryPath, isDirectory: true)
+                .appendingPathComponent(prompt.relativePath.string)
+        } else {
+            window.title = LibraryStrings.sectionTitle(presentation.snapshot.selectedSection,
+                sections: presentation.snapshot.sections)
+            window.subtitle = LibraryStrings.promptCount(presentation.snapshot.rows.count)
+            window.representedURL = nil
+        }
+        window.isDocumentEdited = state.isDirty
+        if let item = inspectorItem, item.isCollapsed == presentation.isInspectorVisible {
+            let collapsed = !presentation.isInspectorVisible
+            if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { item.isCollapsed = collapsed }
+            else { item.animator().isCollapsed = collapsed }
+        }
+        if let field = searchItem?.searchField, !field.stringValue.utf8.elementsEqual(presentation.snapshot.filter.utf8),
+           (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
+            field.stringValue = presentation.snapshot.filter
+        }
+        modeItem?.selectedIndex = presentation.editorMode == .edit ? 0 : 1
+        updateToolbarItems()
+        window.toolbar?.validateVisibleItems()
+        if appliedSearchFocusRevision != presentation.focusRevision, commandsAvailable(in: window) {
+            appliedSearchFocusRevision = presentation.focusRevision
+            if searchItem != nil, window.toolbar?.isVisible == true { searchLibrary(nil) }
+        }
     }
 
     static func makeEditorAlert(for dialog: LibraryEditorDialog) -> NSAlert {
@@ -262,13 +262,22 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         alert.alertStyle = .warning
         alert.messageText = dialog.title
         alert.informativeText = dialog.message
+        let isRevert: Bool
+        if case .decision(let decision, _, _) = dialog { isRevert = decision.action == .revert }
+        else { isRevert = false }
         for response in dialog.responses {
-            let button = alert.addButton(withTitle: response.title)
-            // Return saves unsaved edits; overwriting an external version requires an explicit choice.
+            let title = isRevert && response == .decision(.discard) ? EditorStrings.revert : response.title
+            let button = alert.addButton(withTitle: title)
             switch response {
-            case .decision(.save), .rename, .move: button.keyEquivalent = "\r"
-            case .decision(.cancel), .dismissConflict, .cancelFileCommand: button.keyEquivalent = "\u{1b}"
-            case .decision(.discard), .conflict, .delete: button.keyEquivalent = ""
+            case .decision(.save), .rename, .move:
+                button.keyEquivalent = "\r"
+            case .decision(.cancel), .dismissConflict, .cancelFileCommand:
+                button.keyEquivalent = "\u{1b}"
+            case .decision(.discard):
+                button.keyEquivalent = isRevert ? "" : "d"
+                button.keyEquivalentModifierMask = isRevert ? [] : .command
+            case .conflict, .delete:
+                button.keyEquivalent = ""
             }
             button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard) || response == .delete
         }
@@ -300,27 +309,77 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
     }
 
     private func makeWindow() -> NSWindow {
-        let size = Limits.setupWindowSize
-        let window = LibraryWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(size.width), height: CGFloat(size.height)),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = LibraryStrings.title
+        let window = LibraryWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 680),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        window.title = LibraryStrings.sectionTitle(.all, sections: presentation.snapshot.sections)
+        window.toolbarStyle = .unified
+        window.tabbingMode = .disallowed
+        window.collectionBehavior.insert(.fullScreenPrimary)
         window.isReleasedWhenClosed = false
         window.isRestorable = false
-        window.contentMinSize = NSSize(width: CGFloat(size.width), height: CGFloat(size.height))
+        window.contentMinSize = NSSize(width: 820, height: 480)
         window.delegate = self
-        window.onEscape = { [weak self] in self?.escape() }
         window.onCloseRequest = { [weak self] in self?.requestClose() }
-        let content = NSHostingView(rootView: LibraryView(presentation: presentation))
-        content.sizingOptions = []
-        window.contentView = content
+        window.validateCommand = { [weak self] item in self?.validateMenuItem(item) == true }
+        let split = LibrarySplitViewController()
+        split.validateCommand = { [weak self] item in self?.validateMenuItem(item) == true }
+        split.splitView.isVertical = true
+        split.splitView.autosaveName = "LibrarySplitView"
+        let sidebar = NSHostingController(rootView: LibrarySidebarView(presentation: presentation))
+        let editor = NSHostingController(rootView: LibraryEditorView(presentation: presentation))
+        let inspector = NSHostingController(rootView: LibraryInspectorView(presentation: presentation))
+        sidebar.sizingOptions = []
+        editor.sizingOptions = []
+        inspector.sizingOptions = []
+        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        sidebarItem.minimumThickness = 180
+        sidebarItem.maximumThickness = 320
+        sidebarItem.holdingPriority = .init(rawValue: 251)
+        let list = LibraryPromptListController(presentation: presentation, mainThread: mainThread)
+        list.validateCommand = { [weak self] item in self?.validateLibraryMenuItem(item, in: self?.window) == true }
+        let listItem = NSSplitViewItem(contentListWithViewController: list)
+        listItem.minimumThickness = 240
+        listItem.holdingPriority = .init(rawValue: 251)
+        listItem.automaticallyAdjustsSafeAreaInsets = true
+        let editorItem = NSSplitViewItem(viewController: editor)
+        editorItem.minimumThickness = 360
+        editorItem.holdingPriority = .init(rawValue: 200)
+        editorItem.automaticallyAdjustsSafeAreaInsets = true
+        let inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
+        inspectorItem.minimumThickness = 280
+        inspectorItem.maximumThickness = 560
+        inspectorItem.canCollapse = true
+        inspectorItem.collapseBehavior = .preferResizingSiblingsWithFixedSplitView
+        inspectorItem.isCollapsed = !presentation.isInspectorVisible
+        inspectorItem.holdingPriority = .init(rawValue: 252)
+        for item in [sidebarItem, listItem, editorItem, inspectorItem] { split.addSplitViewItem(item) }
+        self.splitController = split
+        self.promptList = list
+        self.inspectorItem = inspectorItem
+        inspectorObservation = inspectorItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
+            self?.mainThread.run { [weak self] in self?.presentation.setInspectorVisible(!item.isCollapsed) }
+        }
+        window.contentViewController = split
+        window.toolbar = makeToolbar()
+        if !window.setFrameUsingName("Library") { window.center() }
+        window.setFrameAutosaveName("Library")
         return window
     }
 }
 
 private final class LibraryWindow: NSWindow {
-    var onEscape: (() -> Void)?
     var onCloseRequest: (() -> Void)?
-    override func cancelOperation(_ sender: Any?) { onEscape?() }
+    var validateCommand: ((NSMenuItem) -> Bool)?
+
+    override func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(toggleToolbarShown(_:)), #selector(runToolbarCustomizationPalette(_:)):
+            return validateCommand?(item) == true
+        default: return super.validateMenuItem(item)
+        }
+    }
+
     override func close() { onCloseRequest?() }
     func closeAfterApproval() { super.close() }
 }

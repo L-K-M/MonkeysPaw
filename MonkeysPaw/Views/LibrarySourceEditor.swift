@@ -18,11 +18,13 @@ struct LibrarySourceEditor: NSViewRepresentable {
     let onEdit: (String) -> Void
     var highlight: LibrarySourceHighlight? = nil
     var focusRevision: UInt64 = 0
+    var isVisible = true
 
     func makeCoordinator() -> Coordinator { Coordinator(onEdit: onEdit) }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = Self.makeScrollView(coordinator: context.coordinator)
+        Self.updateVisibility(isVisible, in: scroll)
         if let text = scroll.documentView as? LibrarySourceTextView {
             context.coordinator.update(text, source: source, path: path, revision: revision,
                 isEditable: isEditable, onEdit: onEdit, highlight: highlight, focusRevision: focusRevision)
@@ -72,9 +74,17 @@ struct LibrarySourceEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        Self.updateVisibility(isVisible, in: scroll)
         guard let text = scroll.documentView as? LibrarySourceTextView else { return }
         context.coordinator.update(text, source: source, path: path, revision: revision,
             isEditable: isEditable, onEdit: onEdit, highlight: highlight, focusRevision: focusRevision)
+    }
+
+    static func updateVisibility(_ visible: Bool, in scroll: NSScrollView) {
+        scroll.isHidden = !visible
+        guard !visible, let text = scroll.documentView as? LibrarySourceTextView,
+              let window = text.window, window.firstResponder === text else { return }
+        window.makeFirstResponder(nil)
     }
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {

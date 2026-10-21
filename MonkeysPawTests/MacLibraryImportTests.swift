@@ -78,6 +78,18 @@ final class MacLibraryImportTests: XCTestCase {
         }
     }
 
+    func testNativeChooserOffersDestinationBeforeStartingTheFirstImport() throws {
+        var selected: [String] = []
+        let panel = MacImportChooser.makePanel(destinations: ["Imported", "work/deep"], destination: "Imported",
+            selectDestination: { selected.append($0) })
+        let popup = try XCTUnwrap(panel.accessoryView?.subviews.compactMap { $0 as? NSPopUpButton }.first)
+        XCTAssertTrue(panel.isAccessoryViewDisclosed)
+        XCTAssertEqual(popup.itemTitles, ["Imported/", "work/deep/"])
+        popup.selectItem(at: 1)
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(popup.action), to: popup.target, from: popup))
+        XCTAssertEqual(selected, ["work/deep"])
+    }
+
     func testChooserConfigurationSupportsFilesFoldersAndAllFormats() {
         let panel = MacImportChooser.makePanel()
         XCTAssertTrue(panel.canChooseFiles)
@@ -244,23 +256,24 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertEqual(imports.selectionMessage, ImportStrings.fileURLsOnly)
     }
 
-    func testAppMenuAndUnavailableLibraryGateImport() throws {
+    func testFileMenuAndUnavailableLibraryGateImport() throws {
         let flat = try source("flat.md")
         start()
         delegate.installMainMenu()
-        let item = try XCTUnwrap(NSApp.mainMenu?.items.first?.submenu?.items.first { $0.title == ImportStrings.action })
+        let menu = try XCTUnwrap(NSApp.mainMenu?.items.first { $0.title == LibraryCommandStrings.fileMenu }?.submenu)
+        let item = try XCTUnwrap(menu.items.first { $0.title == ImportStrings.action })
         let imports = try imports()
-        XCTAssertTrue(item.isEnabled)
-        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+        XCTAssertTrue(delegate.validateMenuItem(item))
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: delegate, from: item))
         XCTAssertEqual(choices.count, 1)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(delegate.validateMenuItem(item))
         try XCTUnwrap(choices.last).done([flat])
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(delegate.validateMenuItem(item))
         work.drain()
-        XCTAssertTrue(item.isEnabled)
+        XCTAssertTrue(delegate.validateMenuItem(item))
         try XCTUnwrap(watchers.last).emit(.rootUnavailable(.notFound))
         XCTAssertFalse(imports.canImport)
-        XCTAssertFalse(item.isEnabled)
+        XCTAssertFalse(delegate.validateMenuItem(item))
         XCTAssertFalse(imports.importURLs([flat]))
         XCTAssertTrue(imports.hasReport)
     }

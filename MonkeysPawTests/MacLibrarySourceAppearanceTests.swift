@@ -219,6 +219,30 @@ final class MacLibrarySourceAppearanceTests: XCTestCase {
         XCTAssertTrue(window.firstResponder === other, "An applied revision never re-steals")
     }
 
+    func testPreviewVisibilityKeepsNativeUndoAndSelection() throws {
+        let (coordinator, scroll, text) = try makeEditor()
+        let window = host(scroll)
+        defer { scroll.removeFromSuperview(); coordinator.deactivate() }
+        coordinator.update(text, source: "Body", path: "one.md", isEditable: true, onEdit: { _ in })
+        XCTAssertTrue(window.makeFirstResponder(text))
+        let undo = try XCTUnwrap(text.undoManager)
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        text.insertText(" draft", replacementRange: NSRange(location: 4, length: 0))
+        undo.endUndoGrouping()
+        let selection = NSRange(location: 5, length: 2)
+        text.setSelectedRange(selection)
+        LibrarySourceEditor.updateVisibility(false, in: scroll)
+        XCTAssertTrue(scroll.isHidden)
+        XCTAssertFalse(window.firstResponder === text, "Preview cannot keep editing a hidden source")
+        LibrarySourceEditor.updateVisibility(true, in: scroll)
+        XCTAssertFalse(scroll.isHidden)
+        XCTAssertEqual(text.selectedRange(), selection)
+        XCTAssertTrue(undo.canUndo)
+        undo.undo()
+        XCTAssertEqual(text.string, "Body")
+    }
+
     func testFocusRevisionZeroNeverFocuses() throws {
         let (coordinator, scroll, text) = try makeEditor()
         let window = host(scroll)

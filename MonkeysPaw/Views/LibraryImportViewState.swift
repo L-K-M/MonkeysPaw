@@ -89,7 +89,9 @@ final class LibraryImportViewState: ObservableObject {
     }
 
     func selectDestination(_ path: RelativePath) {
-        guard canImport, destinations.contains(path) else { return }
+        // The native chooser's accessory selects its batch destination while
+        // that chooser owns the sheet; imports cannot already be running.
+        guard active, libraryAvailable, !isBusy, destinations.contains(path) else { return }
         destination = path
     }
 

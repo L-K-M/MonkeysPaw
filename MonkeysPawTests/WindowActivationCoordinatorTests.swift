@@ -50,6 +50,27 @@ final class WindowActivationCoordinatorTests: XCTestCase {
         XCTAssertEqual(policies.last, .accessory)
     }
 
+    func testMiniaturizedLibraryKeepsItsDockTileAndRegularPolicy() {
+        var policies: [NSApplication.ActivationPolicy] = []
+        let coordinator = WindowActivationCoordinator(mainThread: DispatchMainThread(),
+            setPolicy: { policies.append($0) }, activate: {})
+        coordinators.append(coordinator)
+        let library = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 260),
+            styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        library.isReleasedWhenClosed = false
+        windows.append(library)
+        coordinator.show(library)
+        library.miniaturize(nil)
+        NotificationCenter.default.post(name: NSWindow.didMiniaturizeNotification, object: library)
+        XCTAssertTrue(library.isMiniaturized)
+        XCTAssertEqual(policies, [.regular])
+        coordinator.show(library)
+        XCTAssertFalse(library.isMiniaturized)
+        XCTAssertEqual(policies, [.regular])
+        library.close()
+        XCTAssertEqual(policies, [.regular, .accessory])
+    }
+
     func testDeferredWindowNotificationsPruneReleasedWindowsAndRestoreAccessoryPolicy() {
         for name in [NSWindow.willCloseNotification, NSWindow.didChangeOcclusionStateNotification] {
             let main = DeferredWindowMainThread()

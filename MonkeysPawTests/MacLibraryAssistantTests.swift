@@ -36,7 +36,7 @@ final class MacLibraryAssistantTests: XCTestCase {
             h.work.drain()
             XCTAssertEqual(h.transport.requests.count, 0)
             XCTAssertEqual(h.clipboard.reads, 0)
-            let host = NSHostingView(rootView: LibraryAssistantView(presentation: view, close: {}))
+            let host = NSHostingView(rootView: LibraryAssistantView(presentation: view))
             host.frame = NSRect(x: 0, y: 0, width: 420, height: 640)
             host.layoutSubtreeIfNeeded()
         }
@@ -320,7 +320,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         }
     }
 
-    func testSessionRetirementClearsSaveMessageWithoutVisibilityCallbacks() throws {
+    func testSessionRetirementClearsSaveMessageAndKeepsInspectorVisible() throws {
         let h = try MacLibraryAssistantHarness(secondSource: "Second")
         defer { h.close() }
         let view = try h.assistant()
@@ -330,16 +330,17 @@ final class MacLibraryAssistantTests: XCTestCase {
         view.accept()
         h.work.drain()
         XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")
-        var visibilityChanges = 0
-        h.presentation.onAssistantVisibilityChange = { visibilityChanges += 1 }
+        var visibility: [Bool] = []
+        let observation = h.presentation.$isInspectorVisible.sink { visibility.append($0) }
+        defer { observation.cancel() }
         h.presentation.selectPath("two.md")
         h.work.drain()
         XCTAssertNil(h.presentation.assistantSaveMessage)
         XCTAssertFalse(try h.assistant() === view)
         XCTAssertTrue(h.presentation.isAssistantVisible)
-        XCTAssertEqual(visibilityChanges, 0, "Replacing a visible binding keeps the pane visible")
+        XCTAssertFalse(visibility.contains(false), "Replacing a visible binding keeps the inspector visible")
         h.presentation.closeAssistant()
-        XCTAssertEqual(visibilityChanges, 1)
+        XCTAssertEqual(visibility.last, false)
     }
 
     func testQuoteHighlightSurvivesAvailabilityChangesUntilSourceChanges() throws {
@@ -446,7 +447,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(h.transport.requests.count, 1)
     }
 
-    func testEscapeCancelsBeforeFilterAndWindowCloseRetiresModel() throws {
+    func testClosingInspectorCancelsBeforeWindowCloseRetiresModel() throws {
         let h = try MacLibraryAssistantHarness()
         defer { h.close() }
         let view = try h.assistant()
@@ -455,10 +456,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.presentation.setFilter("Original")
         let controller = try XCTUnwrap(h.delegate.libraryWindow)
         let window = try XCTUnwrap(controller.window)
-        let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
-            charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: UInt16(kVK_Escape)))
-        XCTAssertTrue(controller.handleKeyEvent(escape))
+        h.presentation.setInspectorVisible(false)
         XCTAssertEqual(view.state.phase, .idle)
         XCTAssertFalse(h.presentation.isAssistantVisible)
         XCTAssertEqual(h.presentation.snapshot.filter, "Original")
@@ -550,7 +548,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         let controller = try XCTUnwrap(h.delegate.libraryWindow)
         controller.requestClose()
         let dialog = try XCTUnwrap(dialogs.last)
-        guard case .decision(let decision, _) = dialog.dialog else { return XCTFail("Expected the close guard") }
+        guard case .decision(let decision, _, _) = dialog.dialog else { return XCTFail("Expected the close guard") }
         XCTAssertEqual(decision.action, .close)
         dialog.respond(.decision(.cancel))
         XCTAssertTrue(controller.window?.isVisible == true)
@@ -626,7 +624,7 @@ final class MacLibraryAssistantTests: XCTestCase {
                 try XCTUnwrap(dialogs.last).respond(.decision(.cancel))
             }
             let close = try XCTUnwrap(dialogs.last)
-            guard case .decision(let decision, _) = close.dialog else { return XCTFail("Expected the close guard") }
+            guard case .decision(let decision, _, _) = close.dialog else { return XCTFail("Expected the close guard") }
             XCTAssertEqual(decision.action, .close)
             close.respond(.decision(.cancel))
             XCTAssertTrue(controller.window?.isVisible == true)
@@ -699,29 +697,31 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.presentation.closeAssistant()
         let controller = try XCTUnwrap(h.delegate.libraryWindow)
         let window = try XCTUnwrap(controller.window)
-        let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
-            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "A",
-            charactersIgnoringModifiers: "a", isARepeat: false, keyCode: UInt16(kVK_ANSI_A)))
-        XCTAssertTrue(controller.handleKeyEvent(key))
+        let minimum = window.contentMinSize
+        let frame = window.frame
+        controller.showAssistant(nil)
+        controller.refreshWindowPresentation()
         XCTAssertTrue(h.presentation.isAssistantVisible)
-        XCTAssertGreaterThan(window.contentMinSize.width, CGFloat(Limits.setupWindowSize.width))
-        XCTAssertTrue(controller.handleKeyEvent(key))
+        XCTAssertEqual(window.contentMinSize, minimum)
+        XCTAssertEqual(window.frame, frame)
+        h.presentation.closeAssistant()
         XCTAssertFalse(h.presentation.isAssistantVisible)
+        let item = NSMenuItem(title: LibraryAssistantStrings.title,
+            action: #selector(LibraryWindowController.showAssistant(_:)), keyEquivalent: "a")
         h.presentation.setLibraryAvailable(false)
-        XCTAssertFalse(controller.handleKeyEvent(key), "An unavailable Assistant must not consume the shortcut")
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        controller.showAssistant(nil)
+        XCTAssertFalse(h.presentation.isAssistantVisible)
         h.presentation.setLibraryAvailable(true)
-        XCTAssertTrue(controller.handleKeyEvent(key))
+        controller.showAssistant(nil)
+        XCTAssertTrue(h.presentation.isAssistantVisible)
         h.presentation.setLibraryAvailable(false)
-        XCTAssertTrue(controller.handleKeyEvent(key), "A visible Assistant can always be closed")
-        XCTAssertFalse(h.presentation.isAssistantVisible)
-        XCTAssertFalse(controller.handleKeyEvent(key))
+        h.presentation.setInspectorVisible(false)
+        XCTAssertFalse(h.presentation.isAssistantVisible, "The inspector can still be closed after library loss")
         let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         other.isReleasedWhenClosed = false
         defer { other.close() }
-        let unrelated = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift],
-            timestamp: 0, windowNumber: other.windowNumber, context: nil, characters: "A",
-            charactersIgnoringModifiers: "a", isARepeat: false, keyCode: UInt16(kVK_ANSI_A)))
-        XCTAssertFalse(controller.handleKeyEvent(unrelated))
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: other))
         XCTAssertEqual(LibrarySourceEditor.Coordinator.utf16Range(for: 1..<5, in: "a😀b"), NSRange(location: 1, length: 2))
         XCTAssertNil(LibrarySourceEditor.Coordinator.utf16Range(for: 2..<5, in: "a😀b"))
         XCTAssertNil(LibrarySourceEditor.Coordinator.utf16Range(for: 0..<99, in: "short"))

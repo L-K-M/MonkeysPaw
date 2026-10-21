@@ -259,6 +259,36 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         XCTAssertEqual(pasteboard.string(forType: .string), "delivered")
     }
 
+    func testAppMenuCheckForUpdatesShowsGeneralAndPublishesTheResult() throws {
+        start()
+        delegate.settingsWindow?.presentation.selectedTab = .assistant
+        transport.hold = true
+        let item = NSMenuItem(title: "Check for Updates…", action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
+        XCTAssertTrue(delegate.validateMenuItem(item))
+        delegate.checkForUpdates(item)
+        let settings = try XCTUnwrap(delegate.settingsWindow)
+        XCTAssertEqual(settings.presentation.selectedTab, .general)
+        XCTAssertTrue(try XCTUnwrap(settings.window).isVisible)
+        waitFor("menu check starts") { self.transport.count == 1 && settings.presentation.updates.state.update?.isChecking == true }
+        XCTAssertFalse(delegate.validateMenuItem(item))
+        transport.release()
+        waitFor("menu check result") {
+            settings.presentation.updates.state.update?.canOpenRelease == true
+                && settings.presentation.updates.state.update?.isChecking == false
+        }
+        XCTAssertTrue(delegate.validateMenuItem(item))
+        XCTAssertTrue(opened.isEmpty)
+    }
+
+    func testAppMenuCheckForUpdatesIsDisabledWithoutAKnownReleaseVersion() {
+        start(version: nil)
+        let item = NSMenuItem(title: "Check for Updates…", action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
+        XCTAssertFalse(delegate.validateMenuItem(item))
+        delegate.checkForUpdates(item)
+        XCTAssertNotEqual(delegate.settingsWindow?.window?.isVisible, true)
+        assertRequestCount(0)
+    }
+
     func testCheckNowWorksWhileOffAndOnlyExplicitViewOpensConstructedURL() throws {
         start()
         let page = try show().updates
