@@ -169,8 +169,8 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
 
 - LLM calls and model listing.
 - Sync to the server the user configured.
-- Server healthcheck to loopback; optional Caddy HTTPS certificate management
-  belongs to that proxy's network/retention policy, not app telemetry.
+- Server healthcheck to loopback; the operator's HTTPS proxy has its own
+  network/retention policy and is not bundled with the server.
 - The update check (from M7): an unauthenticated HTTPS GET to
   `https://api.github.com/repos/L-K-M/MonkeysPaw/releases/latest`. GitHub sees
   the source IP and `MonkeysPaw/<full-app-version>` User-Agent, plus fixed

@@ -662,10 +662,12 @@ The `path.segment_hidden` diagnostic is included in the shared issue DTO.
     Prefixes left of the first untrusted address are neither parsed nor
     counted toward these bounds, so spoofed prefixes cannot select a
     different IP bucket.
-- **TLS.** Terminated by Caddy (`tls` profile, site address
-  `MONKEYSPAW_PUBLIC_URL`) or the operator's proxy.
-  - The server speaks plain HTTP on the compose network only.
-  - Without the `tls` profile, the port binds to `127.0.0.1` by default.
+- **TLS.** Terminated by the operator's existing proxy, such as Nginx Proxy
+  Manager (owner decision 2026-10-20). No proxy ships in the Compose stack.
+  - The server speaks plain HTTP; its host port binds to `127.0.0.1` by default.
+  - A local Compose override can join the proxy's existing Docker network,
+    preserving loopback-only host publication. Trust only the proxy's stable
+    peer address and set `MONKEYSPAW_PUBLIC_URL` to the public HTTPS origin.
   - The desktop client refuses plain `http://` except on loopback and
     private-network addresses, and warns even then.
 
@@ -690,22 +692,14 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     `docker inspect` shows paths, not values. The secret file has the effective
     UID/GID and mode 0400. Keep the source `.env` at 0600; Compose secrets do
     not encrypt it or protect the secret from the Docker host operator.
-  - Profile `tls`: `caddy:2` on 80/443 with
-    `deploy/caddy/Caddyfile.example`. Caddy also runs with `PUID`/`PGID` and
-    private host binds under `${CONFIG_DIR:-./config}/caddy/{data,config}`
-    for certificates and state. An isolated network namespace allows its
-    non-root process to bind 80/443 without added capabilities.
-    Its startup guard rejects UID 0 and non-HTTPS public URLs, with umask 077;
-    the guard runs only when Caddy starts, not during Compose interpolation.
-    The dedicated bridge defaults to `172.30.80.0/29`, with server at
-    `172.30.80.2` and Caddy at `172.30.80.3`; trust only the Caddy peer
-    (`172.30.80.3/32`), never all private networks. Fixed addresses keep
-    Caddy's peer reserved without TLS. If the subnet conflicts, change the
-    subnet, both addresses and trusted peer together. Set
-    `MONKEYSPAW_PUBLIC_URL` to the bare HTTPS
-    origin for the configured domain, with no path, query or fragment.
-  - Every tunable is `${VAR:-default}`, documented inline. No `${VAR:?}` in
-    profile-gated services (dl-tool lesson).
+  - Only `monkeyspaw-server` runs. HTTPS, certificates and public ports belong
+    to the operator's proxy. No fixed subnet or proxy address is reserved.
+    Trusted proxies default to empty. The Nginx Proxy Manager override example
+    joins an existing external network, selected by `MONKEYSPAW_PROXY_NETWORK`;
+    the ignored root `compose.override.yaml` survives checkout updates.
+    Set `MONKEYSPAW_PUBLIC_URL` to the bare HTTPS origin for the configured
+    domain, with no path, query or fragment.
+  - Every tunable is `${VAR:-default}`, documented inline.
   - Requires Docker Compose ≥ 2.20.0: this is the minimum supported release,
     including the environment-secret permission fix, `pull_policy: build`
     and `up --wait --wait-timeout`. The v2.20.0 `create.go` also consults
@@ -715,18 +709,19 @@ Files at the repo root, in fleet house style (dl-tool is the model):
     refusal on the target Engine/Compose combination and do not replay a
     rendered config as the deployment file.
     YAML/static validation does not prove a container deployment; CI or the
-    owner must run both default and TLS configurations on a Docker host.
+    owner must run the default and external-proxy configurations on a Docker
+    host; real HTTPS remains an owner check.
 - **`.env.example`.** `PUID`, `PGID`, `TZ`, `CONFIG_DIR`,
   `MONKEYSPAW_BIND_ADDRESS`, `MONKEYSPAW_PORT`, `MONKEYSPAW_PUBLIC_URL`
-  (invite links and the Caddy site), `MONKEYSPAW_ADMIN_USERNAME`,
+  (invite links), `MONKEYSPAW_ADMIN_USERNAME`,
   `MONKEYSPAW_ADMIN_PASSWORD` (compose mounts it as the secret file read via
   `MONKEYSPAW_ADMIN_PASSWORD_FILE`), `MONKEYSPAW_TRUSTED_PROXIES`,
-  `MONKEYSPAW_LOG_LEVEL`, `MONKEYSPAW_PROXY_SUBNET`, `MONKEYSPAW_SERVER_IP`,
-  `MONKEYSPAW_CADDY_IP`,
-  and a commented `COMPOSE_PROFILES=tls`. Defaults are UID/GID 1000, UTC,
+  `MONKEYSPAW_LOG_LEVEL`, and optional `MONKEYSPAW_PROXY_NETWORK` for the
+  Nginx Proxy Manager override. Defaults are UID/GID 1000, UTC,
   `./config`, `127.0.0.1:8790`, `http://localhost:8790`, admin user `admin`,
   an empty bootstrap password (must be supplied on an empty database),
-  `172.30.80.3/32`, log level `info`, and the bridge addresses above.
+  no trusted proxy, log level `info`, and proxy network `npm_default` when
+  the override is installed. Use the actual network name of the proxy stack.
   Container paths `/data`, `/run/secrets/admin_password` and listener
   `0.0.0.0:8080` are fixed by this deployment. Stored timestamps remain UTC
   regardless of `TZ`. Run only one server process per database on local disk.
@@ -736,13 +731,10 @@ Files at the repo root, in fleet house style (dl-tool is the model):
      `../gh*/bin/gh`).
   3. Check out the named branch, then `gh repo sync --branch` with a
      `git pull --ff-only` fallback.
-  4. Preserve the `tls` profile by inspecting services (configured or
-     running `caddy`), not profile-scoped `ps`.
-  5. `docker compose pull` (external images only).
-  6. `docker compose build --pull`.
-  7. `docker compose up -d --remove-orphans --wait --wait-timeout 120`.
-  8. `docker image prune -f`.
-  9. `docker compose ps`.
+  4. `docker compose build --pull`.
+  5. `docker compose up -d --remove-orphans --wait --wait-timeout 120`.
+  6. `docker image prune -f`.
+  7. `docker compose ps`.
   It must be shellcheck-clean and bash 3.2 safe.
   Run `./update.sh [branch]`, defaulting to `main`. Before checkout, refuse
   tracked or untracked changes, explicitly inspecting untracked files and
@@ -752,14 +744,15 @@ Files at the repo root, in fleet house style (dl-tool is the model):
   commits ahead of or diverged from the remote require operator resolution.
   Never force, reset, stash or merge local changes. If `gh` is unavailable
   or sync fails, use `git pull --ff-only origin <branch>`.
-  Detect active configured services with `docker compose config --services`
-  and running services with unprofiled `docker compose ps --services --status
-  running`; either listing containing exactly `caddy` enables `--profile tls`
-  for subsequent Compose commands. Pull with `--ignore-buildable`, then build
-  the repo-owned server locally. Apart from the explicit sync fallback,
+  Build the repo-owned server locally. Compose reads the local override and
+  connects to the proxy's external network without managing the proxy stack.
+  Remove obsolete `COMPOSE_PROFILES=tls` and fixed-bridge settings from older
+  deployments; `--remove-orphans` removes the former bundled Caddy container
+  without deleting its host data. Apart from the explicit sync fallback,
   command failures stop the update and preserve their nonzero exit status.
   Fake-command tests under `scripts/tests/` prove arguments, order, refusals,
-  TLS preservation and failure propagation; CI runs them and shellcheck.
+  absence of TLS-profile activation and failure propagation; CI runs them
+  and shellcheck.
   Owner-run fresh-host health and TLS re-run checks still require Docker.
 - **`server/Dockerfile`.**
   - Build stage `swift:6.4-noble`: `swift build -c release

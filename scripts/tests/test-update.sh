@@ -45,11 +45,9 @@ case "$command_line" in
   'gh|repo|sync|--branch|'*) exit "$FAKE_GH_STATUS" ;;
   'docker|compose|config|--services') printf '%s\n' "$FAKE_CONFIGURED" ;;
   'docker|compose|ps|--services|--status|running') printf '%s\n' "$FAKE_RUNNING" ;;
-  'docker|compose|pull|--ignore-buildable'|'docker|compose|--profile|tls|pull|--ignore-buildable') ;;
-  'docker|compose|build|--pull'|'docker|compose|--profile|tls|build|--pull') ;;
-  'docker|compose|up|-d|--remove-orphans|--wait|--wait-timeout|120'|\
-  'docker|compose|--profile|tls|up|-d|--remove-orphans|--wait|--wait-timeout|120') ;;
-  'docker|image|prune|-f'|'docker|compose|ps'|'docker|compose|--profile|tls|ps') ;;
+  'docker|compose|build|--pull') ;;
+  'docker|compose|up|-d|--remove-orphans|--wait|--wait-timeout|120') ;;
+  'docker|image|prune|-f'|'docker|compose|ps') ;;
   *) printf 'Unexpected fake command: %s\n' "$command_line" >&2; exit 99 ;;
 esac
 FAKE
@@ -100,16 +98,11 @@ EOF
 }
 
 expect_deployment() {
-  prefix='docker|compose'
-  if [ "${1:-}" = tls ]; then prefix="$prefix|--profile|tls"; fi
   cat >>"$expected" <<EOF
-docker|compose|config|--services
-docker|compose|ps|--services|--status|running
-$prefix|pull|--ignore-buildable
-$prefix|build|--pull
-$prefix|up|-d|--remove-orphans|--wait|--wait-timeout|120
+docker|compose|build|--pull
+docker|compose|up|-d|--remove-orphans|--wait|--wait-timeout|120
 docker|image|prune|-f
-$prefix|ps
+docker|compose|ps
 EOF
 }
 
@@ -145,24 +138,9 @@ printf '%s\n' 'gh|repo|sync|--branch|release/1.2' >>"$expected"
 expect_deployment
 check_case 0
 
-for tls_source in configured running both; do
-  start_case "tls-$tls_source"
-  if [ "$tls_source" != running ]; then
-    FAKE_CONFIGURED=$(printf 'caddy\nmonkeyspaw-server\n')
-  fi
-  if [ "$tls_source" != configured ]; then
-    FAKE_RUNNING=$(printf 'monkeyspaw-server\ncaddy\n')
-  fi
-  run_update
-  expect_git
-  printf '%s\n' 'gh|repo|sync|--branch|main' >>"$expected"
-  expect_deployment tls
-  check_case 0
-done
-
-start_case caddy-name-must-match
-FAKE_CONFIGURED=$(printf 'monkeyspaw-server\ncaddy-extra\n')
-FAKE_RUNNING=$(printf 'not-caddy\n')
+start_case legacy-caddy-does-not-enable-tls
+FAKE_CONFIGURED=$(printf 'monkeyspaw-server\ncaddy\n')
+FAKE_RUNNING=caddy
 run_update
 cp "$test_root/baseline" "$expected"
 check_case 0

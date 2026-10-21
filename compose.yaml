@@ -16,7 +16,7 @@ services:
       MONKEYSPAW_ADMIN_USERNAME: ${MONKEYSPAW_ADMIN_USERNAME:-admin}
       MONKEYSPAW_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
       MONKEYSPAW_PUBLIC_URL: ${MONKEYSPAW_PUBLIC_URL:-http://localhost:8790}
-      MONKEYSPAW_TRUSTED_PROXIES: ${MONKEYSPAW_TRUSTED_PROXIES:-172.30.80.3/32}
+      MONKEYSPAW_TRUSTED_PROXIES: ${MONKEYSPAW_TRUSTED_PROXIES:-}
       MONKEYSPAW_LOG_LEVEL: ${MONKEYSPAW_LOG_LEVEL:-info}
     secrets:
       - source: admin_password
@@ -33,10 +33,6 @@ services:
           create_host_path: false
     ports:
       - "${MONKEYSPAW_BIND_ADDRESS:-127.0.0.1}:${MONKEYSPAW_PORT:-8790}:8080"
-    networks:
-      # Keep the server from taking Caddy's reserved peer while tls is disabled.
-      proxy:
-        ipv4_address: ${MONKEYSPAW_SERVER_IP:-172.30.80.2}
     healthcheck:
       test: [CMD, /usr/local/bin/monkeyspaw-server, healthcheck]
       interval: 10s
@@ -49,69 +45,6 @@ services:
     cap_drop:
       - ALL
 
-  caddy:
-    image: caddy:2
-    profiles: [tls]
-    user: "${PUID:-1000}:${PGID:-1000}"
-    environment:
-      TZ: ${TZ:-Etc/UTC}
-      MONKEYSPAW_PUBLIC_URL: ${MONKEYSPAW_PUBLIC_URL:-http://localhost:8790}
-    # Validate only when the profile runs, so non-TLS config needs no domain.
-    entrypoint: [/bin/sh, -ec]
-    command:
-      - |
-        if [ "$$(id -u)" -eq 0 ]; then
-          printf '%s\n' 'Refusing UID 0; set PUID to a non-root UID.' >&2
-          exit 1
-        fi
-        case "$$MONKEYSPAW_PUBLIC_URL" in
-          https://*) ;;
-          *) printf '%s\n' 'The tls profile requires an HTTPS MONKEYSPAW_PUBLIC_URL.' >&2; exit 1 ;;
-        esac
-        umask 077
-        exec /usr/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
-    depends_on:
-      monkeyspaw-server:
-        condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-      # HTTP/3: Caddy advertises h3 on UDP 443 by default.
-      - "443:443/udp"
-    volumes:
-      - type: bind
-        source: ./deploy/caddy/Caddyfile.example
-        target: /etc/caddy/Caddyfile
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${CONFIG_DIR:-./config}/caddy/data
-        target: /data
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${CONFIG_DIR:-./config}/caddy/config
-        target: /config
-        bind:
-          create_host_path: false
-    networks:
-      proxy:
-        ipv4_address: ${MONKEYSPAW_CADDY_IP:-172.30.80.3}
-    # Namespaced: allow non-root listeners on 80/443 without capabilities.
-    sysctls:
-      net.ipv4.ip_unprivileged_port_start: "80"
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-
 secrets:
   admin_password:
     environment: MONKEYSPAW_ADMIN_PASSWORD
-
-networks:
-  # Only the server and Caddy belong here; never trust a whole private range.
-  proxy:
-    ipam:
-      config:
-        - subnet: ${MONKEYSPAW_PROXY_SUBNET:-172.30.80.0/29}
