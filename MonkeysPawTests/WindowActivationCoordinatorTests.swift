@@ -141,11 +141,11 @@ private final class DeferredWindowMainThread: MainThread {
 
 /// Reports miniaturized state without the Dock animation.
 private final class MiniaturizingTestWindow: NSWindow {
-    private var miniaturized = false
-    override var isMiniaturized: Bool { miniaturized }
+    private var reportsMiniaturized = false
+    override var isMiniaturized: Bool { reportsMiniaturized }
     override func miniaturize(_ sender: Any?) {
-        miniaturized = true
+        reportsMiniaturized = true
         orderOut(nil)
     }
-    override func deminiaturize(_ sender: Any?) { miniaturized = false }
+    override func deminiaturize(_ sender: Any?) { reportsMiniaturized = false }
 }
