@@ -43,6 +43,7 @@ stable: the file for `§N` starts with `N-`.
 | §21 | [M7 decisions](docs/plan/21-m7-decisions.md) |
 | §22 | [M9 and M11 decisions](docs/plan/22-m9-m11-decisions.md) |
 | §23 | [M10 decisions](docs/plan/23-m10-decisions.md) |
+| §24 | [Native desktop design](docs/plan/24-native-desktop-design.md) |
 
 ## Editing rules
 

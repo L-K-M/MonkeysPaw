@@ -125,8 +125,8 @@ Per OS:
   delivery. Closing Settings hides it for the next opening. **Open Setup…**
   in Shortcuts opens the existing Setup window and shares its live service.
 
-  Plainer than macOS by design. The tray uses a StatusNotifierItem where
-  available. The hotkey is the primary entry point, because stock GNOME
+  The windows share the macOS structure with GNOME conventions (§24.6).
+  The tray uses a StatusNotifierItem where available. The hotkey is the primary entry point, because stock GNOME
   hides tray icons.
 
   Linux attaches one StatusNotifierItem at resident startup, with left click and
@@ -260,7 +260,10 @@ Footers differ per OS:
 | Fill form | `Ctrl+Shift+Return` | deliver with the terminal chord (Linux) |
 | Fill form | `⌥Return` / `Alt+Return` | copy only |
 | Fill form | `Esc` | back to the picker |
-| Library | `⌘/Ctrl+N` · `⌘/Ctrl+S` · `⌘/Ctrl+F` | new · save · search |
+| Library | `⌘/Ctrl+N` · `⌘/Ctrl+S` · `⇧⌘S`/`Ctrl+Shift+S` | new · save · duplicate (save as copy) |
+| Library | `⌥⌘F` / `Ctrl+F` · `⌘F` (macOS) | search the library · find in the editor |
+| Library | `⌘/Ctrl+D` · `⌘/Ctrl+1` · `⌘/Ctrl+2` | favourite · Edit · Preview |
+| Library | `⌃⌘S` / `F9` · `⌥⌘I` (macOS) | sidebar · inspector (§24.4) |
 | Editor | `⌘/Ctrl+R` · `⌘/Ctrl+I` | review · improve |
 
 ### 11.4 First run
@@ -422,8 +425,9 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   including for viewers and dirty open editors. The toggle never edits their
   source, mode or history; sidebar counts and picker ranking refresh from the
   same effective value. Private-scope favourites keep the file-key behavior.
-- **Edit · Preview · Fields · History.** Edit shows the raw file, front
-  matter and body, with live validation from the same codec and validator as
+- **Edit · Preview · Fields · History.** Edit and Preview are the editor's
+  modes; Fields, History and the Assistant are inspector panes (§24.3).
+  Edit shows the raw file, front matter and body, with live validation from the same codec and validator as
   the picker. Fields lists the parsed fields read-only. Preview renders with
   field defaults (or the field name when there is none), the real date and
   time, and a `{clipboard}` placeholder; browsing or typing never reads the
@@ -487,8 +491,8 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   unassigned path-hash move (§5.2). A committed editor Delete command explicitly
   clears that key, closes the editor and keeps its history; restoring a
   deleted prompt arrives later. Window close and Cmd+W retain the browser
-  selection, filter and section for reopening; Escape retains the selection
-  when it closes the window after the filter is clear. External deletion
+  selection, filter and section for reopening. Escape clears a focused
+  search field but never closes the window (§24.3). External deletion
   also retains the selection key, including after discarding a deleted draft;
   a missing row has no selected preview, and restoration can recover the
   retained selection. Closing an editor with no prompt is not a Delete signal.
