@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build and sign a universal Release app, then package verified dmg and zip files.
 # Usage: scripts/package-macos.sh [version [build-number]]
-# Requires macOS, Xcode and create-dmg (brew install create-dmg).
+# Requires macOS and Xcode. create-dmg (brew install create-dmg) lays out
+# the dmg window; without it a local build packages a plain hdiutil image.
+# CI requires create-dmg so releases keep the laid-out window.
 # With no arguments, use the committed Xcode version and build number.
 # An explicit version may have a v prefix; the optional second argument sets
 # the build number. The full version is kept in MonkeysPawReleaseVersion;
@@ -10,6 +12,7 @@
 # MACOS_SIGNING_KEYCHAIN optionally selects its keychain when using an identity.
 # CI callers must export signing variables only when their secrets are non-empty.
 # Uses xcodebuild directly: no lkm-build installation or certificate import needed.
+# XCODEBUILD selects another xcodebuild than /usr/bin/xcodebuild.
 set -euo pipefail
 
 fail() {
@@ -18,13 +21,19 @@ fail() {
 }
 
 if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
-  sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# //'
+  sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# //'
   exit 0
 fi
 
 [[ $# -le 2 ]] || fail 'Usage: scripts/package-macos.sh [version [build-number]]'
 [[ "$(uname -s)" == Darwin ]] || fail 'package-macos.sh requires macOS and Xcode'
-command -v create-dmg >/dev/null 2>&1 || fail 'Install create-dmg with: brew install create-dmg'
+if command -v create-dmg >/dev/null 2>&1; then
+  dmg_tool=create-dmg
+elif [[ "${CI:-false}" == true ]]; then
+  fail 'Install create-dmg with: brew install create-dmg'
+else
+  dmg_tool=hdiutil
+fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 project="$repo_root/MonkeysPaw.xcodeproj"
@@ -45,7 +54,7 @@ app="$staging_directory/MonkeysPaw.app"
 mkdir -p "$staging_directory" "$work_directory/artifacts"
 
 printf '==> Building MonkeysPaw %s (%s) for arm64 and x86_64\n' "$version" "$build_number"
-/usr/bin/xcodebuild \
+"${XCODEBUILD:-/usr/bin/xcodebuild}" \
   -project "$project" -scheme MonkeysPaw -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath "$derived_data" \
   ONLY_ACTIVE_ARCH=NO ARCHS="arm64 x86_64" \
@@ -56,7 +65,12 @@ printf '==> Building MonkeysPaw %s (%s) for arm64 and x86_64\n' "$version" "$bui
 built_app="$derived_data/Build/Products/Release/MonkeysPaw.app"
 [[ -d "$built_app" ]] || fail 'Release build did not produce MonkeysPaw.app'
 /usr/bin/ditto "$built_app" "$app"
-/usr/bin/lipo "$app/Contents/MacOS/MonkeysPaw" -verify_arch arm64 x86_64
+# -archs, not a multi-arch -verify_arch: Xcode 27's lipo rejects
+# "-verify_arch arm64 x86_64" with "requires exactly one input file".
+architectures=" $(/usr/bin/lipo -archs "$app/Contents/MacOS/MonkeysPaw") "
+for architecture in arm64 x86_64; do
+  [[ "$architectures" == *" $architecture "* ]] || fail "Release build lacks the $architecture slice (has:$architectures)"
+done
 
 # Preserve the raw release version even if Xcode omits a custom generated key.
 plist="$app/Contents/Info.plist"
@@ -84,19 +98,29 @@ dmg="$work_directory/artifacts/MonkeysPaw-$version.dmg"
 printf '==> Packaging zip and dmg\n'
 /usr/bin/ditto -c -k --keepParent "$app" "$zip"
 
-dmg_arguments=(--volname "MonkeysPaw $version" --window-size 540 380
-  --icon-size 100 --icon MonkeysPaw.app 150 185 --app-drop-link 390 185)
-if [[ "${CI:-false}" == true ]]; then
-  # Finder's AppleScript styling needs a GUI session; keep CI headless.
-  dmg_arguments+=(--skip-jenkins)
+volume_name="MonkeysPaw $version"
+if [[ "$dmg_tool" == hdiutil ]]; then
+  # Same contents as the release image (the app and an Applications link
+  # to drag it onto), without create-dmg's window layout.
+  printf -- '-- create-dmg not installed; packaging a plain dmg\n'
+  ln -s /Applications "$staging_directory/Applications"
+  /usr/bin/hdiutil create -volname "$volume_name" -srcfolder "$staging_directory" \
+    -format UDZO "$dmg" >/dev/null || fail 'hdiutil could not create the dmg'
+else
+  dmg_arguments=(--volname "$volume_name" --window-size 540 380
+    --icon-size 100 --icon MonkeysPaw.app 150 185 --app-drop-link 390 185)
+  if [[ "${CI:-false}" == true ]]; then
+    # Finder's AppleScript styling needs a GUI session; keep CI headless.
+    dmg_arguments+=(--skip-jenkins)
+  fi
+  # create-dmg expects a folder containing the app, not the app bundle itself.
+  # Its status can be unreliable on headless hosts. A fresh, verified image is
+  # required even when it reports success; old dist files cannot satisfy this.
+  if ! create-dmg "${dmg_arguments[@]}" "$dmg" "$staging_directory"; then
+    printf '!! create-dmg reported failure; checking the newly created image\n' >&2
+  fi
 fi
-# create-dmg expects a folder containing the app, not the app bundle itself.
-# Its status can be unreliable on headless hosts. A fresh, verified image is
-# required even when it reports success; old dist files cannot satisfy this.
-if ! create-dmg "${dmg_arguments[@]}" "$dmg" "$staging_directory"; then
-  printf '!! create-dmg reported failure; checking the newly created image\n' >&2
-fi
-[[ -s "$dmg" ]] || fail 'create-dmg did not produce an image'
+[[ -s "$dmg" ]] || fail "$dmg_tool did not produce an image"
 /usr/bin/hdiutil verify "$dmg"
 [[ -s "$zip" ]] || fail 'ditto did not produce a zip'
 

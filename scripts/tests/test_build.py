@@ -94,7 +94,9 @@ else
 fi
 ''')
         self.script(self.bin / "engine", 'printf "%s\\n" "$BUILD_APP_NAME" "$BUILD_KIND" "$BUILD_XCODE_SCHEME" "$@" > "$BUILD_CALLS"\n')
+        # XCODEBUILD names a missing stub, so a Mac's own Xcode stays out.
         self.env = os.environ | {"PATH": str(self.bin), "SWIFT": "swift",
+                                 "XCODEBUILD": str(self.bin / "xcodebuild"),
                                  "BUILD_CALLS": str(self.root / "calls"), "LKM_BUILD_BIN": "engine",
                                  "DOCKER_CALLS": str(self.root / "docker-calls"),
                                  "ANDROID_HOME": str(sdk)}
@@ -182,6 +184,9 @@ else:
                 if host == "Darwin":
                     self.assertIn("deb: skipped (requires Linux)", result.stdout)
                     self.assertIn("flatpak: skipped (requires Linux)", result.stdout)
+                    # Xcode is mac's only local requirement: without create-dmg,
+                    # which only CI needs, the dmg falls back to hdiutil.
+                    self.assertIn("mac: skipped (requires Xcode", result.stdout)
 
     def test_missing_docker_skips_defaults_and_fails_named_target_on_both_hosts(self):
         for host in ("Linux", "Darwin"):
@@ -399,6 +404,47 @@ printf 'local-adb %s\n' "$1" >> "$BUILD_CALLS"
         result = self.run_build("--run")
         self.assertEqual(result.returncode, 2)
         self.assertIn("belongs to the app engine", result.stderr)
+
+
+class MacArchitectureTests(unittest.TestCase):
+    def check_architectures(self, architectures, status=0):
+        source = (ROOT / "scripts/package-macos.sh").read_text()
+        gate = source.split('/usr/bin/ditto "$built_app" "$app"\n', 1)[1].split(
+            "# Preserve the raw release version", 1)[0]
+        # Exercise the slice gate with the tool's output contract, without Xcode.
+        stub = '''
+fail() { printf '!! %s\\n' "$*" >&2; exit 1; }
+lipo() {
+  if [[ $# -ne 2 || "$1" != -archs || "$2" != "$app/Contents/MacOS/MonkeysPaw" ]]; then
+    printf 'lipo: -verify_arch requires exactly one input file\\n' >&2
+    return 1
+  fi
+  printf '%s\\n' "$TEST_ARCHITECTURES"
+  return "$TEST_LIPO_STATUS"
+}
+'''
+        return subprocess.run(
+            ["/bin/bash", "-euo", "pipefail", "-c", stub + gate.replace("/usr/bin/lipo", "lipo")],
+            env=os.environ | {"app": "/tmp/path with spaces/MonkeysPaw.app",
+                              "TEST_ARCHITECTURES": architectures, "TEST_LIPO_STATUS": str(status)},
+            capture_output=True, text=True, timeout=10)
+
+    def test_universal_slices_pass_in_either_order(self):
+        for architectures in ("arm64 x86_64", "x86_64 arm64"):
+            with self.subTest(architectures=architectures):
+                result = self.check_architectures(architectures)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_missing_slices_and_subtype_names_fail(self):
+        for architectures in ("arm64", "x86_64", "arm64e x86_64h", ""):
+            with self.subTest(architectures=architectures):
+                result = self.check_architectures(architectures)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Release build lacks the", result.stderr)
+
+    def test_lipo_failure_stops_packaging_even_if_it_prints_both_slices(self):
+        result = self.check_architectures("arm64 x86_64", status=1)
+        self.assertNotEqual(result.returncode, 0)
 
 
 class FlatpakRepackTests(unittest.TestCase):
