@@ -21,17 +21,22 @@ public struct SecretAccount: Hashable, Codable, Sendable {
               name.unicodeScalars.allSatisfy(allowed.contains) else {
             throw SecretStoreError.invalidAccount
         }
-        self.namespace = namespace
-        self.name = name
+        self.init(validatedNamespace: namespace, validatedName: name)
     }
 
+    private init(validatedNamespace: String, validatedName: String) {
+        namespace = validatedNamespace
+        name = validatedName
+    }
+
+    // Typed UUIDs already satisfy the grammar; their factories cannot throw.
+    // Raw strings and decoded references still use the validating initializer.
     public static func provider(_ id: ProviderProfileID) -> SecretAccount {
-        // A canonical UUID and this literal satisfy the account grammar.
-        try! SecretAccount(namespace: "provider", name: id.rawValue)
+        SecretAccount(validatedNamespace: "provider", validatedName: id.rawValue)
     }
 
     public static func device(_ connectionID: UUID) -> SecretAccount {
-        try! SecretAccount(namespace: "device", name: connectionID.uuidString.lowercased())
+        SecretAccount(validatedNamespace: "device", validatedName: connectionID.uuidString.lowercased())
     }
 
     public init(from decoder: Decoder) throws {

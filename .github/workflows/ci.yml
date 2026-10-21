@@ -646,7 +646,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.core-macos == 'true'
     runs-on: macos-26
-    timeout-minutes: 20
+    # Budget both the full Debug suite and the focused Release build.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -657,6 +658,8 @@ jobs:
           xcode-version: '26.0'
       - name: Test Core
         run: swift test
+      - name: Test optimized secret accounts
+        run: swift test --configuration release --filter SecretAccountTests
 
   macos-app:
     name: macOS app
