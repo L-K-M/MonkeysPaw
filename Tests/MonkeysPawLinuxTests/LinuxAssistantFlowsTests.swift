@@ -82,6 +82,8 @@ final class LinuxAssistantFlowsTests: XCTestCase {
 
     func testReviewHighlightsExactUnicodeQuoteAndImprovesSelectedFindings() throws {
         try open()
+        g_action_group_activate_action(mp_window_action_group(window), "inspector", nil)
+        XCTAssertEqual(gtk_widget_get_visible(try widget("library-inspector")), 0)
         transport.enqueue(try review())
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_r), GDK_CONTROL_MASK), 0)
         XCTAssertNotEqual(gtk_widget_get_visible(try widget("library-inspector")), 0)
