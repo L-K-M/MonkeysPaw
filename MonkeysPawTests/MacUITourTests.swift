@@ -115,25 +115,28 @@ final class MacUITourTests: XCTestCase {
         let presentation = controller.presentation
         window.setContentSize(NSSize(width: 1180, height: 720))
         capture(window, as: "library-\(appearance)-initial")
+        capture(window, as: "library-\(appearance)-toolbar")
 
         if let row = presentation.snapshot.rows.first(where: { $0.title.hasPrefix("Review") })
             ?? presentation.snapshot.rows.first {
             presentation.selectPath(row.relativePath)
         }
         settle()
-        presentation.editorTab = .edit
+        presentation.editorMode = .edit
         settle()
         capture(window, as: "library-\(appearance)-edit")
-        presentation.editorTab = .preview
+        presentation.setInspectorVisible(false)
+        presentation.editorMode = .preview
         settle()
         capture(window, as: "library-\(appearance)-preview")
-        presentation.editorTab = .fields
+        presentation.showInspector(.fields)
         settle()
         capture(window, as: "library-\(appearance)-fields")
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         settle()
         capture(window, as: "library-\(appearance)-history")
-        presentation.editorTab = .edit
+        presentation.editorMode = .edit
+        presentation.setInspectorVisible(false)
         settle()
 
         if let section = presentation.snapshot.sections.first(where: {
@@ -154,7 +157,7 @@ final class MacUITourTests: XCTestCase {
         settle()
 
         if presentation.canShowAssistant {
-            presentation.toggleAssistant()
+            presentation.showInspector(.assistant)
             settle()
             capture(window, as: "library-\(appearance)-assistant")
             presentation.closeAssistant()
@@ -183,8 +186,42 @@ final class MacUITourTests: XCTestCase {
         settle()
         captureSheet(of: window, as: "library-\(appearance)-move-sheet")
         endSheet(of: window)
+        presentation.requestFileCommand(.delete)
+        settle()
+        captureSheet(of: window, as: "library-\(appearance)-delete-sheet")
+        endSheet(of: window)
+        tourDiskConflicts(controller, window: window, appearance: appearance)
         settle()
         describe(window, as: "library")
+    }
+
+    private func tourDiskConflicts(_ controller: LibraryWindowController, window: NSWindow, appearance: String) {
+        let presentation = controller.presentation
+        guard let prompt = presentation.editorState.prompt, let source = presentation.editorState.source else { return }
+        let file = URL(fileURLWithPath: presentation.activeLibraryPath, isDirectory: true)
+            .appendingPathComponent(prompt.relativePath.string)
+        // These are copied tour seeds in a temporary library, never owner files.
+        do {
+            presentation.edit(source + "\nA local draft.\n")
+            try Data((source + "\nAn external change.\n").utf8).write(to: file)
+            presentation.save()
+            settle()
+            captureSheet(of: window, as: "library-\(appearance)-modified-on-disk-sheet")
+            endSheet(of: window)
+            presentation.editor.resolveConflict(.takeTheirs)
+            settle()
+            guard let latest = presentation.editorState.source else { return }
+            presentation.edit(latest + "\nA draft after deletion.\n")
+            try FileManager.default.removeItem(at: file)
+            presentation.save()
+            settle()
+            captureSheet(of: window, as: "library-\(appearance)-deleted-on-disk-sheet")
+            endSheet(of: window)
+            presentation.editor.resolveConflict(.keepMine)
+            settle()
+        } catch {
+            windowNotes.append("library-\(appearance): disk-conflict tour setup failed")
+        }
     }
 
     private func tourSettings(appearance: String) {
