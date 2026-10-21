@@ -243,28 +243,28 @@ private struct PickerActionsView: View {
     var body: some View {
         HStack(spacing: 8) {
             if let fill = presentation.model.fillModel {
-                Button { fill.deliver(mode: fill.preferredMode) } label: {
+                Button { presentation.perform(.deliver) } label: {
                     keyCap(Strings.deliver, "↩")
                 }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
                     .disabled(!fill.deliverEnabled).accessibilityLabel(Strings.deliver)
                     .accessibilityIdentifier("picker-deliver")
-                Button { fill.deliver(mode: .copyOnly) } label: { keyCap(Strings.copy, "⌥↩") }
+                Button { presentation.perform(.copyFilled) } label: { keyCap(Strings.copy, "⌥↩") }
                     .disabled(!fill.canCopyOnly).accessibilityLabel(Strings.copy)
                     .accessibilityIdentifier("picker-copy")
-                Button { presentation.model.escape() } label: { keyCap(Strings.back, "⎋") }
+                Button { presentation.perform(.back) } label: { keyCap(Strings.back, "⎋") }
                     .accessibilityLabel(Strings.back).accessibilityIdentifier("picker-back")
             } else {
-                Button { presentation.model.use(mode: .paste(.standard)) } label: { keyCap(Strings.paste, "↩") }
+                Button { presentation.perform(.paste) } label: { keyCap(Strings.paste, "↩") }
                     .disabled(!presentation.useEnabled).accessibilityLabel(Strings.usePrompt)
                     .accessibilityIdentifier("picker-use")
-                Button { presentation.model.use(mode: .copyOnly) } label: { keyCap(Strings.copy, "⌥↩") }
+                Button { presentation.perform(.copy) } label: { keyCap(Strings.copy, "⌥↩") }
                     .disabled(!presentation.useEnabled).accessibilityLabel(Strings.copy)
                     .accessibilityIdentifier("picker-copy")
-                Button { presentation.model.editSelected() } label: { keyCap(Strings.edit, "⌘↩") }
+                Button { presentation.perform(.edit) } label: { keyCap(Strings.edit, "⌘↩") }
                     .disabled(presentation.model.selectionIndex == nil).accessibilityLabel(Strings.edit)
                     .accessibilityIdentifier("picker-edit")
-                Button { presentation.model.openLibrary() } label: { keyCap(Strings.library, "⌘L") }
+                Button { presentation.perform(.library) } label: { keyCap(Strings.library, "⌘L") }
                     .accessibilityLabel(Strings.library)
                     .accessibilityIdentifier("picker-library")
             }

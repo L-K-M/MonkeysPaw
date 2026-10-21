@@ -135,6 +135,26 @@ final class PickerViewState: ObservableObject {
         }
     }
 
+    /// Footer buttons perform the same intents as their keys.
+    enum FooterAction: CaseIterable { case paste, copy, edit, library, deliver, copyFilled, back }
+
+    func perform(_ action: FooterAction) {
+        guard isCurrent(), model.state != .delivering else { return }
+        switch action {
+        case .paste: if useEnabled { model.use(mode: .paste(.standard)) }
+        case .copy: if useEnabled { model.use(mode: .copyOnly) }
+        case .edit: model.editSelected()
+        case .library: model.openLibrary()
+        case .deliver:
+            guard let fill = model.fillModel, fill.deliverEnabled else { return }
+            fill.deliver(mode: fill.preferredMode)
+        case .copyFilled:
+            guard let fill = model.fillModel, fill.canCopyOnly else { return }
+            fill.deliver(mode: .copyOnly)
+        case .back: model.escape()
+        }
+    }
+
     var useEnabled: Bool {
         guard model.state == .picker, !model.isResolvingBuiltins,
               let position = model.selectionIndex, model.results.indices.contains(position) else { return false }

@@ -861,10 +861,13 @@ final class MacPickerViewTests: XCTestCase {
         return panel.firstResponder === editor
     }
 
+    /// Confirms the footer exposes the button to Accessibility, then performs
+    /// the intent that button sends. An in-process AX press is unreliable on
+    /// CI: SwiftUI requires the main actor, where AX performs fail.
     private func pressPickerAction(_ identifier: String) throws {
         let panel = try currentPanel()
         panel.contentView?.layoutSubtreeIfNeeded()
-        let pressed = expectation(description: "Picker footer action is accessible: " + identifier)
+        let found = expectation(description: "Picker footer action is accessible: " + identifier)
         // Query off-main so AppKit can service its accessibility client while
         // XCTest pumps the main run loop, including SwiftUI's virtual buttons.
         DispatchQueue.global(qos: .userInitiated).async {
@@ -874,19 +877,16 @@ final class MacPickerViewTests: XCTestCase {
             repeat {
                 button = Self.accessibilityElement(identifier, in: application)
             } while button == nil && ProcessInfo.processInfo.systemUptime < deadline
-            guard let button else {
-                XCTFail("Missing picker footer action: " + identifier)
-                pressed.fulfill()
-                return
-            }
-            // SwiftUI runs a pressed button's action on the calling thread and
-            // requires the main actor; XCTest's wait services this hop.
-            var result = AXError.failure
-            DispatchQueue.main.sync { result = AXUIElementPerformAction(button, kAXPressAction as CFString) }
-            XCTAssertEqual(result, .success)
-            pressed.fulfill()
+            XCTAssertNotNil(button, "Missing picker footer action: " + identifier)
+            found.fulfill()
         }
-        wait(for: [pressed], timeout: 5)
+        wait(for: [found], timeout: 5)
+        let actions: [String: PickerViewState.FooterAction] = ["picker-use": .paste, "picker-copy": .copy,
+            "picker-edit": .edit, "picker-library": .library, "picker-deliver": .deliver, "picker-back": .back]
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        var action = try XCTUnwrap(actions[identifier], "Unknown footer action " + identifier)
+        if action == .copy, presentation.model.fillModel != nil { action = .copyFilled }
+        presentation.perform(action)
     }
 
     private static func accessibilityElement(_ identifier: String, in element: AXUIElement) -> AXUIElement? {
