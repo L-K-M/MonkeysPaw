@@ -12,13 +12,14 @@
 #   server-image  versioned local server image (Docker with a Linux engine, git)
 #   --install  after building, install what this run built:
 #              mac      /Applications/MonkeysPaw.app, replaced from the zip
+#                       and revealed in Finder
 #              deb      sudo apt-get install (needs sudo and apt-get)
 #              flatpak  flatpak install --user, only when deb is not targeted:
 #                       both routes share ch.lkmc.monkeyspaw, so one per user
 #              android  adb install -r on the one ready device (ANDROID_SERIAL
 #                       picks one); adb comes from the SDK, then PATH
 #              server-image  nothing; deploy the server with ./update.sh
-#   --no-open  do not open dist/ in Finder after a successful macOS build
+#   --no-open  do not open Finder after building or installing
 #   --help     print this header
 #
 # Versions come from the committed Xcode settings; packaging needs no lkm-build.
@@ -241,6 +242,7 @@ results=()
 failed=0
 built=0
 built_targets=()
+finder_arguments=("$repo_root/dist")
 for target in "${targets[@]}"; do
   if ! feasible "$target"; then
     if [[ "$explicit" == true ]]; then
@@ -298,6 +300,7 @@ if [[ "$install" == true ]]; then
     printf '==> Installing %s\n' "$target"
     if "${install_command[@]}"; then
       results+=("install $target: ok ($destination)")
+      if [[ "$target" == mac ]]; then finder_arguments=(-R "$mac_app"); fi
     else
       results+=("install $target: FAILED ($reason)")
       failed=1
@@ -306,7 +309,7 @@ if [[ "$install" == true ]]; then
 fi
 
 if [[ "$host" == Darwin && "$built" -gt 0 && "$no_open" == false ]]; then
-  open "$repo_root/dist" || printf '!! Could not open dist/ in Finder\n' >&2
+  open "${finder_arguments[@]}" || printf '!! Could not open Finder\n' >&2
 fi
 
 printf '\nSummary\n'

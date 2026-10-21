@@ -1,5 +1,6 @@
 """Run the local orchestrator with recording packagers, without any builds."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,7 +24,7 @@ class BuildTests(unittest.TestCase):
         (self.root / "scripts").mkdir()
         (self.root / "packaging").mkdir()
         shutil.copy(ROOT / "scripts/build.sh", self.root / "scripts/build.sh")
-        for name in ("dirname", "basename", "rm", "mkdir", "sha256sum", "awk", "sed", "tail", "tr"):
+        for name in ("dirname", "basename", "rm", "mkdir", "mktemp", "mv", "sha256sum", "awk", "sed", "tail", "tr"):
             (self.bin / name).symlink_to(shutil.which(name))
         self.script(self.bin / "id", 'if [[ "$1" == -u ]]; then echo "${FAKE_UID:-1000}"; else exit 1; fi\n')
         (self.bin / "python3").symlink_to(sys.executable)
@@ -38,7 +39,7 @@ case "$*" in
   *) exit 1 ;;
 esac
 ''')
-        self.script(self.bin / "open", 'printf "open\\n" >> "$BUILD_CALLS"\n')
+        self.script(self.bin / "open", 'printf "open %s\\n" "$*" >> "$BUILD_CALLS"\n')
         self.script(self.bin / "dpkg", "echo amd64\n")
         self.script(self.bin / "flatpak", '''
 if [[ "$1" == install ]]; then
@@ -143,6 +144,45 @@ else:
     def clear_calls(self):
         for name in ("calls", "docker-calls"):
             (self.root / name).unlink(missing_ok=True)
+
+    def enable_mac_build(self):
+        # Keep real /Applications and native ditto out of these portable tests.
+        build = self.root / "scripts/build.sh"
+        build.write_text(build.read_text().replace(
+            "/Applications/", f"{self.root}/Applications/").replace(
+            "/usr/bin/ditto", str(self.bin / "ditto")))
+        self.mac_app = self.root / "Applications/MonkeysPaw.app"
+        self.mac_app.mkdir(parents=True)
+        (self.mac_app / "obsolete").write_text("old app")
+        self.script(self.bin / "xcodebuild", "exit 0\n")
+        self.script(self.root / "scripts/package-macos.sh", "python3 - <<'PY'\n" + '''
+import os
+from pathlib import Path
+import sys
+import zipfile
+
+with open(os.environ["BUILD_CALLS"], "a") as file:
+    file.write("mac\\n")
+if os.environ.get("FAKE_MAC_FAILURE") == "1":
+    sys.exit(1)
+Path("dist").mkdir(exist_ok=True)
+with zipfile.ZipFile("dist/MonkeysPaw-0.2.0-rc-1.zip", "w") as archive:
+    archive.writestr("MonkeysPaw.app/Contents/MacOS/MonkeysPaw", "fresh app")
+''' + "PY\n")
+        self.script(self.bin / "ditto", f"#!{sys.executable}\n" + '''
+import os
+import shutil
+import sys
+import zipfile
+
+if sys.argv[1:3] == ["-x", "-k"]:
+    with zipfile.ZipFile(sys.argv[3]) as archive:
+        archive.extractall(sys.argv[4])
+else:
+    if os.environ.get("FAKE_INSTALL_FAILURE") == "1":
+        sys.exit(1)
+    shutil.copytree(sys.argv[1], sys.argv[2])
+''', shebang=False)
 
     def test_default_builds_deb_and_flatpak_once_and_skips_unavailable_targets(self):
         result = self.run_build()
@@ -404,6 +444,142 @@ printf 'local-adb %s\n' "$1" >> "$BUILD_CALLS"
         result = self.run_build("--run")
         self.assertEqual(result.returncode, 2)
         self.assertIn("belongs to the app engine", result.stderr)
+
+    def test_mac_install_replaces_the_app_and_reveals_it_in_applications(self):
+        self.enable_mac_build()
+        result = self.run_build("mac", "--install", FAKE_HOST="Darwin")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.mac_app / "Contents/MacOS/MonkeysPaw").read_text(), "fresh app")
+        self.assertFalse((self.mac_app / "obsolete").exists())
+        self.assertEqual(self.calls(), ["mac", f"open -R {self.mac_app}"])
+        self.assertIn(f"install mac: ok ({self.mac_app})", result.stdout)
+
+    def test_mac_no_open_still_installs_and_build_only_opens_dist(self):
+        self.enable_mac_build()
+        result = self.run_build("mac", "--install", "--no-open", FAKE_HOST="Darwin")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["mac"])
+        self.assertEqual((self.mac_app / "Contents/MacOS/MonkeysPaw").read_text(), "fresh app")
+
+        self.clear_calls()
+        result = self.run_build("mac", FAKE_HOST="Darwin")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), ["mac", f"open {self.root}/dist"])
+
+    def test_failed_mac_copy_preserves_old_app_and_does_not_reveal_it(self):
+        self.enable_mac_build()
+        result = self.run_build("mac", "--install", FAKE_HOST="Darwin", FAKE_INSTALL_FAILURE="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("install mac: FAILED", result.stdout)
+        self.assertEqual((self.mac_app / "obsolete").read_text(), "old app")
+        self.assertEqual(self.calls(), ["mac", f"open {self.root}/dist"])
+
+    def test_failed_mac_packaging_cannot_install_a_stale_zip(self):
+        self.enable_mac_build()
+        result = self.run_build("mac", "--no-open", FAKE_HOST="Darwin")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.clear_calls()
+        result = self.run_build("mac", "--install", FAKE_HOST="Darwin", FAKE_MAC_FAILURE="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("install mac:", result.stdout)
+        self.assertEqual((self.mac_app / "obsolete").read_text(), "old app")
+        self.assertEqual(self.calls(), ["mac"])
+
+
+class MacDMGTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="monkeyspaw-dmg-test-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name) / "repo with spaces"
+        self.staging = self.root / "work/image"
+        (self.staging / "MonkeysPaw.app").mkdir(parents=True)
+        (self.root / "work/artifacts").mkdir()
+        self.dist = self.root / "dist"
+        self.dist.mkdir()
+        for suffix in ("zip", "dmg", "sha256"):
+            (self.dist / f"MonkeysPaw-1.0.0.{suffix}").write_text("stale")
+        self.zip = self.root / "work/artifacts/MonkeysPaw-1.0.0.zip"
+        self.zip.write_text("fresh zip")
+        self.dmg = self.zip.with_suffix(".dmg")
+
+    def package(self, image="missing", status=1, ci="false", tool="create-dmg", failure=""):
+        source = (ROOT / "scripts/package-macos.sh").read_text()
+        packaging = source[source.index('volume_name="MonkeysPaw $version"'):]
+        # Run the actual packaging/publication block with recording image tools.
+        stub = '''
+fail() { printf '!! %s\\n' "$*" >&2; exit 1; }
+create-dmg() {
+  printf 'create-dmg %s\\n' "$*"
+  case "$TEST_IMAGE" in
+    valid) printf 'fresh styled image' > "$dmg" ;;
+    invalid) printf 'corrupt image' > "$dmg" ;;
+  esac
+  return "$TEST_STATUS"
+}
+hdiutil() {
+  printf 'hdiutil %s\\n' "$*" >&2
+  if [[ "$1" == verify ]]; then
+    [[ "$TEST_FAILURE" != verify && -s "$2" && "$(< "$2")" != 'corrupt image' ]]
+    return
+  fi
+  [[ "$1" == create && "$TEST_FAILURE" != create ]] || return 1
+  [[ ! -e "$dmg" ]] || return 1
+  [[ -d "$staging_directory/MonkeysPaw.app" ]] || return 1
+  [[ "$(readlink "$staging_directory/Applications")" == /Applications ]] || return 1
+  printf 'fresh plain image' > "$dmg"
+}
+'''
+        return subprocess.run(
+            ["/bin/bash", "-euo", "pipefail", "-c", stub + packaging.replace("/usr/bin/hdiutil", "hdiutil")],
+            env=os.environ | {"repo_root": str(self.root), "staging_directory": str(self.staging),
+                              "zip": str(self.zip), "dmg": str(self.dmg), "dmg_tool": tool,
+                              "version": "1.0.0", "CI": ci, "TEST_IMAGE": image,
+                              "TEST_STATUS": str(status), "TEST_FAILURE": failure},
+            capture_output=True, text=True, timeout=10)
+
+    def test_local_missing_image_recovers_with_a_verified_plain_dmg(self):
+        result = self.package(image="missing")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("hdiutil create ", result.stderr)
+        self.assertEqual((self.dist / "MonkeysPaw-1.0.0.dmg").read_text(), "fresh plain image")
+        self.assertEqual((self.dist / "MonkeysPaw-1.0.0.zip").read_text(), "fresh zip")
+        for line in (self.dist / "MonkeysPaw-1.0.0.sha256").read_text().splitlines():
+            digest, name = line.split()
+            self.assertEqual(digest, hashlib.sha256((self.dist / name).read_bytes()).hexdigest())
+
+    def test_corrupt_image_is_removed_before_local_recovery(self):
+        result = self.package(image="invalid", status=0)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.dist / "MonkeysPaw-1.0.0.dmg").read_text(), "fresh plain image")
+
+    def test_ci_rejects_missing_image_without_a_plain_fallback(self):
+        result = self.package(ci="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("hdiutil create ", result.stderr)
+        self.assertEqual((self.dist / "MonkeysPaw-1.0.0.dmg").read_text(), "stale")
+
+    def test_verified_image_is_kept_even_when_create_dmg_returns_nonzero(self):
+        result = self.package(image="valid", ci="true")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("hdiutil create ", result.stderr)
+        self.assertEqual((self.dist / "MonkeysPaw-1.0.0.dmg").read_text(), "fresh styled image")
+
+    def test_local_plain_image_still_works_without_create_dmg(self):
+        result = self.package(tool="hdiutil")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("create-dmg --", result.stdout)
+        self.assertEqual((self.dist / "MonkeysPaw-1.0.0.dmg").read_text(), "fresh plain image")
+
+    def test_failed_fallback_never_publishes_over_previous_artifacts(self):
+        for failure in ("create", "verify"):
+            with self.subTest(failure=failure):
+                result = self.package(failure=failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("hdiutil create ", result.stderr)
+                for suffix in ("zip", "dmg", "sha256"):
+                    self.assertEqual((self.dist / f"MonkeysPaw-1.0.0.{suffix}").read_text(), "stale")
+                self.dmg.unlink(missing_ok=True)
+                (self.staging / "Applications").unlink(missing_ok=True)
 
 
 class MacArchitectureTests(unittest.TestCase):

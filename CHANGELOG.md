@@ -24,6 +24,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - macOS packaging checks the universal slices with `lipo -archs`; Xcode 27's
   `lipo` rejected the multi-arch `-verify_arch` form and failed the build.
+- Local macOS packaging recovers from missing or invalid create-dmg output
+  with a verified plain image, allowing `--install` to proceed.
+- Successful macOS installs reveal the installed app in Applications instead
+  of opening `dist/`. `--no-open` suppresses Finder.
 
 ## [1.0.0] - 2026-10-20
 
