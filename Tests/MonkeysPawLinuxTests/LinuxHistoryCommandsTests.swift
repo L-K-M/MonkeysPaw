@@ -58,7 +58,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         tools = nil
     }
 
-    func testHistoryTabLoadsNewestFirstWithMetadataAndReadOnlyExactPreview() throws {
+    func testHistoryPageLoadsNewestFirstWithMetadataAndReadOnlyExactPreview() throws {
         let sources = [Data("Previous\r\n".utf8), Data("---\ntitle: [broken\n---\nForensic".utf8),
             Data([0xff, 0xfe]), Data("---\nformat: 2\n---\nFuture".utf8),
             Data(repeating: 65, count: Limits.maxPromptBytes + 1)]
@@ -120,7 +120,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         try click("library-rename", in: window)
         try confirm(input: "occupied.md")
         XCTAssertEqual(editor.state.status, .commandRunning)
-        gtk_notebook_set_current_page(mp_notebook(try widget("library-editor-tabs", in: window)), 3)
+        try runAction("history", in: window)
         drain(releaseWork: false)
         XCTAssertFalse(editor.state.history.isLoading)
         wait { self.editor.state.status != .commandRunning && !self.editor.state.history.isLoading
@@ -139,13 +139,12 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         let window = try open()
         try showHistory(in: window)
         try selectRevision(0, in: window)
-        let tabs = mp_notebook(try widget("library-editor-tabs", in: window))
-        gtk_notebook_set_current_page(tabs, 0)
+        try runAction("fields", in: window)
         let second = try snapshot(Data("Later".utf8), sequence: 1)
         try click("library-rename", in: window)
         try confirm(input: "occupied.md")
         XCTAssertEqual(editor.state.status, .commandRunning)
-        gtk_notebook_set_current_page(tabs, 3)
+        try runAction("history", in: window)
         drain(releaseWork: false)
         XCTAssertFalse(editor.state.history.isLoading)
         wait { self.editor.state.status != .commandRunning && !self.editor.state.history.isLoading
@@ -161,8 +160,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
     func testFirstSaveReloadsHistoryAtSamePathWithoutResettingSourceSession() throws {
         let window = try open(source: "Plain")
         let before = try XCTUnwrap(editor.state.prompt)
-        let tabs = mp_notebook(try widget("library-editor-tabs", in: window))
-        gtk_notebook_set_current_page(tabs, 3)
+        try runAction("history", in: window)
         wait { !self.editor.state.history.isLoading }
         drain()
         XCTAssertTrue(editor.state.history.revisions.isEmpty)
@@ -185,7 +183,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         XCTAssertEqual(assigned.relativePath, before.relativePath)
         XCTAssertNotEqual(assigned.identity, before.identity)
         XCTAssertEqual(browser.selection, assigned)
-        XCTAssertEqual(gtk_notebook_get_current_page(tabs), 3)
+        XCTAssertEqual(page(try widget("library-inspector-stack", in: window)), "history")
         let revision = try XCTUnwrap(editor.state.history.revisions.first)
         XCTAssertEqual(revision.revision.identity, assigned.identity)
         XCTAssertEqual(revision.source, "Plain")
@@ -217,7 +215,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         let filename = try snapshot(Data("Earlier".utf8))
         let window = try open(source: "Plain")
         let before = try XCTUnwrap(editor.state.prompt)
-        gtk_notebook_set_current_page(mp_notebook(try widget("library-editor-tabs", in: window)), 3)
+        try runAction("history", in: window)
         wait { !self.editor.state.history.isLoading }
         drain()
         XCTAssertTrue(editor.state.history.revisions.isEmpty)
@@ -235,7 +233,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         XCTAssertEqual(contents(try widget("library-history-preview", in: window)), "Earlier")
     }
 
-    func testHistoryReloadsAfterCommittedSaveWhileTabStaysOpen() throws {
+    func testHistoryReloadsAfterCommittedSaveWhilePageStaysOpen() throws {
         let filename = try snapshot(Data("Earlier".utf8))
         let window = try open()
         try showHistory(in: window)
@@ -250,7 +248,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
             && self.editor.state.history.revisions.count == 2 }
         drain()
         XCTAssertEqual(editor.state.prompt, prompt)
-        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(try widget("library-editor-tabs", in: window))), 3)
+        XCTAssertEqual(page(try widget("library-inspector-stack", in: window)), "history")
         XCTAssertEqual(editor.state.history.revisions.first?.source, original)
         XCTAssertEqual(editor.state.history.selectedRevision?.filename, filename)
         let list = try widget("library-history-list", in: window)
@@ -259,12 +257,11 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         XCTAssertEqual(PromptCodec.parseFile(try files.read(at: "a.md"), filename: "a.md").body, "Original saved")
     }
 
-    func testHistoryReloadsWhenLibraryReturnsWithoutChangingTabs() throws {
+    func testHistoryReloadsWhenLibraryReturnsWithoutChangingPages() throws {
         let first = try snapshot(Data("Earlier".utf8))
         let window = try open()
-        let tabs = mp_notebook(try widget("library-editor-tabs", in: window))
         controller.setLibraryAvailable(false)
-        gtk_notebook_set_current_page(tabs, 3)
+        try runAction("history", in: window)
         drain(releaseWork: false)
         XCTAssertFalse(editor.state.history.isLoading)
         XCTAssertTrue(editor.state.history.revisions.isEmpty)
@@ -282,7 +279,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         wait { !self.editor.state.history.isLoading && self.editor.state.history.failure == nil
             && self.editor.state.history.revisions.count == 2 }
         drain()
-        XCTAssertEqual(gtk_notebook_get_current_page(tabs), 3)
+        XCTAssertEqual(page(try widget("library-inspector-stack", in: window)), "history")
         XCTAssertEqual(editor.state.history.revisions.map(\.revision.filename), [second, first])
         XCTAssertEqual(editor.state.history.selectedRevision?.filename, first)
         XCTAssertEqual(contents(try widget("library-history-preview", in: window)), "Earlier")
@@ -318,7 +315,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         XCTAssertEqual(editor.state.history.revisions.map(\.revision.filename), [second, first])
         XCTAssertEqual(editor.state.history.selectedRevision?.filename, first)
         XCTAssertEqual(data.lists, lists + 1)
-        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(try widget("library-editor-tabs", in: window))), 3)
+        XCTAssertEqual(page(try widget("library-inspector-stack", in: window)), "history")
         XCTAssertNotNil(gtk_list_box_get_row_at_index(mp_list_box(try widget("library-history-list", in: window)), 1))
         XCTAssertEqual(contents(try widget("library-history-preview", in: window)), "Earlier")
     }
@@ -328,7 +325,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         let window = try open()
         data.listFailure = .ioFailure
         let lists = data.lists
-        gtk_notebook_set_current_page(mp_notebook(try widget("library-editor-tabs", in: window)), 3)
+        try runAction("history", in: window)
         XCTAssertTrue(editor.state.history.isLoading)
         // Compute the old failure but leave its reply queued on GLib.
         work.releaseAll()
@@ -388,7 +385,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         controller.hide()
         wait { self.editor.state.prompt == nil && !self.controller.isVisible }
         _ = try open()
-        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(try widget("library-editor-tabs", in: window))), 3)
+        XCTAssertEqual(page(try widget("library-inspector-stack", in: window)), "history")
         wait { self.editor.state.history.revisions.count == 1 && !self.editor.state.history.isLoading }
     }
 
@@ -556,7 +553,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         wait { self.editor.state.readOnlyReason != nil }
         XCTAssertEqual(try files.read(at: "a.md"), future)
         for name in ["library-rename", "library-move", "library-delete", "library-restore"] {
-            XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0)
+            XCTAssertFalse(try sensitive(name, in: window), name)
         }
     }
 
@@ -602,37 +599,37 @@ final class LinuxHistoryCommandsTests: XCTestCase {
         drain()
         let window = try libraryWindow()
         let actions = ["library-rename", "library-move", "library-delete", "library-restore"]
-        for name in actions { XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0) }
+        for name in actions { XCTAssertFalse(try sensitive(name, in: window), name) }
         try snapshot(Data("Previous".utf8))
         _ = try open()
         try showHistory(in: window)
         try selectRevision(0, in: window)
-        for name in actions { XCTAssertNotEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0) }
+        for name in actions { XCTAssertTrue(try sensitive(name, in: window), name) }
         controller.setLibraryAvailable(false)
-        for name in actions + ["library-history-refresh"] { XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0) }
+        for name in actions + ["library-history-refresh"] { XCTAssertFalse(try sensitive(name, in: window), name) }
         controller.setLibraryAvailable(true)
         try click("library-rename", in: window)
         try confirm(input: "renamed.md")
         XCTAssertTrue(GTKTestSupport.spin { self.editor.state.status == .commandRunning })
         drain(releaseWork: false)
-        for name in actions + ["library-history-refresh"] { XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0) }
+        for name in actions + ["library-history-refresh"] { XCTAssertFalse(try sensitive(name, in: window), name) }
         wait { self.editor.state.status != .commandRunning }
         editor.edit(editor.state.source! + "Draft")
         editor.save()
         drain(releaseWork: false)
-        for name in actions { XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0) }
+        for name in actions { XCTAssertFalse(try sensitive(name, in: window), name) }
         wait { self.editor.state.status == .saved }
         editor.edit(editor.state.source! + "Dirty")
         editor.request(.revert)
         wait { self.editor.state.pendingDecision != nil }
-        for name in actions { XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0) }
+        for name in actions { XCTAssertFalse(try sensitive(name, in: window), name) }
         try respond(.decision(.discard))
         wait { self.editor.state.pendingDecision == nil }
         for (path, bytes) in [("future.md", Data("---\nformat: 2\n---\nFuture".utf8)),
                               ("bytes.md", Data([0xff])), ("large.md", Data(repeating: 65, count: Limits.maxPromptBytes + 1))] {
             try files.write(bytes, at: path)
             _ = try open(path: path, source: nil)
-            for name in actions { XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0) }
+            for name in actions { XCTAssertFalse(try sensitive(name, in: window), name) }
         }
     }
 
@@ -717,7 +714,8 @@ final class LinuxHistoryCommandsTests: XCTestCase {
     }
 
     private func showHistory(in window: GTK.Widget) throws {
-        gtk_notebook_set_current_page(mp_notebook(try widget("library-editor-tabs", in: window)), 3)
+        // History loads only while the inspector is visible on its History page.
+        try runAction("history", in: window)
         wait { !self.editor.state.history.isLoading && (self.editor.state.history.failure != nil || !self.editor.state.history.revisions.isEmpty) }
         drain()
     }
@@ -783,11 +781,38 @@ final class LinuxHistoryCommandsTests: XCTestCase {
     private func widget(_ name: String, in window: GTK.Widget) throws -> GTK.Widget {
         try XCTUnwrap(find(window) { String(cString: gtk_widget_get_name($0)) == name }, "Missing \(name)")
     }
+    // Removed command buttons now live in the header bar's action menus; keep
+    // their old names here so call sites keep intent through the action map.
+    private static let commandActions = [
+        "library-save": "save", "library-save-copy": "duplicate", "library-revert": "revert",
+        "library-rename": "rename", "library-move": "move", "library-delete": "delete",
+        "library-assistant": "assistant", "library-open-folder": "show-files",
+    ]
     private func click(_ name: String, in window: GTK.Widget) throws {
+        if let action = Self.commandActions[name] {
+            try runAction(action, in: window)
+            drain(releaseWork: false)
+            return
+        }
         let button = try widget(name, in: window)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_sensitive(button) != 0 }, "\(name) stays disabled")
         activate(button)
         drain(releaseWork: false)
+    }
+    private func runAction(_ action: String, in window: GTK.Widget) throws {
+        XCTAssertTrue(GTKTestSupport.spin {
+            g_action_group_get_action_enabled(mp_window_action_group(window), action) != 0
+        }, "win.\(action) stays disabled")
+        g_action_group_activate_action(mp_window_action_group(window), action, nil)
+    }
+    private func sensitive(_ name: String, in window: GTK.Widget) throws -> Bool {
+        if let action = Self.commandActions[name] {
+            return g_action_group_get_action_enabled(mp_window_action_group(window), action) != 0
+        }
+        return gtk_widget_get_sensitive(try widget(name, in: window)) != 0
+    }
+    private func page(_ stack: GTK.Widget) -> String? {
+        gtk_stack_get_visible_child_name(mp_stack(stack)).map { String(cString: $0) }
     }
     private func activate(_ button: GTK.Widget) {
         var clicked = false

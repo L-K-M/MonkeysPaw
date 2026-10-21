@@ -411,7 +411,7 @@ final class LinuxForgetControlsTests: XCTestCase {
     }
 
     private func click(_ name: String, in window: GTK.Widget) throws {
-        XCTAssertNotEqual(gtk_widget_activate(try settingsWidget(name, in: window)), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(try settingsWidget(name, in: window)), 0)
     }
 
     /// Detached buttons cannot finish GTK's activation animation. Emit the

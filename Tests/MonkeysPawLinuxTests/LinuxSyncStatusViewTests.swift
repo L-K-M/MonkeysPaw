@@ -61,7 +61,7 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         try bindStatus()
         environment.panel.show()
         try assertMatrix(in: environment.panel.clipboardOwner, prefix: "picker-sync")
-        XCTAssertTrue(try label("picker-hint", in: environment.panel.clipboardOwner).contains("terminal paste"))
+        XCTAssertTrue(String(cString: gtk_widget_get_tooltip_text(try settingsWidget("picker-hint", in: environment.panel.clipboardOwner))).contains("terminal paste"))
         XCTAssertTrue(labels(environment.panel.clipboardOwner).contains(LinuxStrings.pickerSession(.otherX11)))
     }
 
@@ -257,7 +257,7 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         XCTAssertEqual(fill.preferredMode, .paste(.terminal))
         mp_entry_set_text(try settingsWidget("fill-field-topic", in: window), "offline work")
         XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
-        XCTAssertTrue(try label("picker-hint", in: window).contains("terminal paste"))
+        XCTAssertTrue(String(cString: gtk_widget_get_tooltip_text(try settingsWidget("picker-hint", in: window))).contains("terminal paste"))
         try click("picker-use", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
         XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
@@ -479,10 +479,10 @@ final class LinuxSyncStatusViewTests: XCTestCase {
 
     private func assertAccountSelected(in window: GTK.Widget) throws {
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) != 0 })
-        let notebook = try settingsWidget("settings-tabs", in: window)
+        let stack = try settingsWidget("settings-stack", in: window)
         let account = try settingsWidget("settings-account-page", in: window)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_mapped(account) != 0 })
-        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(notebook)), gtk_notebook_page_num(mp_notebook(notebook), account))
+        XCTAssertEqual(gtk_stack_get_visible_child(mp_stack(stack)), account)
     }
 
     private func enabledReport() -> SyncReport { var value = SyncReport(); value.enabled = true; return value }

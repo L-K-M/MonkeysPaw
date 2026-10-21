@@ -199,19 +199,19 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
     func testInviteReopensAccountAfterClosingOnGeneralTab() throws {
         try open(link())
         let first = try XCTUnwrap(window)
-        let notebook = try settingsWidget("settings-tabs", in: first)
+        let stack = try settingsWidget("settings-stack", in: first)
         let account = try settingsWidget("settings-account-page", in: first)
-        let page = gtk_notebook_page_num(mp_notebook(notebook), account)
-        XCTAssertGreaterThanOrEqual(page, 0)
-        gtk_notebook_set_current_page(mp_notebook(notebook), 0)
+        XCTAssertNotNil(gtk_stack_get_page(mp_stack(stack), account))
+        gtk_stack_set_visible_child_name(mp_stack(stack), "general")
         gtk_window_close(mp_window(first))
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(first) == 0 })
-        XCTAssertNotEqual(gtk_widget_get_visible(account), 0)
+        // GtkStack hides non-visible children; the page must stay attached.
+        XCTAssertNotNil(gtk_stack_get_page(mp_stack(stack), account))
 
         try open(link())
 
         XCTAssertEqual(window, first)
-        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(notebook)), page)
+        XCTAssertEqual(gtk_stack_get_visible_child(mp_stack(stack)), account)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_mapped(account) != 0 })
         XCTAssertTrue(http.requests.isEmpty)
     }
@@ -257,8 +257,8 @@ final class LinuxInviteDeepLinkTests: XCTestCase {
         let model = try XCTUnwrap(environment.inviteModel)
         try input("input", token)
         try input("password", "hidden-" + UUID().uuidString)
-        let notebook = try settingsWidget("settings-tabs", in: window)
-        gtk_notebook_set_current_page(mp_notebook(notebook), 0)
+        let stack = try settingsWidget("settings-stack", in: window)
+        gtk_stack_set_visible_child_name(mp_stack(stack), "general")
         XCTAssertTrue(GTKTestSupport.spin { model.state.destination == nil })
         XCTAssertTrue(try text("input").isEmpty, "Invite input was not cleared")
         XCTAssertTrue(try text("password").isEmpty, "Secure input was not cleared")

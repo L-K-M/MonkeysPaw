@@ -20,20 +20,29 @@ final class LinuxSettingsUpdatePage {
 
     init(model: UpdateSettingsModel) {
         self.model = model
-        widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
+        // The update pane is a group inside the General column, not a page.
+        widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
         gtk_widget_set_name(widget, "settings-update-page")
-        gtk_box_append(mp_box(widget), GTK.label(LinuxSettingsUpdateStrings.title))
-        automatic = gtk_check_button_new_with_label(LinuxSettingsUpdateStrings.automatic)!
+        let heading = GTK.label(LinuxSettingsUpdateStrings.title)
+        gtk_widget_add_css_class(heading, "heading")
+        gtk_box_append(mp_box(widget), heading)
+        let list = LinuxSettingsLayout.list(in: widget)
+        let automaticRow = LinuxSettingsLayout.row(in: list)
+        LinuxSettingsLayout.rowText(LinuxSettingsUpdateStrings.automatic, in: automaticRow)
+        // A check button keeps the existing tests and accessibility intact.
+        automatic = gtk_check_button_new()!
         gtk_widget_set_name(automatic, "settings-automatic-updates")
         mp_accessible_label(automatic, LinuxSettingsUpdateStrings.automatic)
-        gtk_box_append(mp_box(widget), automatic)
-        gtk_box_append(mp_box(widget), GTK.label(LinuxSettingsUpdateStrings.disclosure))
-        version = Self.label("settings-update-version", in: widget)
-        lastChecked = Self.label("settings-update-last-checked", in: widget)
-        result = Self.label("settings-update-result", in: widget)
-        error = Self.label("settings-update-error", in: widget)
-        stateError = Self.label("settings-update-state-error", in: widget)
-        openingError = Self.label("settings-update-open-error", in: widget)
+        gtk_widget_set_valign(automatic, GTK_ALIGN_CENTER)
+        gtk_box_append(mp_box(automaticRow), automatic)
+        version = Self.rowLabel("settings-update-version", in: list)
+        lastChecked = Self.rowLabel("settings-update-last-checked", in: list)
+        result = Self.rowLabel("settings-update-result", in: list)
+        let notices = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
+        LinuxSettingsLayout.caption(LinuxSettingsUpdateStrings.disclosure, in: notices)
+        error = LinuxSettingsLayout.caption(name: "settings-update-error", in: notices)
+        stateError = LinuxSettingsLayout.caption(name: "settings-update-state-error", in: notices)
+        openingError = LinuxSettingsLayout.caption(name: "settings-update-open-error", in: notices)
         for label in [error, stateError, openingError] { gtk_widget_add_css_class(label, "error") }
         let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         check = GTK.button(LinuxSettingsUpdateStrings.checkNow) { [weak self] in
@@ -48,6 +57,7 @@ final class LinuxSettingsUpdatePage {
         gtk_widget_set_name(release, "settings-view-release")
         for button in [check!, release!] { gtk_box_append(mp_box(buttons), button) }
         gtk_box_append(mp_box(widget), buttons)
+        gtk_box_append(mp_box(widget), notices)
         GTK.onSignal(automatic, "toggled") { [weak self] in
             guard let self, self.isShown, !self.isRendering, !self.model.state.isReadOnly else { return }
             self.model.setAutomaticUpdateChecks(gtk_check_button_get_active(mp_check_button(self.automatic)) != 0 ? .enabled : .disabled)
@@ -93,11 +103,10 @@ final class LinuxSettingsUpdatePage {
         gtk_widget_set_sensitive(release, update?.canOpenRelease == true && update?.isChecking == false ? 1 : 0)
     }
 
-    private static func label(_ name: String, in page: GTK.Widget) -> GTK.Widget {
-        let label = GTK.label("")
-        gtk_widget_set_name(label, name)
-        gtk_box_append(mp_box(page), label)
-        return label
+    private static func rowLabel(_ name: String, in list: GTK.Widget) -> GTK.Widget {
+        let row = LinuxSettingsLayout.row(in: list)
+        let text = LinuxSettingsLayout.rowText(in: row)
+        return LinuxSettingsLayout.label("", name: name, in: text)
     }
 
     private static func message(_ label: GTK.Widget, _ text: String?) {

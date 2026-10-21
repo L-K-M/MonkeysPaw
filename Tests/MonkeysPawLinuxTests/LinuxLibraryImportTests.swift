@@ -570,6 +570,10 @@ final class LinuxLibraryImportTests: XCTestCase {
 
     private func click(_ name: String, in window: GTK.Widget) throws {
         let requests = chooser.requests.count
+        if name == "library-import" || name == "library-import-folder" {
+            g_action_group_activate_action(mp_window_action_group(window),
+                name == "library-import" ? "import-files" : "import-folder", nil)
+        }
         XCTAssertNotEqual(gtk_widget_activate(try settingsWidget(name, in: window)), 0)
         if name == "library-import" || name == "library-import-folder" {
             XCTAssertTrue(GTKTestSupport.spin { self.chooser.requests.count > requests })

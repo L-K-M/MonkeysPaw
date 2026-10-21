@@ -15,6 +15,7 @@ final class LinuxLibrarySourceEditor {
     private(set) var hasPreedit = false
     var onEdit: ((String) -> Void)?
     var onCompositionEnded: (() -> Void)?
+    var onCompositionChanged: (() -> Void)?
 
     init() {
         gtk_widget_set_name(widget, "library-source")
@@ -30,6 +31,7 @@ final class LinuxLibrarySourceEditor {
         GTK.onPreeditChanged(widget) { [weak self] active in
             guard let self else { return }
             self.hasPreedit = active
+            self.onCompositionChanged?()
             if !active {
                 // GTK emits empty preedit before inserting the committed text.
                 // Read the live model on the next idle, after that insertion.

@@ -56,9 +56,14 @@ final class LinuxTrayCompositionTests: XCTestCase {
         XCTAssertEqual(watcher.registrations.count, 1)
         XCTAssertEqual(try rows(), [
             Row(id: 1, label: "Show Picker", enabled: true),
+            Row(id: 6, label: LinuxStrings.trayRepeat, enabled: true),
+            Row(id: 8, label: "", enabled: false, kind: "separator"),
             Row(id: 2, label: environment.libraryStatusModel.menuLabel, enabled: true),
+            Row(id: 9, label: "", enabled: false, kind: "separator"),
             Row(id: 3, label: "Settings…", enabled: true),
             Row(id: 4, label: "Setup…", enabled: true),
+            Row(id: 7, label: LinuxAboutStrings.title, enabled: true),
+            Row(id: 10, label: "", enabled: false, kind: "separator"),
             Row(id: 5, label: "Quit", enabled: true),
         ])
         XCTAssertEqual(environment.libraryStatusModel.menuLabel, "Open Library")
@@ -135,8 +140,10 @@ final class LinuxTrayCompositionTests: XCTestCase {
         XCTAssertEqual(environment.pickerModel.state, .closed)
         XCTAssertTrue(launchedURLs.isEmpty)
         let initial = URL(fileURLWithPath: environment.generalSettingsModel.state.activeLibraryPath, isDirectory: true)
-        let reveal = try settingsWidget("library-open-folder", in: window)
-        XCTAssertNotEqual(gtk_widget_activate(reveal), 0)
+        let source = try RootedFileStore(root: initial)
+        try source.write(Data("First".utf8), at: "a.md")
+        try openFirstPrompt(in: window)
+        g_action_group_activate_action(mp_window_action_group(window), "show-files", nil)
         XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs.count == 1 })
         XCTAssertEqual(launchedURLs, [initial])
         let replacement = try library("Replacement")
@@ -144,7 +151,9 @@ final class LinuxTrayCompositionTests: XCTestCase {
         drain()
         try click(2)
         XCTAssertEqual(try visibleWindow(titled: LinuxStrings.library), window)
-        XCTAssertNotEqual(gtk_widget_activate(reveal), 0)
+        try RootedFileStore(root: replacement).write(Data("Second".utf8), at: "b.md")
+        try openFirstPrompt(in: window)
+        g_action_group_activate_action(mp_window_action_group(window), "show-files", nil)
         XCTAssertTrue(GTKTestSupport.spin { self.launchedURLs.count == 2 })
         XCTAssertEqual(launchedURLs.last, replacement)
     }
@@ -238,7 +247,7 @@ final class LinuxTrayCompositionTests: XCTestCase {
         environment.pickerModel.open()
         XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
         let button = try settingsWidget("picker-settings", in: environment.panel.clipboardOwner)
-        XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(button), 0)
         XCTAssertEqual(try visibleWindow(titled: LinuxStrings.settings), settings)
         XCTAssertTrue(watcher.registrations.isEmpty)
     }
@@ -260,6 +269,38 @@ final class LinuxTrayCompositionTests: XCTestCase {
         drain()
         XCTAssertEqual(watcher.registrations.count, 1)
         XCTAssertTrue(visibleWindows().isEmpty)
+    }
+
+    func testAboutIsSharedByTrayAndLibraryAndShowsBuildMetadata() throws {
+        try start()
+        try click(7)
+        let about = try visibleWindow(titled: LinuxAboutStrings.title)
+        XCTAssertEqual(String(cString: gtk_about_dialog_get_program_name(mp_about_dialog(about))), AppIdentity.displayName)
+        XCTAssertEqual(String(cString: gtk_about_dialog_get_version(mp_about_dialog(about))), LinuxEnvironment.packagedVersion ?? AppIdentity.fallbackVersion)
+        XCTAssertEqual(String(cString: gtk_about_dialog_get_website(mp_about_dialog(about))), LinuxAboutStrings.repository)
+        XCTAssertEqual(gtk_about_dialog_get_license_type(mp_about_dialog(about)), GTK_LICENSE_CUSTOM)
+        XCTAssertEqual(String(cString: gtk_about_dialog_get_license(mp_about_dialog(about))), LinuxAboutStrings.license)
+        gtk_window_close(mp_window(about))
+        try click(2)
+        let library = try visibleWindow(titled: LinuxStrings.library)
+        g_action_group_activate_action(mp_window_action_group(library), "about", nil)
+        XCTAssertEqual(try visibleWindow(titled: LinuxAboutStrings.title), about)
+        XCTAssertEqual(gtk_window_get_transient_for(mp_window(about)), mp_window(library))
+        XCTAssertNotEqual(gtk_window_get_modal(mp_window(about)), 0)
+        XCTAssertEqual(g_action_group_get_action_enabled(mp_window_action_group(library), "search"), 0)
+        gtk_window_close(mp_window(library))
+        XCTAssertNotEqual(gtk_widget_get_visible(library), 0)
+        XCTAssertNotEqual(gtk_widget_get_visible(about), 0)
+        gtk_window_close(mp_window(about))
+    }
+
+    private func openFirstPrompt(in window: GTK.Widget) throws {
+        XCTAssertTrue(GTKTestSupport.spin { !self.environment.libraryBrowserModel.rows.isEmpty })
+        let list = try settingsWidget("library-list", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_list_box_get_row_at_index(mp_list_box(list), 0) != nil })
+        gtk_list_box_select_row(mp_list_box(list), gtk_list_box_get_row_at_index(mp_list_box(list), 0))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source != nil && self.environment.editorModel.state.status == .idle })
+        XCTAssertTrue(GTKTestSupport.spin { g_action_group_get_action_enabled(mp_window_action_group(window), "show-files") != 0 })
     }
 
     private func start() throws {
@@ -289,6 +330,7 @@ final class LinuxTrayCompositionTests: XCTestCase {
         let id: Int32
         let label: String
         let enabled: Bool
+        var kind: String? = nil
     }
 
     private func rows() throws -> [Row] {
@@ -303,11 +345,17 @@ final class LinuxTrayCompositionTests: XCTestCase {
             let id = g_variant_get_child_value(row, 0)!
             let properties = g_variant_get_child_value(row, 1)!
             defer { g_variant_unref(wrapper); g_variant_unref(row); g_variant_unref(id); g_variant_unref(properties) }
-            let label = try XCTUnwrap(g_variant_lookup_value(properties, "label", nil))
-            let enabled = try XCTUnwrap(g_variant_lookup_value(properties, "enabled", nil))
-            defer { g_variant_unref(label); g_variant_unref(enabled) }
-            return Row(id: g_variant_get_int32(id), label: String(cString: g_variant_get_string(label, nil)),
-                enabled: g_variant_get_boolean(enabled) != 0)
+            let label = g_variant_lookup_value(properties, "label", nil)
+            let enabled = g_variant_lookup_value(properties, "enabled", nil)
+            let kind = g_variant_lookup_value(properties, "type", nil)
+            defer {
+                if let label { g_variant_unref(label) }
+                if let enabled { g_variant_unref(enabled) }
+                if let kind { g_variant_unref(kind) }
+            }
+            return Row(id: g_variant_get_int32(id), label: label.map { String(cString: g_variant_get_string($0, nil)) } ?? "",
+                enabled: enabled.map { g_variant_get_boolean($0) != 0 } ?? false,
+                kind: kind.map { String(cString: g_variant_get_string($0, nil)) })
         }
     }
 

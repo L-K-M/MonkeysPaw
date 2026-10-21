@@ -10,6 +10,7 @@ final class LinuxAssistantPanel {
     let widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
     var onHighlight: ((Range<Int>?) -> Void)?
     var onOutcome: ((AssistantAcceptanceOutcome) -> Void)?
+    var onAvailabilityChange: (() -> Void)?
     private weak var model: AssistantModel?
     private weak var editor: EditorModel?
     private var available = true
@@ -78,6 +79,7 @@ final class LinuxAssistantPanel {
                     guard let self else { return }
                     if active { self.preeditEntries.insert(entry) }
                     else { self.preeditEntries.remove(entry) }
+                    self.onAvailabilityChange?()
                 }
             }
         }
@@ -190,10 +192,9 @@ final class LinuxAssistantPanel {
 
     @discardableResult
     func start(_ flow: Flow) -> Bool {
-        guard !isDestroyed, let model, let editor else { return false }
+        guard !isDestroyed, let model else { return false }
         model.contextChanged()
-        guard commonRefusal(model.state, editor.state) == nil else { return false }
-        guard flow == .write || templateRefusal(editor.state) == nil else { return false }
+        guard canStart(flow) else { return false }
         gtk_widget_set_visible(widget, 1)
         self.flow = flow
         highlightedFinding = nil
@@ -205,6 +206,12 @@ final class LinuxAssistantPanel {
         }
         render()
         return true
+    }
+
+    func canStart(_ flow: Flow) -> Bool {
+        guard !isDestroyed, let model, let editor,
+              commonRefusal(model.state, editor.state) == nil else { return false }
+        return flow == .write || templateRefusal(editor.state) == nil
     }
 
     private enum Reset { case cancel, reject }
@@ -260,6 +267,7 @@ final class LinuxAssistantPanel {
         gtk_widget_set_sensitive(cancel, state.phase == .working || state.isAccepting ? 1 : 0)
         renderFindings(state, model: model)
         renderDraft(state.artifact, hasDiff: state.diff != nil)
+        onAvailabilityChange?()
         diff.update(state.diff)
         let warnings = state.diff?.placeholderWarnings.map(LinuxAssistantStrings.placeholder) ?? []
         setLabel(issues, (state.issues.map(LinuxEditorStrings.issue) + warnings).joined(separator: "\n"))

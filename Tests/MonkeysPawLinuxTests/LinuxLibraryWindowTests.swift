@@ -47,6 +47,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
     }
 
     func testDesktopActionReusesHideOnCloseWindowAlongsideSettings() throws {
+        try files.write(Data("A prompt".utf8), at: "a.md")
         let window = try openLibrary()
         let browser = environment.libraryBrowserModel
         let controllers = gtk_widget_observe_controllers(window)!
@@ -69,6 +70,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
         gtk_window_close(mp_window(settings))
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
+        try select("a.md", in: window)
         try click("library-open-folder", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.launched == [self.root] })
     }
@@ -82,7 +84,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
                 XCTAssertNotEqual(mp_test_emit_key_pressed(environment.panel.clipboardOwner,
                     UInt32(GDK_KEY_l), GDK_CONTROL_MASK), 0)
             } else {
-                try click("picker-library", in: environment.panel.clipboardOwner)
+                try click("picker-open-folder", in: environment.panel.clipboardOwner)
             }
             XCTAssertTrue(GTKTestSupport.spin { self.libraryWindows.first.map { gtk_widget_get_visible($0) != 0 } == true })
             let window = try XCTUnwrap(libraryWindows.first)
@@ -105,9 +107,10 @@ final class LinuxLibraryWindowTests: XCTestCase {
         let sidebar = try settingsWidget("library-sidebar", in: window)
         for (position, section) in browser.sections.enumerated() {
             let row = try rowWidget(in: sidebar, at: position)
-            XCTAssertEqual(labels(in: row), ["\(section.title) (\(section.count))"])
-            let label = try XCTUnwrap(gtk_widget_get_first_child(row))
-            XCTAssertEqual(gtk_widget_get_margin_start(label), Int32(section.depth * 12))
+            // Rows show icon, title and a separate count under heading headers.
+            let content = try XCTUnwrap(gtk_list_box_row_get_child(mp_list_box_row(row)))
+            XCTAssertEqual(labels(in: content), [section.title, String(section.count)])
+            XCTAssertEqual(gtk_widget_get_margin_start(content), Int32(section.depth * 12))
         }
         XCTAssertEqual(browser.sections.first { $0.id == .all }?.count, 5)
         XCTAssertEqual(browser.sections.first { $0.id == .folder(RelativePath("nested")) }?.count, 1)
@@ -132,10 +135,13 @@ final class LinuxLibraryWindowTests: XCTestCase {
             XCTAssertFalse(row.canRender)
             XCTAssertEqual(preview(in: window), row.issues.map(\.message).joined(separator: "\n"))
             let position = try XCTUnwrap(browser.rows.firstIndex { $0.relativePath.string == path })
-            let labels = labels(in: try rowWidget(in: settingsWidget("library-list", in: window), at: position))
-            XCTAssertTrue(labels.contains { $0.contains(LinuxStrings.invalidPrompt) })
+            let content = try XCTUnwrap(gtk_list_box_row_get_child(mp_list_box_row(
+                try rowWidget(in: settingsWidget("library-list", in: window), at: position))))
+            // Badges are icons; their accessible names ride along as tooltips.
+            let badges = tooltips(in: content)
+            XCTAssertTrue(badges.contains(LinuxStrings.invalidPrompt), "\(path) lost the invalid badge")
             if path != "invalid.md" {
-                XCTAssertTrue(labels.contains { $0.contains(LinuxStrings.readOnly) })
+                XCTAssertTrue(badges.contains(LinuxStrings.readOnly), "\(path) lost the read-only badge")
                 XCTAssertEqual(gtk_widget_get_sensitive(try settingsWidget("library-favorite", in: window)), 0)
             }
         }
@@ -151,11 +157,12 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertNotEqual(gtk_widget_grab_focus(first), 0)
         moveCursor(in: list, by: 1)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.selection?.relativePath.string == "b.md" })
-        // GTK activates a list row on Return; there is no open/edit handler yet.
+        // GTK activates a list row on Return, routed through the win.edit action.
         XCTAssertNotEqual(gtk_widget_activate(try rowWidget(in: list, at: 1)), 0)
         drain()
         XCTAssertTrue(launched.isEmpty)
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
+        XCTAssertEqual(page(try settingsWidget("library-editor-stack", in: window)), "edit")
         XCTAssertNotEqual(gtk_widget_child_focus(window, GTK_DIR_TAB_FORWARD), 0)
         XCTAssertNotEqual(gtk_widget_child_focus(window, GTK_DIR_TAB_BACKWARD), 0)
 
@@ -167,11 +174,18 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
         XCTAssertEqual(environment.libraryBrowserModel.filter, "Alpha")
         mp_test_emit_preedit_changed(text, "")
+        // Escape inside the filter clears it and dismisses the search bar; the window stays open.
+        let searchBar = try XCTUnwrap(gtk_widget_get_ancestor(filter, gtk_search_bar_get_type()))
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
         XCTAssertEqual(environment.libraryBrowserModel.filter, "")
         XCTAssertEqual(String(cString: mp_entry_text(filter)), "")
+        XCTAssertEqual(gtk_search_bar_get_search_mode(mp_search_bar(searchBar)), 0)
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
-        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+        // Outside the filter Escape is unhandled; Ctrl+W closes through the draft guard.
+        gtk_widget_grab_focus(try settingsWidget("library-list", in: window))
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+        XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_w), GDK_CONTROL_MASK), 0)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
     }
 
@@ -308,8 +322,39 @@ final class LinuxLibraryWindowTests: XCTestCase {
         drain()
     }
 
+    // Removed command buttons now live in the header bar's action menus; keep
+    // their old names here so call sites keep intent through the action map.
+    private static let commandActions = [
+        "library-save": "save", "library-save-copy": "duplicate", "library-revert": "revert",
+        "library-rename": "rename", "library-move": "move", "library-delete": "delete",
+        "library-assistant": "assistant", "library-open-folder": "show-files",
+        "library-favorite": "favorite",
+    ]
+
     private func click(_ name: String, in window: GTK.Widget) throws {
+        if let action = Self.commandActions[name] {
+            XCTAssertTrue(GTKTestSupport.spin {
+                g_action_group_get_action_enabled(mp_window_action_group(window), action) != 0
+            }, "win.\(action) stays disabled")
+            g_action_group_activate_action(mp_window_action_group(window), action, nil)
+            return
+        }
         XCTAssertNotEqual(gtk_widget_activate(try settingsWidget(name, in: window)), 0)
+    }
+
+    private func page(_ stack: GTK.Widget) -> String? {
+        gtk_stack_get_visible_child_name(mp_stack(stack)).map { String(cString: $0) }
+    }
+
+    private func tooltips(in widget: GTK.Widget) -> [String] {
+        var result = [String]()
+        if let tooltip = gtk_widget_get_tooltip_text(widget) { result.append(String(cString: tooltip)) }
+        var child = gtk_widget_get_first_child(widget)
+        while let current = child {
+            result += tooltips(in: current)
+            child = gtk_widget_get_next_sibling(current)
+        }
+        return result
     }
 
     private var libraryWindows: [GTK.Widget] { windows.filter { title($0) == LinuxStrings.library } }

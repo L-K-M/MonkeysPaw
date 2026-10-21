@@ -266,8 +266,7 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertEqual(try permissions("Groups/Team/a.md"), 0o444)
         XCTAssertTrue(environment.syncStatusModel?.state.enabled == true)
         XCTAssertTrue(GTKTestSupport.spin {
-            guard let button = self.findWidget("library-save-copy") else { return false }
-            return gtk_widget_get_sensitive(button) != 0
+            self.libraryActionEnabled("duplicate")
         })
     }
 
@@ -561,9 +560,7 @@ final class LinuxSyncCompositionTests: XCTestCase {
         environment.libraryBrowserModel.setFilter("a")
         environment.editorModel.open(selection)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source != nil })
-        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("library-save-copy") != nil })
-        let saveCopy = try XCTUnwrap(findWidget("library-save-copy"))
-        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_sensitive(saveCopy) != 0 })
+        XCTAssertTrue(GTKTestSupport.spin { self.libraryActionEnabled("duplicate") })
         let oldPicker = environment.pickerModel
         let oldEditor = environment.editorModel
         let oldSync = try XCTUnwrap(environment.syncService)
@@ -591,7 +588,7 @@ final class LinuxSyncCompositionTests: XCTestCase {
         // filesystem shape changes while the old request holds the drain.
         environment.generalSettingsModel.chooseFolder(target.path)
         XCTAssertTrue(GTKTestSupport.spin { !oldPicker.libraryAvailable })
-        XCTAssertFalse(gtk_widget_get_sensitive(saveCopy) != 0)
+        XCTAssertFalse(libraryActionEnabled("duplicate"))
         XCTAssertFalse(oldEditor.state.isDirty)
         try FileManager.default.removeItem(at: target)
         try Data("Not a directory\n".utf8).write(to: target)
@@ -612,7 +609,7 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("a.md").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: libraryRoot.appendingPathComponent("late.md").path))
         XCTAssertTrue(environment.pickerModel.libraryAvailable, "A rejected target must leave the healthy old library usable")
-        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_sensitive(saveCopy) != 0 }, "The retained native library must remain usable")
+        XCTAssertTrue(GTKTestSupport.spin { self.libraryActionEnabled("duplicate") }, "The retained native library must remain usable")
         XCTAssertEqual(watchers.count, 2)
         XCTAssertGreaterThan(watchers.first?.stopCount ?? 0, 0)
         XCTAssertEqual(watchers.last?.stopCount, 0, "Recovery must install live monitoring")
@@ -640,9 +637,9 @@ final class LinuxSyncCompositionTests: XCTestCase {
             self.environment.libraryBrowserModel.rows.contains { $0.title == "Updated watcher" }
                 && self.environment.pickerModel.results.contains { $0.title == "Updated watcher" }
         })
-        let tabs = try XCTUnwrap(findWidget("settings-tabs"))
+        let stack = try XCTUnwrap(findWidget("settings-stack"))
         let accountPage = try XCTUnwrap(findWidget("settings-account-page"))
-        gtk_notebook_set_current_page(mp_notebook(tabs), gtk_notebook_page_num(mp_notebook(tabs), accountPage))
+        gtk_stack_set_visible_child(mp_stack(stack), accountPage)
         XCTAssertTrue(GTKTestSupport.spin {
             guard let signOut = self.findWidget("settings-account-sign-out"),
                   let create = self.findWidget("settings-groups-create-name") else { return false }
@@ -768,7 +765,7 @@ final class LinuxSyncCompositionTests: XCTestCase {
         let selection = LibraryPromptSelection(identity: .assigned(try XCTUnwrap(ULID(LinuxSyncTestTransport.personalPrompt))), relativePath: "a.md")
         environment.libraryBrowserModel.selectPrompt(selection)
         environment.editorModel.open(selection)
-        XCTAssertTrue(GTKTestSupport.spin { self.findWidget("library-save-copy").map { gtk_widget_get_sensitive($0) != 0 } == true })
+        XCTAssertTrue(GTKTestSupport.spin { self.libraryActionEnabled("duplicate") })
 
         environment.generalSettingsModel.chooseFolder(target.path)
         XCTAssertTrue(GTKTestSupport.spin(until: {
@@ -1148,6 +1145,12 @@ final class LinuxSyncCompositionTests: XCTestCase {
             done.set()
         }
         XCTAssertTrue(GTKTestSupport.spin(until: { done.value }, timeout: .seconds(6)))
+    }
+
+    private func libraryActionEnabled(_ name: String) -> Bool {
+        guard let child = findWidget("library-editor-status"),
+              let window = gtk_widget_get_ancestor(child, gtk_window_get_type()) else { return false }
+        return g_action_group_get_action_enabled(mp_window_action_group(window), name) != 0
     }
 
     private func findWidget(_ name: String) -> GTK.Widget? {

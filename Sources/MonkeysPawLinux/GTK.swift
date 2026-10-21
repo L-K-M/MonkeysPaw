@@ -68,6 +68,52 @@ enum GTK {
         init(_ call: @escaping (Int32) -> Void) { self.call = call }
     }
 
+    private final class HeaderBox {
+        let heading: (Int, Int?) -> String?
+        init(_ heading: @escaping (Int, Int?) -> String?) { self.heading = heading }
+    }
+
+    static func listHeaders(_ list: Widget, heading: @escaping (Int, Int?) -> String?) {
+        let data = Unmanaged.passRetained(HeaderBox(heading)).toOpaque()
+        gtk_list_box_set_header_func(mp_list_box(list), { row, before, data in
+            guard let row, let data else { return }
+            let heading = Unmanaged<HeaderBox>.fromOpaque(data).takeUnretainedValue().heading(
+                Int(gtk_list_box_row_get_index(row)), before.map { Int(gtk_list_box_row_get_index($0)) })
+            let label = heading.map { text -> Widget in
+                let label = GTK.label(text)
+                gtk_widget_add_css_class(label, "heading")
+                gtk_widget_add_css_class(label, "dim-label")
+                gtk_widget_set_margin_top(label, 16)
+                gtk_widget_set_margin_bottom(label, 6)
+                gtk_widget_set_margin_start(label, 12)
+                return label
+            }
+            gtk_list_box_row_set_header(row, label)
+        }, data, { data in
+            if let data { Unmanaged<HeaderBox>.fromOpaque(data).release() }
+        })
+    }
+
+    private final class ClickBox {
+        let call: (Double, Double) -> Void
+        init(_ call: @escaping (Double, Double) -> Void) { self.call = call }
+    }
+
+    static func onSecondaryClick(_ widget: Widget, _ handler: @escaping (Double, Double) -> Void) {
+        let gesture = gtk_gesture_click_new()!
+        gtk_gesture_single_set_button(mp_gesture_single(gesture), 3)
+        let data = Unmanaged.passRetained(ClickBox(handler)).toOpaque()
+        let pressed: @convention(c) (UnsafeMutableRawPointer?, gint, Double, Double, UnsafeMutableRawPointer?) -> Void = { _, _, x, y, data in
+            guard let data else { return }
+            Unmanaged<ClickBox>.fromOpaque(data).takeUnretainedValue().call(x, y)
+        }
+        let release: GClosureNotify = { data, _ in
+            if let data { Unmanaged<ClickBox>.fromOpaque(data).release() }
+        }
+        mp_connect(UnsafeMutableRawPointer(gesture), "pressed", unsafeBitCast(pressed, to: GCallback.self), data, release)
+        gtk_widget_add_controller(widget, mp_gesture_controller(gesture))
+    }
+
     /// GtkNativeDialog responses carry a response id before user data.
     static func onResponse(_ dialog: UnsafeMutableRawPointer, _ handler: @escaping (Int32) -> Void) {
         let box = Unmanaged.passRetained(ResponseBox(handler)).toOpaque()
@@ -197,6 +243,16 @@ enum GTK {
         return label
     }
 
+    /// GtkSearchEntry's placeholder setter arrived after GTK 4.8; the property
+    /// is already available there through GObject's non-variadic API.
+    static func searchPlaceholder(_ entry: Widget, _ text: String) {
+        var value = GValue()
+        g_value_init(&value, g_type_from_name("gchararray"))
+        g_value_set_string(&value, text)
+        g_object_set_property(mp_object(entry), "placeholder-text", &value)
+        g_value_unset(&value)
+    }
+
     /// Only for signals taking the instance and user data, such as "activate".
     /// Anything else needs its own trampoline with the exact arity.
     static func onSignal(_ instance: UnsafeMutableRawPointer, _ name: String,
@@ -225,6 +281,25 @@ enum GTK {
         }
 
         mp_connect(action, "activate", unsafeBitCast(trampoline, to: GCallback.self), box, releaseBox)
+    }
+
+    private final class StateBox {
+        let call: (Bool) -> Void
+        init(_ call: @escaping (Bool) -> Void) { self.call = call }
+    }
+
+    /// Checkable action consumers can request a state instead of activating.
+    /// Both signals carry a GVariant; keep the same exact-arity interop.
+    static func onActionStateChanged(_ action: UnsafeMutableRawPointer, _ handler: @escaping (Bool) -> Void) {
+        let box = Unmanaged.passRetained(StateBox(handler)).toOpaque()
+        let trampoline: @convention(c) (UnsafeMutableRawPointer?, OpaquePointer?, UnsafeMutableRawPointer?) -> Void = { _, value, data in
+            guard let value, let data, String(cString: g_variant_get_type_string(value)) == "b" else { return }
+            Unmanaged<StateBox>.fromOpaque(data).takeUnretainedValue().call(g_variant_get_boolean(value) != 0)
+        }
+        let release: GClosureNotify = { data, _ in
+            if let data { Unmanaged<StateBox>.fromOpaque(data).release() }
+        }
+        mp_connect(action, "change-state", unsafeBitCast(trampoline, to: GCallback.self), box, release)
     }
 
     /// This is the only correct UI hop from Swift concurrency on Linux.

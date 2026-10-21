@@ -48,64 +48,70 @@ final class LinuxAssistantSettingsPage {
 
     init(makeModel: @escaping () -> AssistantSettingsModel?) {
         self.makeModel = makeModel
-        let page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
-        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
-                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(page, 12) }
-        widget = gtk_scrolled_window_new()!
-        gtk_widget_set_name(widget, "settings-assistant-page")
-        gtk_scrolled_window_set_child(mp_scrolled_window(widget), page)
+        let (scroll, column) = LinuxSettingsLayout.page(named: "settings-assistant-page")
+        widget = scroll
 
-        gtk_box_append(mp_box(page), GTK.label(LinuxAssistantSettingsStrings.profiles))
+        let profilesGroup = LinuxSettingsLayout.group(LinuxAssistantSettingsStrings.profiles, in: column)
         profiles = gtk_list_box_new()!
         gtk_widget_set_name(profiles, "settings-assistant-profiles")
         gtk_list_box_set_selection_mode(mp_list_box(profiles), GTK_SELECTION_SINGLE)
+        gtk_widget_add_css_class(profiles, "boxed-list")
         mp_accessible_label(profiles, LinuxAssistantSettingsStrings.profiles)
         let profileScroll = gtk_scrolled_window_new()!
         gtk_widget_set_size_request(profileScroll, -1, 100)
         gtk_scrolled_window_set_child(mp_scrolled_window(profileScroll), profiles)
-        gtk_box_append(mp_box(page), profileScroll)
-        activeProfile = Self.label("settings-assistant-active", in: page)
+        gtk_box_append(mp_box(profilesGroup), profileScroll)
         let profileButtons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        gtk_box_append(mp_box(page), profileButtons)
-        draftMessage = Self.label("settings-assistant-draft-message", in: page)
+        gtk_box_append(mp_box(profilesGroup), profileButtons)
+        activeProfile = LinuxSettingsLayout.caption(name: "settings-assistant-active", in: profilesGroup)
+        draftMessage = LinuxSettingsLayout.caption(name: "settings-assistant-draft-message", in: profilesGroup)
 
-        editor = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        gtk_box_append(mp_box(page), editor)
-        name = Self.entry("settings-assistant-name", title: LinuxAssistantSettingsStrings.name, in: editor)
-        gtk_box_append(mp_box(editor), GTK.label(LinuxAssistantSettingsStrings.kind))
+        editor = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
+        gtk_box_append(mp_box(column), editor)
+        let editorHeading = GTK.label(LinuxSettingsStrings.profileDetails)
+        gtk_widget_add_css_class(editorHeading, "heading")
+        gtk_box_append(mp_box(editor), editorHeading)
+        let editorList = LinuxSettingsLayout.list(in: editor)
+        name = Self.entryRow("settings-assistant-name", title: LinuxAssistantSettingsStrings.name, in: editorList)
+        let kindRow = LinuxSettingsLayout.row(in: editorList)
+        LinuxSettingsLayout.rowText(LinuxAssistantSettingsStrings.kind, in: kindRow)
         kind = gtk_combo_box_text_new()!
         gtk_widget_set_name(kind, "settings-assistant-kind")
         mp_accessible_label(kind, LinuxAssistantSettingsStrings.kind)
         for title in [LinuxAssistantSettingsStrings.anthropic, LinuxAssistantSettingsStrings.compatible] {
             gtk_combo_box_text_append_text(mp_combo_box_text(kind), title)
         }
-        gtk_box_append(mp_box(editor), kind)
-        baseURL = Self.entry("settings-assistant-base-url", title: LinuxAssistantSettingsStrings.baseURL, in: editor)
-        modelID = Self.entry("settings-assistant-model-id", title: LinuxAssistantSettingsStrings.modelID, in: editor)
+        gtk_widget_set_valign(kind, GTK_ALIGN_CENTER)
+        gtk_box_append(mp_box(kindRow), kind)
+        baseURL = Self.entryRow("settings-assistant-base-url", title: LinuxAssistantSettingsStrings.baseURL, in: editorList)
+        modelID = Self.entryRow("settings-assistant-model-id", title: LinuxAssistantSettingsStrings.modelID, in: editorList)
+        let modelRow = LinuxSettingsLayout.row(in: editorList)
+        LinuxSettingsLayout.rowText(LinuxAssistantSettingsStrings.chooseModel, in: modelRow)
         modelPicker = gtk_combo_box_text_new()!
         gtk_combo_box_text_append_text(mp_combo_box_text(modelPicker), LinuxAssistantSettingsStrings.chooseModel)
         gtk_widget_set_name(modelPicker, "settings-assistant-model-picker")
         mp_accessible_label(modelPicker, LinuxAssistantSettingsStrings.chooseModel)
-        gtk_box_append(mp_box(editor), modelPicker)
-        gtk_box_append(mp_box(editor), GTK.label(LinuxAssistantSettingsStrings.manualModel))
-        key = Self.entry("settings-assistant-key", title: LinuxAssistantSettingsStrings.key, in: editor)
+        gtk_widget_set_valign(modelPicker, GTK_ALIGN_CENTER)
+        gtk_box_append(mp_box(modelRow), modelPicker)
+        key = Self.entryRow("settings-assistant-key", title: LinuxAssistantSettingsStrings.key, in: editorList)
         gtk_entry_set_visibility(mp_entry(key), 0)
         gtk_entry_set_input_purpose(mp_entry(key), GTK_INPUT_PURPOSE_PASSWORD)
         gtk_entry_set_placeholder_text(mp_entry(key), LinuxAssistantSettingsStrings.keyPlaceholder)
+        LinuxSettingsLayout.caption(LinuxAssistantSettingsStrings.manualModel, in: editor)
         let keyButtons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         gtk_box_append(mp_box(editor), keyButtons)
-        keyEdit = Self.label("settings-assistant-key-edit", in: editor)
-        storage = Self.label("settings-assistant-storage", in: page)
-        storageWarning = Self.label("settings-assistant-storage-warning", in: page)
+        keyEdit = LinuxSettingsLayout.caption(name: "settings-assistant-key-edit", in: editor)
+        storage = LinuxSettingsLayout.caption(name: "settings-assistant-storage", in: column)
+        storageWarning = LinuxSettingsLayout.caption(name: "settings-assistant-storage-warning", in: column)
         gtk_widget_add_css_class(storageWarning, "error")
         mp_accessible_label(storageWarning, LinuxAssistantSettingsStrings.unencrypted)
-        gtk_box_append(mp_box(page), GTK.label(LinuxAssistantSettingsStrings.outbound))
+        LinuxSettingsLayout.caption(LinuxAssistantSettingsStrings.outbound, in: column)
         let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        gtk_box_append(mp_box(page), actions)
-        progress = Self.label("settings-assistant-progress", in: page)
-        error = Self.label("settings-assistant-error", in: page)
+        gtk_box_append(mp_box(column), actions)
+        progress = LinuxSettingsLayout.caption(name: "settings-assistant-progress", in: column)
+        error = LinuxSettingsLayout.caption(name: "settings-assistant-error", in: column)
         gtk_widget_add_css_class(error, "error")
-        testResult = Self.label("settings-assistant-test-result", in: page)
+        testResult = LinuxSettingsLayout.caption(name: "settings-assistant-test-result", in: column)
 
         add = button("settings-assistant-add", title: LinuxAssistantSettingsStrings.add, in: profileButtons) { $0.addProfile() }
         delete = button("settings-assistant-delete", title: LinuxAssistantSettingsStrings.delete, in: profileButtons) {
@@ -122,7 +128,8 @@ final class LinuxAssistantSettingsPage {
         save = button("settings-assistant-save", title: LinuxAssistantSettingsStrings.save, in: actions) { $0.save() }
         test = button("settings-assistant-test", title: LinuxAssistantSettingsStrings.test, in: actions) { $0.testConnection() }
         cancelTest = button("settings-assistant-cancel-test", title: LinuxAssistantSettingsStrings.cancelTest, in: actions) { $0.cancelTest() }
-        refresh = button("settings-assistant-refresh", title: LinuxAssistantSettingsStrings.refresh, in: page) { $0.refresh() }
+        refresh = button("settings-assistant-refresh", title: LinuxAssistantSettingsStrings.refresh, in: column) { $0.refresh() }
+        gtk_widget_set_halign(refresh, GTK_ALIGN_START)
 
         GTK.onRow(profiles, "row-selected") { [weak self] index in
             guard let self, !self.isRendering, self.canChangeProfiles, let index,
@@ -326,19 +333,15 @@ final class LinuxAssistantSettingsPage {
         gtk_widget_set_visible(label, text?.isEmpty == false ? 1 : 0)
     }
 
-    private static func label(_ name: String, in box: GTK.Widget) -> GTK.Widget {
-        let label = GTK.label("")
-        gtk_widget_set_name(label, name)
-        gtk_box_append(mp_box(box), label)
-        return label
-    }
-
-    private static func entry(_ name: String, title: String, in box: GTK.Widget) -> GTK.Widget {
-        gtk_box_append(mp_box(box), GTK.label(title))
+    private static func entryRow(_ name: String, title: String, in list: GTK.Widget) -> GTK.Widget {
+        let row = LinuxSettingsLayout.row(in: list)
+        LinuxSettingsLayout.rowText(title, in: row)
         let entry = gtk_entry_new()!
         gtk_widget_set_name(entry, name)
         mp_accessible_label(entry, title)
-        gtk_box_append(mp_box(box), entry)
+        gtk_widget_set_hexpand(entry, 1)
+        gtk_widget_set_valign(entry, GTK_ALIGN_CENTER)
+        gtk_box_append(mp_box(row), entry)
         return entry
     }
 }

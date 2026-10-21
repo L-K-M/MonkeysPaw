@@ -7,7 +7,7 @@ import MonkeysPawCore
 final class LinuxSettingsWindow {
     enum Page { case current, account }
     private let window: GTK.Widget
-    private let notebook: GTK.Widget
+    private let stack: GTK.Widget
     private let general: GeneralSettingsModel
     private let shortcuts: ShortcutsSettingsModel
     private let rememberedValues: RememberedValuesSettingsModel
@@ -67,7 +67,8 @@ final class LinuxSettingsWindow {
         self.openSetup = openSetup
         self.librarySwitchMessage = librarySwitchMessage
         window = gtk_application_window_new(application)!
-        notebook = gtk_notebook_new()!
+        LinuxStyle.install(on: window)
+        stack = gtk_stack_new()!
         GTK.hideOnClose(window)
         gtk_window_set_title(mp_window(window), LinuxStrings.settings)
         gtk_window_set_default_size(mp_window(window), Int32(Limits.panelSize.width), Int32(Limits.panelSize.height))
@@ -95,15 +96,24 @@ final class LinuxSettingsWindow {
             self.account.retire(.hidden)
         }
 
-        gtk_widget_set_name(notebook, "settings-tabs")
-        gtk_notebook_append_page(mp_notebook(notebook), generalPage(), GTK.label(LinuxStrings.generalTab))
-        gtk_notebook_append_page(mp_notebook(notebook), shortcutsPage(), GTK.label(LinuxStrings.shortcutsTab))
-        gtk_notebook_append_page(mp_notebook(notebook), assistant.widget, GTK.label(LinuxAssistantSettingsStrings.tab))
-        gtk_notebook_append_page(mp_notebook(notebook), self.delivery.widget, GTK.label(DeliverySettingsStrings.title))
-        gtk_notebook_append_page(mp_notebook(notebook), account.widget, GTK.label(LinuxAccountSettingsStrings.tab))
+        let headerBar = gtk_header_bar_new()!
+        let switcher = gtk_stack_switcher_new()!
+        gtk_widget_set_name(switcher, "settings-page-switcher")
+        gtk_widget_add_css_class(switcher, "mp-settings-switcher")
+        gtk_stack_switcher_set_stack(mp_stack_switcher(switcher), mp_stack(stack))
+        mp_accessible_label(switcher, LinuxSettingsStrings.pageSwitcher)
+        gtk_header_bar_set_title_widget(mp_header_bar(headerBar), switcher)
+        gtk_window_set_titlebar(mp_window(window), headerBar)
+
+        gtk_widget_set_name(stack, "settings-stack")
+        gtk_stack_add_titled(mp_stack(stack), generalPage(), "general", LinuxStrings.generalTab)
+        gtk_stack_add_titled(mp_stack(stack), shortcutsPage(), "shortcuts", LinuxStrings.shortcutsTab)
+        gtk_stack_add_titled(mp_stack(stack), self.delivery.widget, "delivery", DeliverySettingsStrings.title)
+        gtk_stack_add_titled(mp_stack(stack), assistant.widget, "assistant", LinuxAssistantSettingsStrings.tab)
+        gtk_stack_add_titled(mp_stack(stack), account.widget, "account", LinuxAccountSettingsStrings.tab)
         GTK.onSignal(account.widget, "map") { [weak self] in self?.account.show() }
         GTK.onSignal(account.widget, "unmap") { [weak self] in self?.account.retire(.hidden) }
-        gtk_window_set_child(mp_window(window), notebook)
+        gtk_window_set_child(mp_window(window), stack)
         general.onChange = { [weak self] in self?.renderGeneral() }
         shortcuts.onChange = { [weak self] in self?.renderShortcuts() }
         rememberedValues.onChange = { [weak self] in self?.renderRememberedValues() }
@@ -127,7 +137,7 @@ final class LinuxSettingsWindow {
     func show(page: Page = .current) {
         guard !isDestroyed else { return }
         if page == .account {
-            gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+            gtk_stack_set_visible_child_name(mp_stack(stack), "account")
         }
         general.refresh()
         renderGeneral()
@@ -147,7 +157,7 @@ final class LinuxSettingsWindow {
 
     func showInvite() {
         guard !isDestroyed else { return }
-        gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), account.widget))
+        gtk_stack_set_visible_child_name(mp_stack(stack), "account")
         show()
         account.show()
     }
@@ -171,105 +181,133 @@ final class LinuxSettingsWindow {
     }
 
     private func generalPage() -> GTK.Widget {
-        let page = pageBox()
-        gtk_box_append(mp_box(page), GTK.label(LinuxStrings.libraryFolder))
-        libraryPath = namedLabel("settings-library-path", in: page)
-        gtk_label_set_selectable(mp_label(libraryPath), 1)
-        gtk_label_set_wrap_mode(mp_label(libraryPath), PANGO_WRAP_WORD_CHAR)
-        mp_accessible_label(libraryPath, LinuxStrings.libraryFolder)
-        libraryDefault = namedLabel("settings-library-default", in: page)
-        let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        chooseButton = GTK.button(LinuxStrings.chooseFolder) { [weak self] in self?.chooseFolder() }
-        gtk_widget_set_name(chooseButton, "settings-choose-folder")
-        defaultButton = GTK.button(LinuxStrings.useDefault) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.general.useDefaultFolder()
+        let (page, column) = LinuxSettingsLayout.page(named: "settings-general-page")
+        do {
+            let library = LinuxSettingsLayout.group(LinuxSettingsStrings.library, in: column)
+            let list = LinuxSettingsLayout.list(in: library)
+            let row = LinuxSettingsLayout.row(in: list)
+            let text = LinuxSettingsLayout.rowText(LinuxStrings.libraryFolder, in: row)
+            libraryPath = LinuxSettingsLayout.label("", name: "settings-library-path", emphasis: .secondary, in: text)
+            gtk_label_set_selectable(mp_label(libraryPath), 1)
+            mp_accessible_label(libraryPath, LinuxStrings.libraryFolder)
+            libraryDefault = LinuxSettingsLayout.label("", name: "settings-library-default", emphasis: .secondary, in: text)
+            let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+            chooseButton = GTK.button(LinuxStrings.chooseFolder) { [weak self] in self?.chooseFolder() }
+            gtk_widget_set_name(chooseButton, "settings-choose-folder")
+            defaultButton = GTK.button(LinuxStrings.useDefault) { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.general.useDefaultFolder()
+            }
+            gtk_widget_set_name(defaultButton, "settings-use-default")
+            let reveal = GTK.button(LinuxStrings.openFolder) { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.general.revealFolder()
+            }
+            gtk_widget_set_name(reveal, "settings-reveal-folder")
+            gtk_widget_set_valign(chooseButton, GTK_ALIGN_CENTER)
+            gtk_box_append(mp_box(row), chooseButton)
+            for button in [defaultButton!, reveal] {
+                gtk_widget_add_css_class(button, "flat")
+                gtk_box_append(mp_box(buttons), button)
+            }
+            gtk_widget_set_halign(buttons, GTK_ALIGN_END)
+            gtk_box_append(mp_box(library), buttons)
+            libraryMessage = LinuxSettingsLayout.caption(name: "settings-library-message", in: library)
+            settingsError = LinuxSettingsLayout.caption(name: "settings-general-error", in: library)
+            gtk_widget_add_css_class(settingsError, "error")
+
+            let remembered = LinuxSettingsLayout.group(LinuxSettingsStrings.rememberedValues, in: column)
+            let rememberedList = LinuxSettingsLayout.list(in: remembered)
+            let forgetRow = LinuxSettingsLayout.row(in: rememberedList)
+            LinuxSettingsLayout.rowText(LinuxSettingsStrings.fieldValues, in: forgetRow)
+            forgetAllButton = GTK.button(LinuxStrings.forgetAllValues) { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.rememberedValues.requestForgetAll()
+            }
+            gtk_widget_set_name(forgetAllButton, "settings-forget-all")
+            mp_accessible_label(forgetAllButton, LinuxStrings.forgetAllValues)
+            gtk_widget_set_valign(forgetAllButton, GTK_ALIGN_CENTER)
+            gtk_box_append(mp_box(forgetRow), forgetAllButton)
+            forgetConfirmation = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+            gtk_widget_set_name(forgetConfirmation, "settings-forget-confirmation")
+            let confirmationTitle = GTK.label(RememberedValuesStrings.confirmationTitle)
+            gtk_widget_add_css_class(confirmationTitle, "heading")
+            gtk_box_append(mp_box(forgetConfirmation), confirmationTitle)
+            let confirmationMessage = namedLabel("settings-forget-confirmation-message", in: forgetConfirmation)
+            gtk_label_set_text(mp_label(confirmationMessage), RememberedValuesStrings.confirmationMessage)
+            let confirmButtons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+            let confirm = GTK.button(RememberedValuesStrings.forgetAll) { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.rememberedValues.confirmForgetAll()
+            }
+            gtk_widget_set_name(confirm, "settings-confirm-forget-all")
+            // GNOME's style for an irreversible confirmation.
+            gtk_widget_add_css_class(confirm, "destructive-action")
+            mp_accessible_label(confirm, RememberedValuesStrings.forgetAll)
+            let cancel = GTK.button(RememberedValuesStrings.cancel) { [weak self] in
+                guard let self, self.isVisible else { return }
+                self.rememberedValues.cancelForgetAll()
+            }
+            gtk_widget_set_name(cancel, "settings-cancel-forget-all")
+            forgetCancelButton = cancel
+            mp_accessible_label(cancel, RememberedValuesStrings.cancel)
+            gtk_box_append(mp_box(confirmButtons), cancel)
+            gtk_box_append(mp_box(confirmButtons), confirm)
+            gtk_box_append(mp_box(forgetConfirmation), confirmButtons)
+            gtk_box_append(mp_box(remembered), forgetConfirmation)
+            forgetMessage = LinuxSettingsLayout.caption(name: "settings-forget-message", in: remembered)
+
+            gtk_box_append(mp_box(column), updates.widget)
         }
-        gtk_widget_set_name(defaultButton, "settings-use-default")
-        let reveal = GTK.button(LinuxStrings.openFolder) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.general.revealFolder()
-        }
-        gtk_widget_set_name(reveal, "settings-reveal-folder")
-        for button in [chooseButton!, defaultButton!, reveal] { gtk_box_append(mp_box(buttons), button) }
-        gtk_box_append(mp_box(page), buttons)
-        libraryMessage = namedLabel("settings-library-message", in: page)
-        settingsError = namedLabel("settings-general-error", in: page)
-        forgetAllButton = GTK.button(LinuxStrings.forgetAllValues) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.rememberedValues.requestForgetAll()
-        }
-        gtk_widget_set_name(forgetAllButton, "settings-forget-all")
-        mp_accessible_label(forgetAllButton, LinuxStrings.forgetAllValues)
-        gtk_widget_set_halign(forgetAllButton, GTK_ALIGN_START)
-        gtk_box_append(mp_box(page), forgetAllButton)
-        forgetConfirmation = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        gtk_widget_set_name(forgetConfirmation, "settings-forget-confirmation")
-        gtk_box_append(mp_box(forgetConfirmation), GTK.label(RememberedValuesStrings.confirmationTitle))
-        let confirmationMessage = namedLabel("settings-forget-confirmation-message", in: forgetConfirmation)
-        gtk_label_set_text(mp_label(confirmationMessage), RememberedValuesStrings.confirmationMessage)
-        let confirmButtons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        let confirm = GTK.button(RememberedValuesStrings.forgetAll) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.rememberedValues.confirmForgetAll()
-        }
-        gtk_widget_set_name(confirm, "settings-confirm-forget-all")
-        // GNOME's style for an irreversible confirmation.
-        gtk_widget_add_css_class(confirm, "destructive-action")
-        mp_accessible_label(confirm, RememberedValuesStrings.forgetAll)
-        let cancel = GTK.button(RememberedValuesStrings.cancel) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.rememberedValues.cancelForgetAll()
-        }
-        gtk_widget_set_name(cancel, "settings-cancel-forget-all")
-        forgetCancelButton = cancel
-        mp_accessible_label(cancel, RememberedValuesStrings.cancel)
-        gtk_box_append(mp_box(confirmButtons), cancel)
-        gtk_box_append(mp_box(confirmButtons), confirm)
-        gtk_box_append(mp_box(forgetConfirmation), confirmButtons)
-        gtk_box_append(mp_box(page), forgetConfirmation)
-        forgetMessage = namedLabel("settings-forget-message", in: page)
-        gtk_box_append(mp_box(page), updates.widget)
-        return scrolled(page)
+        return page
     }
 
     private func shortcutsPage() -> GTK.Widget {
-        let page = pageBox()
-        for action in HotkeyAction.allCases {
-            let isPicker = action == .togglePicker
-            let name = isPicker ? "toggle" : "repeat"
-            let control = isPicker ? "shortcut" : "repeat-shortcut"
-            gtk_box_append(mp_box(page), GTK.label(isPicker ? LinuxStrings.togglePicker : LinuxStrings.repeatLast))
-            let binding = namedLabel("settings-\(name)-binding", in: page)
-            let registration = namedLabel("settings-\(name)-registration", in: page)
-            let verification = namedLabel("settings-\(name)-verification", in: page)
-            let instructions = namedLabel("settings-\(control)-instructions", in: page)
-            let error = namedLabel("settings-\(control)-error", in: page)
-            let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-            let change = GTK.button("") { [weak self] in
-                guard let self, self.isVisible else { return }
-                self.shortcuts.performPlatformChange(for: action)
+        let (page, column) = LinuxSettingsLayout.page(named: "settings-shortcuts-page")
+        do {
+            for action in HotkeyAction.allCases {
+                let isPicker = action == .togglePicker
+                let name = isPicker ? "toggle" : "repeat"
+                let control = isPicker ? "shortcut" : "repeat-shortcut"
+                let group = LinuxSettingsLayout.group(
+                    isPicker ? LinuxStrings.togglePicker : LinuxStrings.repeatLast, in: column)
+                let list = LinuxSettingsLayout.list(in: group)
+                let binding = valueLabel("settings-\(name)-binding", in: list)
+                let registration = valueLabel("settings-\(name)-registration", in: list, emphasis: .secondary)
+                let verification = valueLabel("settings-\(name)-verification", in: list, emphasis: .secondary)
+                let actions = LinuxSettingsLayout.row(in: list)
+                LinuxSettingsLayout.rowText(in: actions)
+                let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+                let change = GTK.button("") { [weak self] in
+                    guard let self, self.isVisible else { return }
+                    self.shortcuts.performPlatformChange(for: action)
+                }
+                gtk_widget_set_name(change, "settings-change-\(control)")
+                let verify = GTK.button(LinuxStrings.verifyShortcut) { [weak self] in
+                    guard let self, self.isVisible else { return }
+                    self.shortcuts.beginVerification(action)
+                }
+                gtk_widget_set_name(verify, "settings-verify-\(control)")
+                gtk_box_append(mp_box(buttons), change)
+                gtk_box_append(mp_box(buttons), verify)
+                gtk_widget_set_valign(buttons, GTK_ALIGN_CENTER)
+                gtk_box_append(mp_box(actions), buttons)
+                let instructions = LinuxSettingsLayout.caption(
+                    name: "settings-\(control)-instructions", in: group)
+                let error = LinuxSettingsLayout.caption(name: "settings-\(control)-error", in: group)
+                gtk_widget_add_css_class(error, "error")
+                shortcutRows[action] = ShortcutRow(binding: binding, registration: registration,
+                    verification: verification, instructions: instructions, error: error, change: change, verify: verify)
             }
-            gtk_widget_set_name(change, "settings-change-\(control)")
-            let verify = GTK.button(LinuxStrings.verifyShortcut) { [weak self] in
+            let setupButton = GTK.button(LinuxStrings.openSetup) { [weak self] in
                 guard let self, self.isVisible else { return }
-                self.shortcuts.beginVerification(action)
+                self.openSetup()
             }
-            gtk_widget_set_name(verify, "settings-verify-\(control)")
-            gtk_box_append(mp_box(buttons), change)
-            gtk_box_append(mp_box(buttons), verify)
-            gtk_box_append(mp_box(page), buttons)
-            shortcutRows[action] = ShortcutRow(binding: binding, registration: registration,
-                verification: verification, instructions: instructions, error: error, change: change, verify: verify)
+            gtk_widget_set_name(setupButton, "settings-open-setup")
+            gtk_widget_set_halign(setupButton, GTK_ALIGN_START)
+            gtk_box_append(mp_box(column), setupButton)
         }
-        let setupButton = GTK.button(LinuxStrings.openSetup) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.openSetup()
-        }
-        gtk_widget_set_name(setupButton, "settings-open-setup")
-        gtk_widget_set_halign(setupButton, GTK_ALIGN_START)
-        gtk_box_append(mp_box(page), setupButton)
-        return scrolled(page)
+        return page
     }
 
     private func renderGeneral() {
@@ -363,24 +401,17 @@ final class LinuxSettingsWindow {
         gtk_widget_set_visible(label, text?.isEmpty == false ? 1 : 0)
     }
 
+    private func valueLabel(_ name: String, in list: GTK.Widget, emphasis: LinuxSettingsLayout.Emphasis = .normal) -> GTK.Widget {
+        let row = LinuxSettingsLayout.row(in: list)
+        let text = LinuxSettingsLayout.rowText(in: row)
+        return LinuxSettingsLayout.label("", name: name, emphasis: emphasis, in: text)
+    }
+
     private func namedLabel(_ name: String, in page: GTK.Widget) -> GTK.Widget {
         let label = GTK.label("")
         gtk_widget_set_name(label, name)
         gtk_box_append(mp_box(page), label)
         return label
-    }
-
-    private func pageBox() -> GTK.Widget {
-        let box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
-        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
-                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(box, 12) }
-        return box
-    }
-
-    private func scrolled(_ page: GTK.Widget) -> GTK.Widget {
-        let scroll = gtk_scrolled_window_new()!
-        gtk_scrolled_window_set_child(mp_scrolled_window(scroll), page)
-        return scroll
     }
 }
 #endif

@@ -13,6 +13,9 @@ final class LinuxLibraryWindow {
 
     private let window: GTK.Widget
     private let openFolder: () -> Void
+    private let showSettings: () -> Void
+    private let showAbout: (GTK.Widget) -> Void
+    private let showFiles: ((RelativePath) -> Void)?
     private weak var browser: LibraryBrowserModel?
     private weak var editor: EditorModel?
     private var assistantProvider: () -> AssistantModel? = { nil }
@@ -52,24 +55,45 @@ final class LinuxLibraryWindow {
     private let sidebar: GTK.Widget
     private let list: GTK.Widget
     private let preview: GTK.Widget
-    private let previewTitle: GTK.Widget
     private let favorite: GTK.Widget
     private let status: GTK.Widget
     private let empty: GTK.Widget
-    private let tabs = gtk_notebook_new()!
+    private enum Size {
+        static let width: Int32 = 1180
+        static let height: Int32 = 720
+        static let sidebar: Int32 = 220
+        static let list: Int32 = 300
+        static let inspector: Int32 = 320
+    }
+    private let title = GTK.label("")
+    private let subtitle = GTK.label("")
+    private let searchBar = gtk_search_bar_new()!
+    private let editorStack = gtk_stack_new()!
+    private let inspectorStack = gtk_stack_new()!
+    private let inspectorPane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+    private let sidebarPane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+    private let editToggle = gtk_toggle_button_new_with_label(LinuxStrings.edit)!
+    private let previewToggle = gtk_toggle_button_new_with_label(LinuxStrings.preview)!
+    private let inspectorToggle = gtk_toggle_button_new()!
+    private let searchToggle = gtk_toggle_button_new()!
+    private let issuesRevealer = gtk_revealer_new()!
+    private let validationSummary = GTK.button("") {}
+    private var actions: [LinuxLibraryAction: OpaquePointer] = [:]
+    private var contextMenu: GTK.Widget?
+    private var contextModel: OpaquePointer?
+    private var contextFavorite: Bool?
+    private var contextSelection: LibraryPromptSelection?
     private let source = LinuxLibrarySourceEditor()
     private let readOnly = GTK.label("")
+    private let readOnlyBar = gtk_info_bar_new()!
     private let validation = GTK.label("")
-    private let fields = gtk_grid_new()!
+    private let fields = gtk_list_box_new()!
     private let editorStatus = GTK.label("")
-    private let save = GTK.button(LinuxEditorStrings.save) {}
-    private let revert = GTK.button(LinuxEditorStrings.revert) {}
-    private let saveCopy = GTK.button(LinuxEditorStrings.saveAsCopy) {}
+    private let editorEmpty = GTK.label(LinuxStrings.selectLibraryPrompt)
     private let history = LinuxLibraryHistoryView()
     private let commands: LinuxLibraryCommands
     private var historyPrompt: LibraryPromptSelection?
     private var historyReloadPending = false
-    private var historyPage: Int32 = -1
     private var renderedFields: [PromptField]?
     private var renderedPreview: String?
     private var importView: LinuxLibraryImportView?
@@ -82,16 +106,21 @@ final class LinuxLibraryWindow {
          conflict: @escaping () -> ConflictModel? = { nil },
          syncStatus: SyncStatusModel? = nil,
          syncNavigation: @escaping (SyncStatusAction) -> Void = { _ in },
+         showSettings: @escaping () -> Void = {}, showAbout: @escaping (GTK.Widget) -> Void = { _ in },
+         showFiles: ((RelativePath) -> Void)? = nil,
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
+        self.showSettings = showSettings
+        self.showAbout = showAbout
+        self.showFiles = showFiles
         window = gtk_application_window_new(application)!
+        LinuxStyle.install(on: window)
         commands = LinuxLibraryCommands(parent: window)
-        filter = gtk_entry_new()!
+        filter = gtk_search_entry_new()!
         sidebar = gtk_list_box_new()!
         list = gtk_list_box_new()!
         preview = gtk_text_view_new()!
-        previewTitle = GTK.label(LinuxStrings.preview)
-        favorite = GTK.button(LinuxStrings.addFavorite) {}
+        favorite = gtk_toggle_button_new()!
         status = GTK.label("")
         empty = GTK.label(LinuxStrings.noLibraryMatches)
         commands.onChange = { [weak self] in
@@ -101,10 +130,10 @@ final class LinuxLibraryWindow {
         GTK.hideOnClose(window)
         GTK.onCloseRequested(window) { [weak self] in self?.requestClose() }
         gtk_window_set_title(mp_window(window), LinuxStrings.library)
-        gtk_window_set_default_size(mp_window(window),
-            Int32(Limits.panelSize.width + Limits.panelSize.height), Int32(Limits.setupWindowSize.height))
+        gtk_window_set_default_size(mp_window(window), Size.width, Size.height)
         GTK.onSignal(window, "destroy") { [weak self] in
             guard let self else { return }
+            if let menu = self.contextMenu { gtk_widget_unparent(menu); self.contextMenu = nil }
             self.isDestroyed = true
             self.unbind()
         }
@@ -119,13 +148,14 @@ final class LinuxLibraryWindow {
         GTK.observeKeys(window) { [weak self] key, modifiers in
             self?.keyPressed(key, modifiers: modifiers) ?? false
         }
+        GTK.onNotify(UnsafeMutableRawPointer(window), "focus-widget") { [weak self] in self?.updateActions() }
+        GTK.onNotify(UnsafeMutableRawPointer(window), "is-active") { [weak self] in self?.updateActions() }
 
-        let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
-                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(content, 12) }
-        let toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+        installActions(application: application)
+        configureHeader()
+        let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
         gtk_widget_set_name(filter, "library-filter")
-        gtk_entry_set_placeholder_text(mp_entry(filter), LinuxStrings.filterLibrary)
+        GTK.searchPlaceholder(filter, LinuxStrings.filterLibrary)
         mp_accessible_label(filter, LinuxStrings.filterLibrary)
         gtk_widget_set_hexpand(filter, 1)
         GTK.onSignal(filter, "changed") { [weak self] in
@@ -133,28 +163,33 @@ final class LinuxLibraryWindow {
             self.browser?.setFilter(String(cString: mp_entry_text(self.filter)))
         }
         if let text = mp_entry_text_delegate(filter) {
-            GTK.onPreeditChanged(text) { [weak self] active in self?.filterPreedit = active }
+            GTK.onPreeditChanged(text) { [weak self] active in
+                self?.filterPreedit = active
+                self?.updateActions()
+            }
         }
-        gtk_widget_set_name(favorite, "library-favorite")
-        GTK.onSignal(favorite, "clicked") { [weak self] in self?.toggleFavorite() }
-        let reveal = GTK.button(LinuxStrings.openFolder) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.openFolder()
+        gtk_search_bar_set_child(mp_search_bar(searchBar), filter)
+        gtk_search_bar_connect_entry(mp_search_bar(searchBar), mp_editable(filter))
+        // No key-capture widget: editor typing must never open library search.
+        GTK.onNotify(UnsafeMutableRawPointer(searchBar), "search-mode-enabled") { [weak self] in
+            guard let self, !self.isDestroyed else { return }
+            gtk_toggle_button_set_active(mp_toggle_button(self.searchToggle),
+                gtk_search_bar_get_search_mode(mp_search_bar(self.searchBar)))
         }
-        gtk_widget_set_name(reveal, "library-open-folder")
-        for widget in [filter, favorite, reveal] { gtk_box_append(mp_box(toolbar), widget) }
-        gtk_box_append(mp_box(content), toolbar)
-        gtk_box_append(mp_box(content), syncStatusView.widget)
+        gtk_box_append(mp_box(content), searchBar)
         if let imports {
             let view = LinuxLibraryImportView(parent: window, list: list, chooser: imports.chooser)
             importView = view
-            gtk_box_append(mp_box(content), view.actions)
+            view.onChange = { [weak self] in self?.updateActions() }
+            gtk_box_append(mp_box(content), view.widget)
         }
 
-        let panes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12)!
-        gtk_widget_set_vexpand(panes, 1)
         configureList(sidebar, name: "library-sidebar", label: LinuxStrings.librarySections)
+        gtk_widget_set_name(sidebarPane, "library-sidebar-pane")
+        gtk_widget_add_css_class(sidebar, "navigation-sidebar")
+        configureSectionHeaders()
         configureList(list, name: "library-list", label: LinuxStrings.libraryPrompts)
+        gtk_widget_add_css_class(list, "rich-list")
         GTK.onRow(sidebar, "row-selected") { [weak self] position in
             guard let self, !self.isDestroyed, !self.isRendering, let position,
                   self.renderedSections.indices.contains(position) else { return }
@@ -165,27 +200,338 @@ final class LinuxLibraryWindow {
                   self.renderedRows.indices.contains(position) else { return }
             self.selectPrompt(self.renderedRows[position].selection)
         }
-        gtk_box_append(mp_box(panes), scrolled(sidebar, width: Limits.panelSize.width / 4))
-        let results = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        gtk_widget_set_hexpand(results, 1)
-        gtk_box_append(mp_box(results), scrolled(list, width: Limits.panelSize.width / 2))
+        GTK.onRow(list, "row-activated") { [weak self] _ in self?.activate(.edit) }
+        gtk_box_append(mp_box(sidebarPane), scrolled(sidebar, width: 150))
+        gtk_box_append(mp_box(sidebarPane), syncStatusView.widget)
+        let results = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+        gtk_widget_set_vexpand(results, 1)
+        gtk_box_append(mp_box(results), scrolled(list, width: 160))
         gtk_widget_set_name(empty, "library-empty")
-        gtk_box_append(mp_box(results), empty)
-        gtk_box_append(mp_box(panes), results)
-        let detail = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+        gtk_widget_add_css_class(empty, "dim-label")
+        gtk_widget_set_halign(empty, GTK_ALIGN_CENTER)
+        gtk_widget_set_valign(empty, GTK_ALIGN_CENTER)
+        gtk_list_box_set_placeholder(mp_list_box(list), empty)
+        configureContextMenu(in: results)
+        let detail = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
         gtk_widget_set_hexpand(detail, 1)
-        gtk_widget_set_name(previewTitle, "library-preview-title")
-        gtk_box_append(mp_box(detail), previewTitle)
         configureEditor(in: detail)
-        gtk_box_append(mp_box(panes), detail)
+        configureInspector()
+        let editorPanes = paned(detail, inspectorPane, position: Int(Size.width - Size.sidebar - Size.list - Size.inspector))
+        gtk_paned_set_resize_end_child(mp_paned(editorPanes), 0)
+        gtk_paned_set_shrink_start_child(mp_paned(editorPanes), 0)
+        gtk_paned_set_shrink_end_child(mp_paned(editorPanes), 0)
+        let listPanes = paned(results, editorPanes, position: Int(Size.list))
+        gtk_paned_set_resize_start_child(mp_paned(listPanes), 0)
+        gtk_paned_set_shrink_end_child(mp_paned(listPanes), 0)
+        let panes = paned(sidebarPane, listPanes, position: Int(Size.sidebar))
+        gtk_paned_set_resize_start_child(mp_paned(panes), 0)
+        gtk_paned_set_shrink_end_child(mp_paned(panes), 0)
+        gtk_widget_set_vexpand(panes, 1)
+        gtk_widget_set_visible(inspectorPane, 0)
         gtk_box_append(mp_box(content), panes)
-        if let importView { gtk_box_append(mp_box(content), importView.report) }
         gtk_widget_set_name(status, "library-status")
         gtk_box_append(mp_box(content), status)
-        gtk_box_append(mp_box(content), GTK.label(LinuxStrings.libraryHint))
         gtk_window_set_child(mp_window(window), content)
         rebind(browser: browser, editor: editor, imports: imports?.state, assistant: assistant, conflict: conflict,
                syncStatus: syncStatus, syncNavigation: syncNavigation)
+    }
+
+    private func configureHeader() {
+        let header = gtk_header_bar_new()!
+        gtk_window_set_titlebar(mp_window(window), header)
+        let titles = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+        gtk_widget_set_name(title, "library-title")
+        gtk_widget_set_name(subtitle, "library-subtitle")
+        gtk_widget_add_css_class(title, "title")
+        gtk_widget_add_css_class(subtitle, "subtitle")
+        gtk_widget_add_css_class(subtitle, "dim-label")
+        for label in [title, subtitle] {
+            gtk_label_set_wrap(mp_label(label), 0)
+            gtk_label_set_ellipsize(mp_label(label), PANGO_ELLIPSIZE_MIDDLE)
+            gtk_label_set_max_width_chars(mp_label(label), 44)
+            gtk_label_set_xalign(mp_label(label), 0.5)
+            gtk_box_append(mp_box(titles), label)
+        }
+        gtk_header_bar_set_title_widget(mp_header_bar(header), titles)
+        let sidebarButton = gtk_toggle_button_new()!
+        configureIcon(sidebarButton, icon: "sidebar-show-symbolic", label: LinuxLibraryStrings.sidebar,
+                      name: "library-sidebar-toggle", action: .sidebar)
+        gtk_header_bar_pack_start(mp_header_bar(header), sidebarButton)
+        let menu = gtk_menu_button_new()!
+        gtk_widget_set_name(menu, "library-menu")
+        gtk_menu_button_set_icon_name(mp_menu_button(menu), "open-menu-symbolic")
+        mp_accessible_label(menu, LinuxLibraryStrings.menu)
+        let model = primaryMenu()
+        gtk_menu_button_set_menu_model(mp_menu_button(menu), mp_menu_model(model))
+        g_object_unref(UnsafeMutableRawPointer(model))
+        gtk_header_bar_pack_end(mp_header_bar(header), menu)
+        configureIcon(inspectorToggle, icon: "sidebar-show-right-symbolic", label: LinuxLibraryStrings.inspector,
+                      name: "library-inspector-toggle", action: .inspector)
+        gtk_header_bar_pack_end(mp_header_bar(header), inspectorToggle)
+        configureIcon(searchToggle, icon: "system-search-symbolic", label: LinuxLibraryStrings.search,
+                      name: "library-search-toggle", action: .search)
+        gtk_actionable_set_action_name(mp_actionable(searchToggle), nil)
+        GTK.onSignal(searchToggle, "clicked") { [weak self] in
+            guard let self, self.isEnabled(.search) else { return }
+            let reveal = gtk_toggle_button_get_active(mp_toggle_button(self.searchToggle))
+            gtk_search_bar_set_search_mode(mp_search_bar(self.searchBar), reveal)
+            if reveal != 0 { gtk_widget_grab_focus(self.filter) }
+        }
+        gtk_header_bar_pack_end(mp_header_bar(header), searchToggle)
+        configureIcon(favorite, icon: "non-starred-symbolic", label: LinuxStrings.addFavorite,
+                      name: "library-favorite", action: .favorite)
+        gtk_header_bar_pack_end(mp_header_bar(header), favorite)
+        let modes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0)!
+        gtk_widget_add_css_class(modes, "linked")
+        for (button, name, action) in [(editToggle, "library-mode-edit", LinuxLibraryAction.edit),
+                                       (previewToggle, "library-mode-preview", .preview)] {
+            gtk_widget_set_name(button, name)
+            gtk_actionable_set_action_name(mp_actionable(button), "win." + action.rawValue)
+            gtk_box_append(mp_box(modes), button)
+        }
+        gtk_header_bar_pack_end(mp_header_bar(header), modes)
+    }
+
+    private func configureIcon(_ button: GTK.Widget, icon: String, label: String,
+                               name: String, action: LinuxLibraryAction) {
+        gtk_button_set_icon_name(mp_button(button), icon)
+        gtk_widget_set_name(button, name)
+        gtk_widget_set_tooltip_text(button, label)
+        mp_accessible_label(button, label)
+        gtk_actionable_set_action_name(mp_actionable(button), "win." + action.rawValue)
+    }
+
+    private func primaryMenu() -> OpaquePointer {
+        let menu = g_menu_new()!
+        let sections: [[(String, LinuxLibraryAction)]] = [
+            [(LinuxLibraryStrings.importFiles, .importFiles), (LinuxLibraryStrings.importFolder, .importFolder)],
+            [(LinuxEditorStrings.save, .save), (LinuxLibraryStrings.duplicate, .duplicate), (LinuxLibraryStrings.revert, .revert)],
+            [(LinuxEditorStrings.rename, .rename), (LinuxEditorStrings.move, .move),
+             (LinuxLibraryStrings.showFiles, .showFiles), (LinuxEditorStrings.delete, .delete)],
+            [(LinuxLibraryStrings.sidebar, .sidebar), (LinuxLibraryStrings.inspector, .inspector),
+             (LinuxAssistantStrings.title, .assistant)],
+            [(LinuxStrings.openSettings, .settings), (LinuxAboutStrings.title, .about)]
+        ]
+        for items in sections {
+            let section = g_menu_new()!
+            for (title, action) in items { g_menu_append(section, title, "win." + action.rawValue) }
+            g_menu_append_section(menu, nil, mp_menu_model(section))
+            g_object_unref(UnsafeMutableRawPointer(section))
+        }
+        return menu
+    }
+
+    private func configureContextMenu(in anchor: GTK.Widget) {
+        let model = g_menu_new()!
+        for (title, action) in [(LinuxStrings.edit, LinuxLibraryAction.edit),
+                               (LinuxStrings.addFavorite, .favorite), (LinuxEditorStrings.rename, .rename),
+                               (LinuxEditorStrings.move, .move), (LinuxLibraryStrings.duplicate, .duplicate),
+                               (LinuxLibraryStrings.showFiles, .showFiles), (LinuxEditorStrings.delete, .delete)] {
+            g_menu_append(model, title, "win." + action.rawValue)
+        }
+        let menu = gtk_popover_menu_new_from_model(mp_menu_model(model))!
+        contextModel = model
+        g_object_unref(UnsafeMutableRawPointer(model))
+        gtk_widget_set_name(menu, "library-context-menu")
+        // ListBox owns only rows and its placeholder. Anchor the popover to
+        // the surrounding box so list disposal never tries to remove it as a row.
+        gtk_widget_set_parent(menu, anchor)
+        contextMenu = menu
+        GTK.onSignal(menu, "destroy") { [weak self] in
+            self?.contextMenu = nil
+            self?.contextModel = nil
+        }
+        GTK.onSignal(menu, "closed") { [weak self] in
+            self?.contextSelection = nil
+            self?.updateActions()
+        }
+        GTK.onSecondaryClick(list) { [weak self] x, y in
+            guard let self, self.commandsAvailable,
+                  let row = gtk_list_box_get_row_at_y(mp_list_box(self.list), Int32(y)) else { return }
+            let index = Int(gtk_list_box_row_get_index(row))
+            guard self.renderedRows.indices.contains(index) else { return }
+            self.contextSelection = self.renderedRows[index].selection
+            gtk_list_box_select_row(mp_list_box(self.list), row)
+            self.updateActions()
+            var targetX = 0.0, targetY = 0.0
+            guard gtk_widget_translate_coordinates(self.list, anchor, x, y, &targetX, &targetY) != 0 else { return }
+            var point = GdkRectangle(x: Int32(targetX), y: Int32(targetY), width: 1, height: 1)
+            gtk_popover_set_pointing_to(mp_popover(menu), &point)
+            gtk_popover_popup(mp_popover(menu))
+        }
+    }
+
+    private func configureSectionHeaders() {
+        GTK.listHeaders(sidebar) { [weak self] index, before in
+            guard let self, self.renderedSections.indices.contains(index) else { return nil }
+            let group = self.sectionHeading(self.renderedSections[index].id)
+            if let before, self.renderedSections.indices.contains(before),
+               self.sectionHeading(self.renderedSections[before].id) == group { return nil }
+            return group
+        }
+    }
+
+    private func sectionHeading(_ section: LibrarySectionID) -> String {
+        switch section {
+        case .all, .favourites, .recent, .conflicts: return LinuxLibraryStrings.library
+        case .group: return LinuxLibraryStrings.groups
+        case .folder: return LinuxLibraryStrings.folders
+        case .tag: return LinuxLibraryStrings.tags
+        }
+    }
+
+    private func paned(_ start: GTK.Widget, _ end: GTK.Widget, position: Int) -> GTK.Widget {
+        let pane = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL)!
+        gtk_paned_set_start_child(mp_paned(pane), start)
+        gtk_paned_set_end_child(mp_paned(pane), end)
+        gtk_paned_set_position(mp_paned(pane), Int32(position))
+        return pane
+    }
+
+    private var inspectorPage: String? {
+        gtk_stack_get_visible_child_name(mp_stack(inspectorStack)).map { String(cString: $0) }
+    }
+
+    private func showInspector(_ page: String) {
+        gtk_widget_set_visible(inspectorPane, 1)
+        gtk_stack_set_visible_child_name(mp_stack(inspectorStack), page)
+        if page == "assistant" { assistantPanel.show() }
+        updateActions()
+    }
+
+    private func setMode(_ page: String) {
+        gtk_stack_set_visible_child_name(mp_stack(editorStack), page)
+        updateActions()
+    }
+
+    private var focusedHasPreedit: Bool {
+        (filterPreedit && containsFocus(filter)) || (source.hasPreedit && containsFocus(source.widget))
+            || assistantPanel.hasPreedit
+    }
+
+    private var commandsAvailable: Bool {
+        isVisible && activeDialog == nil && !commands.hasDialog && importView?.isChoosing != true && !focusedHasPreedit
+            && !hasModalChild()
+    }
+
+    private func hasModalChild(named name: String? = nil) -> Bool {
+        let windows = gtk_window_get_toplevels()!
+        for index in 0..<g_list_model_get_n_items(windows) {
+            guard let item = g_list_model_get_item(windows, index) else { continue }
+            defer { g_object_unref(item) }
+            let child = item.assumingMemoryBound(to: GtkWindow.self)
+            if gtk_window_get_modal(child) != 0, gtk_widget_get_visible(mp_window_widget(child)) != 0,
+               gtk_window_get_transient_for(child) == mp_window(window),
+               name == nil || String(cString: gtk_widget_get_name(mp_window_widget(child))) == name { return true }
+        }
+        return false
+    }
+
+    private func installActions(application: UnsafeMutablePointer<GtkApplication>) {
+        for command in LinuxLibraryAction.allCases {
+            let action: OpaquePointer
+            switch command {
+            case .sidebar, .inspector, .favorite, .edit, .preview:
+                action = g_simple_action_new_stateful(command.rawValue, nil, g_variant_new_boolean(0))!
+            default: action = g_simple_action_new(command.rawValue, nil)!
+            }
+            actions[command] = action // The window's action map owns this reference.
+            GTK.onActionActivated(UnsafeMutableRawPointer(action)) { [weak self] in self?.activate(command) }
+            if let state = g_action_get_state(mp_action(action)) {
+                g_variant_unref(state)
+                GTK.onActionStateChanged(UnsafeMutableRawPointer(action)) { [weak self] requested in
+                    guard let self, let current = g_action_get_state(mp_action(action)) else { return }
+                    defer { g_variant_unref(current) }
+                    guard self.isEnabled(command), (g_variant_get_boolean(current) != 0) != requested else {
+                        self.updateActions()
+                        return
+                    }
+                    self.activate(command)
+                }
+            }
+            g_action_map_add_action(mp_window_action_map(window), mp_action(action))
+            g_object_unref(UnsafeMutableRawPointer(action))
+            if let accelerator = command.accelerator {
+                let strings = [strdup(accelerator), nil]
+                defer { strings.forEach { free($0) } }
+                strings.withUnsafeBufferPointer { buffer in
+                    buffer.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: strings.count) {
+                        gtk_application_set_accels_for_action(application, "win." + command.rawValue, $0)
+                    }
+                }
+            }
+        }
+    }
+
+    private func isEnabled(_ command: LinuxLibraryAction) -> Bool {
+        guard commandsAvailable, let state = editor?.state else { return false }
+        let editorAvailable = available && !conflictView.isResolving
+        if [.edit, .favorite, .rename, .move, .duplicate, .showFiles, .delete].contains(command),
+           let contextSelection, contextSelection != state.prompt { return false }
+        switch command {
+        case .save: return editorAvailable && state.canSave
+        case .duplicate: return editorAvailable && state.canSaveAsCopy
+        case .revert: return editorAvailable && state.prompt != nil && state.status != .loading
+            && state.status != .saving && state.status != .commandRunning
+        case .rename, .move, .delete: return commands.canRun
+        case .favorite: return browser.map { canFavorite($0.state) } ?? false
+        case .review: return editorAvailable && assistantPanel.canStart(.review)
+        case .improve: return editorAvailable && assistantPanel.canStart(.improve)
+        case .importFiles, .importFolder: return importView?.canImport == true
+        case .showFiles: return available && state.prompt != nil
+        case .edit, .preview: return state.prompt != nil
+        default: return true
+        }
+    }
+
+    private func updateActions() {
+        guard !isDestroyed else { return }
+        for (command, action) in actions { g_simple_action_set_enabled(action, isEnabled(command) ? 1 : 0) }
+        gtk_widget_set_sensitive(searchToggle, isEnabled(.search) ? 1 : 0)
+        let mode = gtk_stack_get_visible_child_name(mp_stack(editorStack)).map { String(cString: $0) }
+        for (command, selected) in [(LinuxLibraryAction.sidebar, gtk_widget_get_visible(sidebarPane) != 0),
+                                     (.inspector, gtk_widget_get_visible(inspectorPane) != 0),
+                                     (.favorite, browser?.state.selectedPrompt?.favorite == true),
+                                     (.edit, mode == "edit"), (.preview, mode == "preview")] {
+            if let action = actions[command] { g_simple_action_set_state(action, g_variant_new_boolean(selected ? 1 : 0)) }
+        }
+    }
+
+    @discardableResult
+    private func activate(_ command: LinuxLibraryAction) -> Bool {
+        guard isEnabled(command) else { return false }
+        switch command {
+        case .save: return savePrompt()
+        case .duplicate: editor?.saveAsCopy()
+        case .revert: editor?.revert()
+        case .rename: commands.request(.rename)
+        case .move: commands.request(.move)
+        case .delete: commands.request(.delete)
+        case .favorite: return toggleFavorite()
+        case .edit: setMode("edit"); gtk_widget_grab_focus(source.widget)
+        case .preview: setMode("preview")
+        case .search:
+            gtk_search_bar_set_search_mode(mp_search_bar(searchBar), 1)
+            gtk_widget_grab_focus(filter)
+        case .sidebar: gtk_widget_set_visible(sidebarPane, gtk_widget_get_visible(sidebarPane) == 0 ? 1 : 0)
+        case .inspector: gtk_widget_set_visible(inspectorPane, gtk_widget_get_visible(inspectorPane) == 0 ? 1 : 0)
+        case .fields: showInspector("fields")
+        case .history: showInspector("history")
+        case .assistant: showInspector("assistant")
+        case .review, .improve:
+            showInspector("assistant")
+            return assistantPanel.start(command == .review ? .review : .improve)
+        case .importFiles: importView?.show(.files)
+        case .importFolder: importView?.show(.folder)
+        case .showFiles:
+            if let path = editor?.state.prompt?.relativePath, let showFiles { showFiles(path) }
+            else { openFolder() }
+        case .settings: showSettings()
+        case .about: showAbout(window)
+        case .close: return requestClose()
+        }
+        updateActions()
+        return true
     }
 
     deinit { unbind() }
@@ -235,7 +581,7 @@ final class LinuxLibraryWindow {
         revealAfterOpen = []
         closeRequested = false
         dismissedConflict = nil
-        gtk_notebook_set_current_page(mp_notebook(tabs), 0)
+        setMode("edit")
         filterPreedit = false
         message = nil
         messageSelection = nil
@@ -282,7 +628,7 @@ final class LinuxLibraryWindow {
         gtk_window_present(mp_window(window))
         if editor?.state.prompt == nil, let selection = browser?.selection { selectPrompt(selection) }
         updateDialog()
-        gtk_widget_grab_focus(filter)
+        gtk_widget_grab_focus(editor?.state.prompt == nil ? list : source.widget)
     }
 
     func hide() { requestClose() }
@@ -316,7 +662,7 @@ final class LinuxLibraryWindow {
     /// Picker opens reveal hidden rows only after the draft guard approves.
     func openPrompt(_ selection: LibraryPromptSelection) {
         guard !isDestroyed, available else { return }
-        gtk_notebook_set_current_page(mp_notebook(tabs), 0)
+        setMode("edit")
         if !revealAfterOpen.contains(selection) { revealAfterOpen.append(selection) }
         selectPrompt(selection)
     }
@@ -376,6 +722,7 @@ final class LinuxLibraryWindow {
     @discardableResult
     private func requestClose() -> Bool {
         guard !isDestroyed, !closeRequested, let editor else { return false }
+        guard !hasModalChild(named: "monkeyspaw-about") else { return false }
         assistantPanel.close()
         conflictView.close()
         closeRequested = true
@@ -409,93 +756,143 @@ final class LinuxLibraryWindow {
         renderEditor()
         let favoriteTitle = state.selectedPrompt?.favorite == true
             ? LinuxStrings.removeFavorite : LinuxStrings.addFavorite
-        gtk_button_set_label(mp_button(favorite), favoriteTitle)
+        gtk_button_set_icon_name(mp_button(favorite), state.selectedPrompt?.favorite == true
+            ? "starred-symbolic" : "non-starred-symbolic")
+        gtk_widget_set_tooltip_text(favorite, favoriteTitle)
+        let isFavorite = state.selectedPrompt?.favorite == true
+        if contextFavorite != isFavorite, let model = contextModel {
+            contextFavorite = isFavorite
+            g_menu_remove(model, 1)
+            g_menu_insert(model, 1, favoriteTitle, "win.favorite")
+        }
+        if let prompt = editor?.state.prompt {
+            let row = state.selectedPrompt.flatMap { $0.selection == prompt ? $0 : nil }
+                ?? state.rows.first { $0.selection == prompt }
+            gtk_label_set_text(mp_label(title), row?.title ?? prompt.relativePath.string)
+            gtk_label_set_text(mp_label(subtitle), LinuxLibraryStrings.subtitle(path: prompt.relativePath.string,
+                dirty: editor?.state.isDirty == true))
+        } else {
+            let section = state.sections.first { $0.id == state.selectedSection }
+            gtk_label_set_text(mp_label(title), section?.title ?? LinuxStrings.library)
+            gtk_label_set_text(mp_label(subtitle), LinuxLibraryStrings.count(section?.count ?? 0))
+        }
         mp_accessible_label(favorite, favoriteTitle)
         gtk_widget_set_sensitive(favorite, canFavorite(state) ? 1 : 0)
         gtk_label_set_text(mp_label(status), message ?? "")
         gtk_widget_set_visible(status, message == nil ? 0 : 1)
         updateDialog()
+        updateActions()
     }
 
     private func configureEditor(in detail: GTK.Widget) {
         gtk_widget_set_name(readOnly, "library-read-only")
-        gtk_box_append(mp_box(detail), readOnly)
-        let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        for (button, name) in [(save, "library-save"), (revert, "library-revert"), (saveCopy, "library-save-copy")] {
-            gtk_widget_set_name(button, name)
-            gtk_box_append(mp_box(actions), button)
-        }
-        GTK.onSignal(save, "clicked") { [weak self] in self?.savePrompt() }
-        GTK.onSignal(saveCopy, "clicked") { [weak self] in
-            guard let self, self.isVisible, self.available, !self.conflictView.isResolving else { return }
-            self.editor?.saveAsCopy()
-        }
-        GTK.onSignal(revert, "clicked") { [weak self] in
-            guard let self, self.isVisible, self.available, !self.conflictView.isResolving else { return }
-            self.editor?.revert()
-        }
-        gtk_box_append(mp_box(actions), commands.widget)
-        let assistant = GTK.button(LinuxAssistantStrings.title) { [weak self] in
-            guard let self, self.isVisible else { return }
-            self.assistantPanel.show()
-        }
-        gtk_widget_set_name(assistant, "library-assistant")
-        mp_accessible_label(assistant, "Assistant: Write, Review or Improve")
-        gtk_box_append(mp_box(actions), assistant)
-        gtk_box_append(mp_box(detail), actions)
-        let editPage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        gtk_box_append(mp_box(editPage), scrolled(source.widget, width: Limits.panelSize.width / 2))
+        gtk_info_bar_set_message_type(mp_info_bar(readOnlyBar), GTK_MESSAGE_INFO)
+        gtk_info_bar_add_child(mp_info_bar(readOnlyBar), readOnly)
+        gtk_box_append(mp_box(detail), readOnlyBar)
+        gtk_box_append(mp_box(detail), conflictView.widget)
+        let editPage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+        let overlay = gtk_overlay_new()!
+        gtk_overlay_set_child(mp_overlay(overlay), scrolled(source.widget, width: 200))
+        gtk_widget_set_halign(editorEmpty, GTK_ALIGN_CENTER)
+        gtk_widget_set_valign(editorEmpty, GTK_ALIGN_CENTER)
+        gtk_widget_add_css_class(editorEmpty, "dim-label")
+        gtk_overlay_add_overlay(mp_overlay(overlay), editorEmpty)
+        gtk_box_append(mp_box(editPage), overlay)
         gtk_widget_set_name(validation, "library-validation")
         gtk_label_set_selectable(mp_label(validation), 1)
         let issuesScroll = gtk_scrolled_window_new()!
         gtk_scrolled_window_set_max_content_height(mp_scrolled_window(issuesScroll), 120)
         gtk_scrolled_window_set_propagate_natural_height(mp_scrolled_window(issuesScroll), 1)
         gtk_scrolled_window_set_child(mp_scrolled_window(issuesScroll), validation)
-        gtk_box_append(mp_box(editPage), issuesScroll)
+        gtk_revealer_set_child(mp_revealer(issuesRevealer), issuesScroll)
+        gtk_box_append(mp_box(editPage), issuesRevealer)
         gtk_widget_set_name(preview, "library-preview")
         mp_accessible_label(preview, LinuxStrings.preview)
         gtk_text_view_set_editable(mp_text_view(preview), 0)
         gtk_text_view_set_cursor_visible(mp_text_view(preview), 0)
         gtk_text_view_set_wrap_mode(mp_text_view(preview), GTK_WRAP_WORD_CHAR)
-        gtk_widget_set_name(fields, "library-fields")
-        mp_accessible_label(fields, LinuxEditorStrings.parsedFields)
-        gtk_grid_set_column_spacing(grid, 12)
-        gtk_grid_set_row_spacing(grid, 8)
-        gtk_widget_set_name(tabs, "library-editor-tabs")
-        gtk_notebook_append_page(mp_notebook(tabs), editPage, GTK.label(LinuxStrings.edit))
-        gtk_notebook_append_page(mp_notebook(tabs), scrolled(preview, width: Limits.panelSize.width / 2), GTK.label(LinuxStrings.preview))
-        gtk_notebook_append_page(mp_notebook(tabs), scrolled(fields, width: Limits.panelSize.width / 2), GTK.label(LinuxEditorStrings.fields))
-        historyPage = gtk_notebook_append_page(mp_notebook(tabs), history.widget, GTK.label(LinuxEditorStrings.history))
-        GTK.onNotify(UnsafeMutableRawPointer(tabs), "page") { [weak self] in
-            guard let self, !self.isDestroyed, self.isHistorySelected else { return }
-            self.loadHistory()
+        gtk_widget_set_name(editorStack, "library-editor-stack")
+        gtk_stack_add_named(mp_stack(editorStack), editPage, "edit")
+        gtk_stack_add_named(mp_stack(editorStack), scrolled(preview, width: 200), "preview")
+        gtk_widget_set_vexpand(editorStack, 1)
+        gtk_stack_set_hhomogeneous(mp_stack(editorStack), 0)
+        gtk_stack_set_vhomogeneous(mp_stack(editorStack), 0)
+        gtk_box_append(mp_box(detail), editorStack)
+        gtk_box_append(mp_box(detail), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL))
+        let bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+        gtk_widget_add_css_class(bar, "toolbar")
+        gtk_widget_set_name(validationSummary, "library-validation-summary")
+        gtk_widget_add_css_class(validationSummary, "flat")
+        GTK.onSignal(validationSummary, "clicked") { [weak self] in
+            guard let self else { return }
+            self.setMode("edit")
+            gtk_revealer_set_reveal_child(mp_revealer(self.issuesRevealer),
+                gtk_revealer_get_reveal_child(mp_revealer(self.issuesRevealer)) == 0 ? 1 : 0)
         }
-        history.onLoad = { [weak self] in self?.loadHistory() }
-        history.onSelect = { [weak self] revision in self?.editor?.selectRevision(revision) }
-        history.onRestore = { [weak self] revision in self?.commands.restore(revision) }
-        gtk_box_append(mp_box(detail), tabs)
+        gtk_box_append(mp_box(bar), validationSummary)
         gtk_widget_set_name(editorStatus, "library-editor-status")
-        gtk_box_append(mp_box(detail), editorStatus)
-        gtk_box_append(mp_box(detail), conflictView.widget)
+        gtk_widget_set_hexpand(editorStatus, 1)
+        gtk_widget_add_css_class(editorStatus, "dim-label")
+        gtk_box_append(mp_box(bar), editorStatus)
+        gtk_box_append(mp_box(detail), bar)
         assistantPanel.onHighlight = { [weak self] range in
             guard let self, !self.isDestroyed else { return }
-            if range != nil { gtk_notebook_set_current_page(mp_notebook(self.tabs), 0) }
+            if range != nil { self.setMode("edit") }
             self.source.highlight(range)
         }
-        gtk_box_append(mp_box(detail), assistantPanel.widget)
+        assistantPanel.onAvailabilityChange = { [weak self] in self?.updateActions() }
         source.onEdit = { [weak self] text in
             guard let self, !self.isDestroyed, self.available, !self.conflictView.isResolving else { return }
             self.assistantMessage = nil
             self.editor?.edit(text)
-            // Editor publications may coalesce edits away and back. Revoke
-            // acceptance at each native edit, before another event can run.
+            // Revoke acceptance at each native edit before another event can run.
             self.assistantProvider()?.contextChanged()
         }
         source.onCompositionEnded = { [weak self] in self?.render() }
+        source.onCompositionChanged = { [weak self] in self?.updateActions() }
     }
 
-    private var grid: UnsafeMutablePointer<GtkGrid> {
-        UnsafeMutableRawPointer(fields).assumingMemoryBound(to: GtkGrid.self)
+    private func configureInspector() {
+        gtk_widget_set_name(inspectorPane, "library-inspector")
+        let switcher = gtk_stack_switcher_new()!
+        gtk_widget_add_css_class(switcher, "mp-inspector-switcher")
+        gtk_stack_switcher_set_stack(mp_stack_switcher(switcher), mp_stack(inspectorStack))
+        gtk_widget_set_halign(switcher, GTK_ALIGN_FILL)
+        gtk_box_append(mp_box(inspectorPane), switcher)
+        gtk_widget_set_name(inspectorStack, "library-inspector-stack")
+        gtk_stack_set_hhomogeneous(mp_stack(inspectorStack), 0)
+        gtk_stack_set_vhomogeneous(mp_stack(inspectorStack), 0)
+        gtk_widget_set_name(fields, "library-fields")
+        mp_accessible_label(fields, LinuxEditorStrings.parsedFields)
+        gtk_list_box_set_selection_mode(mp_list_box(fields), GTK_SELECTION_NONE)
+        gtk_widget_add_css_class(fields, "boxed-list")
+        let fieldsScroll = scrolled(fields, width: 240)
+        gtk_scrolled_window_set_policy(mp_scrolled_window(fieldsScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
+        for edge in [gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(fields, 12) }
+        gtk_stack_add_titled(mp_stack(inspectorStack), fieldsScroll, "fields", LinuxEditorStrings.fields)
+        gtk_stack_add_titled(mp_stack(inspectorStack), history.widget, "history", LinuxEditorStrings.history)
+        let assistantPage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+        gtk_box_append(mp_box(assistantPage), assistantPanel.widget)
+        gtk_stack_add_titled(mp_stack(inspectorStack), assistantPage, "assistant", LinuxAssistantStrings.title)
+        gtk_widget_set_vexpand(inspectorStack, 1)
+        // A scroll boundary keeps GTK 4.8's Paned measurements stable while
+        // Assistant status and comparison content change their natural height.
+        let scroll = scrolled(inspectorStack, width: 240)
+        gtk_scrolled_window_set_policy(mp_scrolled_window(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
+        gtk_box_append(mp_box(inspectorPane), scroll)
+        GTK.onNotify(UnsafeMutableRawPointer(inspectorStack), "visible-child") { [weak self] in
+            guard let self, !self.isDestroyed else { return }
+            if self.isHistorySelected { self.loadHistory() }
+            if self.inspectorPage == "assistant" { self.assistantPanel.show() }
+        }
+        GTK.onNotify(UnsafeMutableRawPointer(inspectorPane), "visible") { [weak self] in
+            guard let self, !self.isDestroyed else { return }
+            if self.isHistorySelected { self.loadHistory() }
+            self.updateActions()
+        }
+        history.onLoad = { [weak self] in self?.loadHistory() }
+        history.onSelect = { [weak self] revision in self?.editor?.selectRevision(revision) }
+        history.onRestore = { [weak self] revision in self?.commands.restore(revision) }
     }
 
     private func renderEditor() {
@@ -509,11 +906,12 @@ final class LinuxLibraryWindow {
         conflictView.bind(model: conflictModel, selection: conflictSelection, stamp: state.stamp,
             available: available && !busy && state.pendingDecision == nil && state.queuedActions.isEmpty)
         let editorAvailable = available && !conflictView.isResolving
+        gtk_widget_set_visible(editorEmpty, state.prompt == nil ? 1 : 0)
         assistantPanel.bind(model: assistantProvider(), editor: editor, available: editorAvailable)
-        gtk_label_set_text(mp_label(previewTitle), state.prompt?.relativePath.string ?? LinuxStrings.selectLibraryPrompt)
         source.update(state, revision: sourceRevision, available: editorAvailable)
         gtk_label_set_text(mp_label(readOnly), state.readOnlyReason.map(LinuxEditorStrings.readOnly) ?? "")
         gtk_widget_set_visible(readOnly, state.readOnlyReason == nil ? 0 : 1)
+        gtk_widget_set_visible(readOnlyBar, state.readOnlyReason == nil ? 0 : 1)
         gtk_label_set_text(mp_label(validation), state.issues.map(LinuxEditorStrings.issue).joined(separator: "\n"))
         let text = state.prompt == nil ? LinuxStrings.selectLibraryPrompt
             : state.previewFailure == nil ? state.preview : state.issues.map(\.message).joined(separator: "\n")
@@ -522,37 +920,36 @@ final class LinuxLibraryWindow {
             gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(preview)), text, Int32(text.utf8.count))
         }
         if renderedFields != state.fields {
-            while let child = gtk_widget_get_first_child(fields) { gtk_widget_unparent(child) }
+            clear(fields)
             renderedFields = state.fields
-            if state.fields.isEmpty { gtk_grid_attach(grid, GTK.label(LinuxEditorStrings.noFields), 0, 0, 5, 1) }
-            else {
-                for (column, title) in LinuxEditorStrings.fieldColumns.enumerated() {
-                    gtk_grid_attach(grid, GTK.label(title), Int32(column), 0, 1, 1)
-                }
-                for (row, field) in state.fields.enumerated() {
-                    let values = [[field.name, field.label, field.description].compactMap { $0 }.joined(separator: "\n"),
-                        field.kind.rawValue, field.defaultValue, field.options.map { $0.label + " = " + $0.value }.joined(separator: "\n"),
-                        LinuxEditorStrings.behavior(field)]
-                    for (column, value) in values.enumerated() {
-                        let label = GTK.label(value)
-                        gtk_label_set_selectable(mp_label(label), 1)
-                        gtk_widget_set_valign(label, GTK_ALIGN_START)
-                        gtk_grid_attach(grid, label, Int32(column), Int32(row + 1), 1, 1)
-                    }
-                }
+            if state.fields.isEmpty { gtk_list_box_append(mp_list_box(fields), GTK.label(LinuxEditorStrings.noFields)) }
+            for field in state.fields {
+                let row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4)!
+                for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
+                             gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(row, 10) }
+                let name = GTK.label(field.name)
+                gtk_widget_add_css_class(name, "monospace")
+                gtk_box_append(mp_box(row), name)
+                let description = GTK.label(LinuxLibraryStrings.field(field))
+                gtk_label_set_selectable(mp_label(description), 1)
+                gtk_widget_add_css_class(description, "dim-label")
+                gtk_box_append(mp_box(row), description)
+                gtk_list_box_append(mp_list_box(fields), row)
             }
         }
-        gtk_widget_set_sensitive(save, editorAvailable && state.canSave ? 1 : 0)
-        gtk_widget_set_sensitive(saveCopy, editorAvailable && state.canSaveAsCopy ? 1 : 0)
-        gtk_widget_set_sensitive(revert, editorAvailable && state.prompt != nil && state.status != .loading
-            && state.status != .saving && state.status != .commandRunning ? 1 : 0)
+        let summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!
+        gtk_box_append(mp_box(summary), gtk_image_new_from_icon_name(state.issues.isEmpty
+            ? "emblem-ok-symbolic" : "dialog-warning-symbolic"))
+        gtk_box_append(mp_box(summary), GTK.label(LinuxLibraryStrings.issues(state.issues.count)))
+        gtk_button_set_child(mp_button(validationSummary), summary)
+        mp_accessible_label(validationSummary, LinuxLibraryStrings.issues(state.issues.count))
         commands.update(state, available: editorAvailable)
         history.update(state, available: editorAvailable, canRestore: commands.canRun && !commands.hasDialog)
         if assistantMessagePrompt != state.prompt || assistantMessageStamp != state.stamp
             || (busy && renderedEditorStatus != state.status) { assistantMessage = nil }
         renderedEditorStatus = state.status
         var status = assistantMessage ?? commands.message ?? LinuxEditorStrings.status(state)
-        if assistantMessage != nil, state.isDirty { status += " Newer edits are unsaved." }
+        if assistantMessage != nil, state.isDirty { status += LinuxLibraryStrings.newerEdits }
         if assistantMessage == nil, commands.message == nil, state.provenanceMaintenanceFailed {
             status += (status.isEmpty ? "" : " ") + LinuxEditorStrings.provenanceWarning
         }
@@ -562,7 +959,7 @@ final class LinuxLibraryWindow {
     }
 
     private var isHistorySelected: Bool {
-        historyPage >= 0 && gtk_notebook_get_current_page(mp_notebook(tabs)) == historyPage
+        gtk_widget_get_visible(inspectorPane) != 0 && inspectorPage == "history"
     }
 
     private func loadHistory() {
@@ -658,16 +1055,33 @@ final class LinuxLibraryWindow {
             clear(sidebar)
             renderedSections = state.sections
             for section in state.sections {
-                let label = GTK.label("\(section.title) (\(section.count))")
-                gtk_widget_set_margin_start(label, Int32(section.depth * 12))
+                let row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+                gtk_widget_set_margin_start(row, Int32(section.depth * 12))
+                for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom] { edge(row, 6) }
+                let icon: String
+                switch section.id {
+                case .all: icon = "view-list-symbolic"
+                case .favourites: icon = "starred-symbolic"
+                case .recent: icon = "document-open-recent-symbolic"
+                case .conflicts: icon = "dialog-warning-symbolic"
+                case .folder: icon = "folder-symbolic"
+                case .group: icon = "system-users-symbolic"
+                case .tag: icon = "bookmark-new-symbolic"
+                }
+                gtk_box_append(mp_box(row), gtk_image_new_from_icon_name(icon))
+                let title = rowLabel(section.title)
+                gtk_widget_set_hexpand(title, 1)
+                gtk_box_append(mp_box(row), title)
+                let count = GTK.label(String(section.count))
+                gtk_widget_add_css_class(count, "dim-label")
+                gtk_label_set_xalign(mp_label(count), 1)
+                gtk_box_append(mp_box(row), count)
                 let accessibleTitle: String
                 if case .folder(let path) = section.id { accessibleTitle = path.string }
                 else { accessibleTitle = section.title }
-                mp_accessible_label(label, "\(accessibleTitle) (\(section.count))")
-                if browser?.moveDestination(for: section.id) != nil {
-                    commands.installDrop(on: label, section: section.id)
-                }
-                gtk_list_box_append(mp_list_box(sidebar), label)
+                mp_accessible_label(row, accessibleTitle + ", " + LinuxLibraryStrings.count(section.count))
+                if browser?.moveDestination(for: section.id) != nil { commands.installDrop(on: row, section: section.id) }
+                gtk_list_box_append(mp_list_box(sidebar), row)
             }
             select(in: sidebar, position: state.sections.firstIndex { $0.id == state.selectedSection }, focus: hadFocus)
         } else if renderedSection != state.selectedSection {
@@ -683,18 +1097,31 @@ final class LinuxLibraryWindow {
             clear(list)
             renderedRows = state.rows
             for row in state.rows {
-                let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
-                let title = (row.favorite ? "★ " : "") + row.title
-                gtk_box_append(mp_box(content), rowLabel(title))
-                gtk_box_append(mp_box(content), rowLabel(row.relativePath.string))
-                var badges = [String]()
-                if row.isReadOnly { badges.append(LinuxStrings.readOnly) }
-                if !row.canRender { badges.append(LinuxStrings.invalidPrompt) }
+                let content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+                for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom] { edge(content, 6) }
+                let text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3)!
+                gtk_widget_set_hexpand(text, 1)
+                gtk_box_append(mp_box(text), rowLabel(row.title))
+                let metadata = ([row.folder.string] + row.tags.map { "#" + $0 }).filter { !$0.isEmpty }.joined(separator: " · ")
+                var detail = row.previewLine.flatMap { $0.isEmpty ? nil : $0 } ?? metadata
                 if state.selectedSection == .recent, let lastUsed = row.lastUsedAt {
-                    badges.append(LinuxStrings.lastUsed(lastUsed))
+                    detail = LinuxStrings.lastUsed(lastUsed) + (detail.isEmpty ? "" : " · " + detail)
                 }
-                if !badges.isEmpty { gtk_box_append(mp_box(content), rowLabel(badges.joined(separator: " · "))) }
-                mp_accessible_label(content, ([title, row.relativePath.string] + badges).joined(separator: ", "))
+                let subtitle = rowLabel(detail)
+                gtk_widget_add_css_class(subtitle, "dim-label")
+                gtk_box_append(mp_box(text), subtitle)
+                gtk_box_append(mp_box(content), text)
+                var badges = [String]()
+                for (visible, icon, label) in [(row.favorite, "starred-symbolic", LinuxLibraryStrings.favorite),
+                                               (row.isReadOnly, "changes-prevent-symbolic", LinuxStrings.readOnly),
+                                               (!row.canRender, "dialog-warning-symbolic", LinuxStrings.invalidPrompt)] where visible {
+                    let image = gtk_image_new_from_icon_name(icon)!
+                    mp_accessible_label(image, label)
+                    gtk_widget_set_tooltip_text(image, label)
+                    gtk_box_append(mp_box(content), image)
+                    badges.append(label)
+                }
+                mp_accessible_label(content, ([row.title, row.relativePath.string] + badges).joined(separator: ", "))
                 commands.installDrag(on: content, selection: row.selection)
                 gtk_list_box_append(mp_list_box(list), content)
             }
@@ -719,39 +1146,51 @@ final class LinuxLibraryWindow {
     }
 
     private func keyPressed(_ key: UInt32, modifiers: UInt32) -> Bool {
-        guard isVisible, let browser else { return false }
-        // Native IME cancellation belongs to the focused input's method.
-        if filterPreedit, containsFocus(filter) { return false }
-        if source.hasPreedit, containsFocus(source.widget) { return false }
-        if assistantPanel.hasPreedit { return false }
+        guard isVisible, !focusedHasPreedit else { return false }
         let relevant = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue | GDK_ALT_MASK.rawValue
             | GDK_SUPER_MASK.rawValue | GDK_META_MASK.rawValue | GDK_HYPER_MASK.rawValue
         let modifiers = modifiers & relevant
-        if key == UInt32(GDK_KEY_Escape), modifiers == 0, assistantPanel.isVisible {
-            assistantPanel.close()
-            return true
-        }
-        guard activeDialog == nil, !commands.hasDialog else { return false }
-        if modifiers == GDK_CONTROL_MASK.rawValue,
-           [UInt32(GDK_KEY_r), UInt32(GDK_KEY_R), UInt32(GDK_KEY_i), UInt32(GDK_KEY_I)].contains(key) {
-            guard available, !conflictView.isResolving, let editor, let model = assistantProvider() else { return false }
-            assistantPanel.bind(model: model, editor: editor, available: available)
-            return assistantPanel.start([UInt32(GDK_KEY_r), UInt32(GDK_KEY_R)].contains(key) ? .review : .improve)
-        }
+        guard commandsAvailable else { return false }
         if key == UInt32(GDK_KEY_Escape), modifiers == 0 {
-            if !browser.filter.isEmpty { browser.setFilter(""); render(); return true }
-            return requestClose()
+            if containsFocus(filter) {
+                browser?.setFilter("")
+                mp_entry_set_text(filter, "")
+                gtk_search_bar_set_search_mode(mp_search_bar(searchBar), 0)
+                updateActions()
+                return true
+            }
+            if inspectorPage == "assistant", gtk_widget_get_visible(inspectorPane) != 0, assistantPanel.isVisible {
+                assistantPanel.close()
+                showInspector("fields")
+                return true
+            }
+            return false
         }
-        if [UInt32(GDK_KEY_s), UInt32(GDK_KEY_S)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
-            return savePrompt()
+        if modifiers == 0 {
+            if key == UInt32(GDK_KEY_F9) { return activate(.sidebar) }
+            if key == UInt32(GDK_KEY_F2) { return activate(.rename) }
+            if containsFocus(list), key == UInt32(GDK_KEY_Delete) { return activate(.delete) }
+            if containsFocus(list), key == UInt32(GDK_KEY_Return) { return activate(.edit) }
         }
-        if [UInt32(GDK_KEY_w), UInt32(GDK_KEY_W)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
-            return requestClose()
+        if modifiers == GDK_CONTROL_MASK.rawValue {
+            let action: LinuxLibraryAction?
+            switch key {
+            case UInt32(GDK_KEY_s), UInt32(GDK_KEY_S): action = .save
+            case UInt32(GDK_KEY_d), UInt32(GDK_KEY_D): action = .favorite
+            case UInt32(GDK_KEY_f), UInt32(GDK_KEY_F):
+                action = .search
+            case UInt32(GDK_KEY_1): action = .edit
+            case UInt32(GDK_KEY_2): action = .preview
+            case UInt32(GDK_KEY_w), UInt32(GDK_KEY_W): action = .close
+            case UInt32(GDK_KEY_r), UInt32(GDK_KEY_R): action = .review
+            case UInt32(GDK_KEY_i), UInt32(GDK_KEY_I): action = .improve
+            default: action = nil
+            }
+            if let action { return activate(action) }
         }
-        if [UInt32(GDK_KEY_d), UInt32(GDK_KEY_D)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
-            return toggleFavorite()
-        }
-        return false // GTK owns list arrows, activation and Tab traversal.
+        if modifiers == GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue,
+           [UInt32(GDK_KEY_s), UInt32(GDK_KEY_S)].contains(key) { return activate(.duplicate) }
+        return false // GTK owns list arrows, text editing and Tab traversal.
     }
 
     private func containsFocus(_ widget: GTK.Widget) -> Bool {
@@ -764,8 +1203,7 @@ final class LinuxLibraryWindow {
         gtk_list_box_select_row(mp_list_box(list), row)
         guard focus else { return }
         // Get the row as a GtkWidget without assuming the C importer's row type.
-        var widget = gtk_widget_get_first_child(list)
-        for _ in 0..<(position ?? 0) { widget = widget.flatMap(gtk_widget_get_next_sibling) }
+        let widget = row.flatMap { mp_row_widget($0) }
         gtk_widget_grab_focus(position == nil ? list : widget)
     }
 
@@ -774,11 +1212,12 @@ final class LinuxLibraryWindow {
         mp_accessible_label(widget, label)
         gtk_list_box_set_selection_mode(mp_list_box(widget), GTK_SELECTION_SINGLE)
         gtk_list_box_set_activate_on_single_click(mp_list_box(widget), 0)
-        gtk_widget_add_css_class(widget, "navigation-sidebar")
     }
 
     private func clear(_ list: GTK.Widget) {
-        while let row = gtk_widget_get_first_child(list) { gtk_list_box_remove(mp_list_box(list), row) }
+        while let row = gtk_list_box_get_row_at_index(mp_list_box(list), 0) {
+            gtk_list_box_remove(mp_list_box(list), mp_row_widget(row))
+        }
     }
 
     private func rowLabel(_ text: String) -> GTK.Widget {

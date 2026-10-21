@@ -349,7 +349,7 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(environment.switchLibrary(to: second), .switched)
         try openPicker()
         mp_entry_set_text(oldQuery, "stale query")
-        XCTAssertNotEqual(gtk_widget_activate(oldUse), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(oldUse), 0)
         drainNativeEvents()
         XCTAssertEqual(environment.pickerModel.query, "")
         XCTAssertEqual(environment.pickerModel.state, .picker)
@@ -447,7 +447,7 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         let create = try widget(matching: {
             mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == label
         })
-        XCTAssertNotEqual(gtk_widget_activate(create), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(create), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == "New prompt.md"
             && self.environment.editorModel.state.source != nil && self.environment.editorModel.state.status != .loading },
             "Created prompt must finish loading into the editor")

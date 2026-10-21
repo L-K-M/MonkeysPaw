@@ -457,7 +457,12 @@ final class LinuxConflictViewTests: XCTestCase {
         g_signal_emitv(&instance, g_signal_lookup("clicked", gtk_button_get_type()), 0, nil)
         g_value_unset(&instance)
     }
-    private func sensitive(_ name: String) throws -> Bool { gtk_widget_get_sensitive(try widget(name)) != 0 }
+    private func sensitive(_ name: String) throws -> Bool {
+        if name == "library-save" {
+            return g_action_group_get_action_enabled(mp_window_action_group(try XCTUnwrap(window)), "save") != 0
+        }
+        return gtk_widget_get_sensitive(try widget(name)) != 0
+    }
     private func label(_ name: String) throws -> String { String(cString: gtk_label_get_text(mp_label(try widget(name)))) }
     private func text(_ name: String) throws -> String {
         let buffer = gtk_text_view_get_buffer(mp_text_view(try widget(name)))!

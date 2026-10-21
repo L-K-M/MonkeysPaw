@@ -34,7 +34,6 @@ enum LinuxStrings {
     static let removeFavorite = "Remove from Favourites"
     static let readOnly = "Read-only"
     static let invalidPrompt = "Invalid"
-    static let libraryHint = "Ctrl+S: save · Ctrl+D: toggle favourite · Ctrl+W: close · Esc: clear filter, then close"
 
     static func lastUsed(_ date: Date) -> String {
         "Last used: " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
@@ -124,6 +123,7 @@ enum LinuxStrings {
     static let openFolder = "Open Folder"
     static let togglePicker = "Toggle picker"
     static let repeatLast = "Repeat last"
+    static let trayRepeat = "Repeat Last Prompt"
     static let openRepeatPrompt = "Open prompt…"
 
     static func repeatMessage(_ result: RepeatResult) -> String? {

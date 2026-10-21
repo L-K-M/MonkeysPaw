@@ -6,10 +6,17 @@ import MonkeysPawCore
 /// Widgets only: selections enter the graph's import state; report opens use
 /// its composition callback and the Library editor's existing discard guard.
 final class LinuxLibraryImportView {
+    let widget = gtk_revealer_new()!
     let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
     let report = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-    private let files = GTK.button(LinuxImportStrings.importAction) {}
-    private let folder = GTK.button(LinuxImportStrings.importFolder) {}
+    var onChange: (() -> Void)?
+    var canImport: Bool { state?.canImport == true }
+    var isChoosing: Bool { state?.isChoosing == true }
+    private let files = GTK.button(LinuxLibraryStrings.chooseFiles) {}
+    private let folder = GTK.button(LinuxLibraryStrings.chooseFolder) {}
+    private let cancel = GTK.button(LinuxStrings.cancel) {}
+    private var requested = false
+    private var hadReport = false
     private let destination = gtk_combo_box_text_new()!
     private let progress = GTK.label("")
     private let message = GTK.label("")
@@ -26,16 +33,28 @@ final class LinuxLibraryImportView {
     init(parent: GTK.Widget, list: GTK.Widget, chooser: LinuxImportChoosing) {
         self.parent = parent
         self.chooser = chooser
+        gtk_widget_set_name(widget, "library-import-bar")
+        let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
+                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(content, 8) }
+        gtk_revealer_set_child(mp_revealer(widget), content)
+        gtk_box_append(mp_box(content), actions)
+        gtk_box_append(mp_box(content), report)
         gtk_widget_set_name(files, "library-import")
         gtk_widget_set_name(folder, "library-import-folder")
         gtk_widget_set_name(destination, "library-import-destination")
         mp_accessible_label(destination, LinuxImportStrings.destination)
-        for widget in [files, folder, GTK.label(LinuxImportStrings.destination), destination, progress] {
+        for widget in [GTK.label(LinuxLibraryStrings.importInto), destination, files, folder, progress, cancel] {
             gtk_box_append(mp_box(actions), widget)
         }
         gtk_widget_set_name(progress, "library-import-progress")
         GTK.onSignal(files, "clicked") { [weak self] in self?.state?.choose(.files) }
         GTK.onSignal(folder, "clicked") { [weak self] in self?.state?.choose(.folder) }
+        GTK.onSignal(cancel, "clicked") { [weak self] in
+            guard let self, self.state?.isBusy != true else { return }
+            self.requested = false
+            self.state?.cancelChoosing()
+        }
         GTK.onSignal(destination, "changed") { [weak self] in
             guard let self, !self.isRendering else { return }
             let position = Int(gtk_combo_box_get_active(mp_combo_box(self.destination)))
@@ -75,6 +94,13 @@ final class LinuxLibraryImportView {
 
     func cancelChoosing() { state?.cancelChoosing() }
 
+    func show(_ mode: LinuxImportSelectionMode) {
+        guard canImport else { return }
+        requested = true
+        render()
+        gtk_widget_grab_focus(mode == .files ? files : folder)
+    }
+
     func unbind() {
         state?.onChange = nil
         state?.onChoose = nil
@@ -85,7 +111,11 @@ final class LinuxLibraryImportView {
     private func render() {
         guard let state else { return }
         isRendering = true
-        defer { isRendering = false }
+        defer { isRendering = false; onChange?() }
+        if hadReport && !state.hasReport && !state.isBusy { requested = false }
+        hadReport = state.hasReport
+        gtk_revealer_set_reveal_child(mp_revealer(widget), requested || state.isBusy || state.hasReport ? 1 : 0)
+        gtk_widget_set_sensitive(cancel, state.isBusy ? 0 : 1)
         for widget in [files, folder, destination] { gtk_widget_set_sensitive(widget, state.canImport ? 1 : 0) }
         if renderedDestinations != state.destinations {
             renderedDestinations = state.destinations

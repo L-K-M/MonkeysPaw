@@ -51,6 +51,7 @@ final class LinuxPanel: PanelWindow {
     private var forgetButton: GTK.Widget!
     private var editButton: GTK.Widget!
     private var libraryButton: GTK.Widget!
+    private var menuPopover: GTK.Widget?
 
     var clipboardOwner: GTK.Widget { window }
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
@@ -59,6 +60,11 @@ final class LinuxPanel: PanelWindow {
     init(application: UnsafeMutablePointer<GtkApplication>) {
         window = gtk_application_window_new(application)!
         GTK.hideOnClose(window)
+        LinuxStyle.install(on: window)
+        // Transient launcher panel: no titlebar, rounded corners and a theme
+        // border drawn by the mp-picker CSS (§24.5).
+        gtk_window_set_decorated(mp_window(window), 0)
+        gtk_widget_add_css_class(window, "mp-picker")
         gtk_window_set_title(mp_window(window), AppIdentity.displayName)
         gtk_window_set_default_size(mp_window(window),
                                     Int32(Limits.panelSize.width), Int32(Limits.panelSize.height))
@@ -127,6 +133,7 @@ final class LinuxPanel: PanelWindow {
         renderedFocus = nil
         transientStatus = nil
         queryPreedit = nil
+        menuPopover = nil
         gtk_window_set_child(mp_window(window), nil)
         isRendering = false
         self.picker = picker
@@ -136,10 +143,11 @@ final class LinuxPanel: PanelWindow {
         for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
                      gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(content, 12) }
 
-        queryEntry = gtk_entry_new()!
+        queryEntry = gtk_search_entry_new()!
         queryPreedit = observePreedit(in: mp_entry_text_delegate(queryEntry))
         gtk_widget_set_name(queryEntry, "picker-query")
-        gtk_entry_set_placeholder_text(mp_entry(queryEntry), LinuxStrings.searchPrompts)
+        GTK.searchPlaceholder(queryEntry, LinuxStrings.searchPrompts)
+        gtk_widget_add_css_class(queryEntry, "mp-picker-search")
         mp_accessible_label(queryEntry, LinuxStrings.searchPrompts)
         initialFocus = queryEntry
         gtk_box_append(mp_box(content), queryEntry)
@@ -195,7 +203,7 @@ final class LinuxPanel: PanelWindow {
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             picker.openLibrary()
         })
-        gtk_widget_set_name(folderButton, "picker-open-folder")
+        gtk_widget_set_name(folderButton, "picker-library")
         gtk_box_append(mp_box(noMatchesBox), folderButton)
         gtk_box_append(mp_box(pickerPage), noMatchesBox)
         gtk_stack_add_named(mp_stack(stack), pickerPage, "picker")
@@ -217,57 +225,103 @@ final class LinuxPanel: PanelWindow {
         status = GTK.label("")
         gtk_widget_set_name(status, "picker-status")
         gtk_box_append(mp_box(content), status)
+
+        // Footer: session/target and sync captions on the left, flat key-hint
+        // buttons and the overflow menu on the right (§24.5).
+        let footer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
+        let captions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
+        gtk_widget_set_hexpand(captions, 1)
+        let sessionLabel = GTK.label(LinuxStrings.pickerSession(session))
+        hint = GTK.label(LinuxStrings.pickerHint)
+        gtk_widget_set_name(hint, "picker-hint")
+        gtk_widget_set_hexpand(hint, 1)
+        gtk_label_set_wrap(mp_label(hint), 0)
+        gtk_label_set_ellipsize(mp_label(hint), PANGO_ELLIPSIZE_END)
+        for caption in [sessionLabel, hint] {
+            gtk_widget_add_css_class(caption, "dim-label")
+            gtk_widget_add_css_class(caption, "caption")
+        }
+        let target = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+        gtk_box_append(mp_box(target), sessionLabel)
+        gtk_box_append(mp_box(target), hint)
+        gtk_box_append(mp_box(captions), target)
+        let syncView = LinuxSyncStatusView(surface: .picker)
+        syncStatusView = syncView
+        gtk_widget_add_css_class(syncView.widget, "mp-picker-footer-sync")
+        syncView.bind(syncStatus, navigate: syncNavigation)
+        let bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!
+        gtk_widget_set_hexpand(syncView.widget, 1)
+        gtk_box_append(mp_box(footer), captions)
+        gtk_box_append(mp_box(bottom), syncView.widget)
+
         actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
-        useButton = GTK.button(LinuxStrings.usePrompt) { [weak self, weak picker] in
+        gtk_widget_set_halign(actions, GTK_ALIGN_END)
+        gtk_widget_set_valign(actions, GTK_ALIGN_END)
+        useButton = GTK.button(LinuxPickerStrings.useHint) { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             self.usePreferred()
         }
-        copyButton = GTK.button(LinuxStrings.copy) { [weak self, weak picker] in
+        copyButton = GTK.button(LinuxPickerStrings.copyHint) { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             self.use(mode: .copyOnly)
         }
-        gtk_widget_set_name(useButton, "picker-use")
-        gtk_widget_set_name(copyButton, "picker-copy")
-        forgetButton = GTK.button(LinuxStrings.forgetValues) { [weak self, weak picker] in
-            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
-            self.transientStatus = nil
-            picker.forgetSelectedValues()
-        }
-        gtk_widget_set_name(forgetButton, "picker-forget-values")
-        mp_accessible_label(forgetButton, LinuxStrings.forgetValues)
-        editButton = GTK.button(LinuxStrings.edit) { [weak self, weak picker] in
+        editButton = GTK.button(LinuxPickerStrings.editHint) { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             picker.editSelected()
         }
-        libraryButton = GTK.button(LinuxStrings.library) { [weak self, weak picker] in
+        libraryButton = GTK.button(LinuxPickerStrings.libraryHint) { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
             picker.openLibrary()
         }
-        gtk_widget_set_name(libraryButton, "picker-library")
-        let settingsButton = GTK.button(LinuxStrings.openSettings) { [weak self, weak picker] in
+        gtk_widget_set_name(useButton, "picker-use")
+        gtk_widget_set_name(copyButton, "picker-copy")
+        gtk_widget_set_name(editButton, "picker-edit")
+        gtk_widget_set_name(libraryButton, "picker-open-folder")
+        mp_accessible_label(copyButton, LinuxStrings.copy)
+        mp_accessible_label(editButton, LinuxStrings.edit)
+        mp_accessible_label(libraryButton, LinuxStrings.library)
+        let menu = gtk_menu_button_new()!
+        gtk_widget_set_name(menu, "picker-menu")
+        gtk_widget_set_tooltip_text(menu, LinuxPickerStrings.moreActions)
+        mp_accessible_label(menu, LinuxPickerStrings.moreActions)
+        gtk_menu_button_set_icon_name(mp_menu_button(menu), "view-more-symbolic")
+        gtk_menu_button_set_has_frame(mp_menu_button(menu), 0)
+        let menuBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
+        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
+                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(menuBox, 8) }
+        forgetButton = menuItem(LinuxStrings.forgetValues, name: "picker-forget-values") {
+            [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
-            openSettings()
+            self.closeMenu()
+            self.transientStatus = nil
+            picker.forgetSelectedValues()
         }
-        gtk_widget_set_name(settingsButton, "picker-settings")
-        for button in [useButton!, copyButton!, forgetButton!, editButton!, libraryButton!,
-                       GTK.button(LinuxStrings.cancel, { [weak self, weak picker] in
-                           guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
-                           self.trace("dismiss.request", reason: "cancel-button")
-                           picker.dismiss()
-                       }),
-                       GTK.button(LinuxStrings.setup, { [weak self, weak picker] in
-                           guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
-                           openSetup()
-                       }), settingsButton] { gtk_box_append(mp_box(actions), button) }
-        gtk_box_append(mp_box(content), actions)
-        hint = GTK.label(LinuxStrings.pickerHint)
-        gtk_widget_set_name(hint, "picker-hint")
-        gtk_box_append(mp_box(content), hint)
-        gtk_box_append(mp_box(content), GTK.label(LinuxStrings.pickerSession(session)))
-        let syncView = LinuxSyncStatusView(surface: .picker)
-        syncStatusView = syncView
-        syncView.bind(syncStatus, navigate: syncNavigation)
-        gtk_box_append(mp_box(content), syncView.widget)
+        mp_accessible_label(forgetButton, LinuxStrings.forgetValues)
+        gtk_box_append(mp_box(menuBox), forgetButton)
+        gtk_box_append(mp_box(menuBox), menuItem(LinuxStrings.setup, name: "picker-setup") {
+            [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            self.closeMenu()
+            openSetup()
+        })
+        gtk_box_append(mp_box(menuBox), menuItem(LinuxStrings.openSettings, name: "picker-settings") {
+            [weak self, weak picker] in
+            guard let self, !self.isDestroyed, let picker, self.picker === picker else { return }
+            self.closeMenu()
+            openSettings()
+        })
+        let popover = gtk_popover_new()!
+        menuPopover = popover
+        gtk_popover_set_child(mp_popover(popover), menuBox)
+        gtk_menu_button_set_popover(mp_menu_button(menu), popover)
+        for button in [useButton!, copyButton!, editButton!, libraryButton!] {
+            gtk_widget_add_css_class(button, "flat")
+            gtk_box_append(mp_box(actions), button)
+        }
+        gtk_box_append(mp_box(actions), menu)
+        gtk_box_append(mp_box(bottom), actions)
+        gtk_box_append(mp_box(footer), bottom)
+        gtk_box_append(mp_box(content), footer)
         gtk_window_set_child(mp_window(window), content)
         if isVisible { syncView.show() }
 
@@ -345,12 +399,22 @@ final class LinuxPanel: PanelWindow {
             gtk_widget_set_sensitive(copyButton, enabled ? 1 : 0)
         }
         let inFill = picker.state == .fill
-        gtk_button_set_label(mp_button(useButton), inFill ? LinuxStrings.deliver : LinuxStrings.usePrompt)
+        gtk_button_set_label(mp_button(useButton), inFill ? LinuxPickerStrings.deliverHint : LinuxPickerStrings.useHint)
+        if inFill {
+            gtk_widget_remove_css_class(useButton, "flat")
+            gtk_widget_add_css_class(useButton, "suggested-action")
+            mp_accessible_label(useButton, LinuxStrings.deliver)
+        } else {
+            gtk_widget_remove_css_class(useButton, "suggested-action")
+            gtk_widget_add_css_class(useButton, "flat")
+            mp_accessible_label(useButton, LinuxStrings.usePrompt)
+        }
         gtk_widget_set_visible(editButton, inFill ? 0 : 1)
         gtk_widget_set_sensitive(editButton, picker.selectionIndex == nil ? 0 : 1)
         gtk_widget_set_visible(libraryButton, inFill ? 0 : 1)
         let deliveryHint = picker.fillModel?.deliveryHint ?? picker.deliveryHint
-        gtk_label_set_text(mp_label(hint), deliveryHint + "\n" + (inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint))
+        gtk_label_set_text(mp_label(hint), deliveryHint + " · " + (inFill ? LinuxPickerStrings.escapeFill : LinuxPickerStrings.escapePicker))
+        gtk_widget_set_tooltip_text(hint, inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint)
     }
 
     private func renderStatus(_ picker: PickerModel) {
@@ -372,10 +436,17 @@ final class LinuxPanel: PanelWindow {
             while let child = gtk_widget_get_first_child(resultsList) { gtk_list_box_remove(mp_list_box(resultsList), child) }
             renderedResults = picker.results
             for result in picker.results {
-                let row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
-                gtk_box_append(mp_box(row), GTK.label((result.favorite ? "★ " : "") + result.title))
-                let detail = ([result.folder] + result.tags.map { "#" + $0 }).filter { !$0.isEmpty }.joined(separator: " · ")
-                gtk_box_append(mp_box(row), GTK.label(detail))
+                let row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+                let icon = gtk_image_new_from_icon_name(
+                    result.favorite ? "starred-symbolic" : "text-x-generic-symbolic")!
+                gtk_widget_set_valign(icon, GTK_ALIGN_CENTER)
+                gtk_box_append(mp_box(row), icon)
+                let text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
+                gtk_box_append(mp_box(text), GTK.label(result.title))
+                let subtitle = GTK.label(resultSubtitle(result))
+                for css in ["dim-label", "caption"] { gtk_widget_add_css_class(subtitle, css) }
+                gtk_box_append(mp_box(text), subtitle)
+                gtk_box_append(mp_box(row), text)
                 gtk_list_box_append(mp_list_box(resultsList), row)
             }
         }
@@ -391,6 +462,30 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_visible(assistantButton, noMatches == nil ? 0 : 1)
         gtk_widget_set_visible(assistantHint, noMatches == nil ? 0 : 1)
         gtk_button_set_label(mp_button(folderButton), LinuxStrings.library)
+    }
+
+    /// folder · #tags · group — the last component names the sync group when
+    /// the prompt is group-owned (§24.5).
+    private func resultSubtitle(_ result: PickerResultRow) -> String {
+        var parts = [result.folder] + result.tags.map { "#" + $0 }
+        if case .group(let group) = result.access { parts.append(group.name) }
+        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// Menu items are real buttons so tests can find and activate them by name.
+    private func menuItem(_ title: String, name: String, action: @escaping () -> Void) -> GTK.Widget {
+        let button = GTK.button(title, action)
+        gtk_widget_set_name(button, name)
+        gtk_widget_add_css_class(button, "flat")
+        if let label = gtk_button_get_child(mp_button(button)) {
+            gtk_widget_set_hexpand(label, 1)
+            gtk_label_set_xalign(mp_label(label), 0)
+        }
+        return button
+    }
+
+    private func closeMenu() {
+        if let menuPopover { gtk_popover_popdown(mp_popover(menuPopover)) }
     }
 
     private func buildForm(_ fill: FillModel) {
@@ -519,6 +614,9 @@ final class LinuxPanel: PanelWindow {
         // Capture runs before GtkText/GtkTextView's input method. Composition
         // keys must reach the focused native control without picker intents.
         guard !isDestroyed, let picker, !focusedHasPreedit else { return false }
+        // An open overflow menu keeps native navigation: its Escape closes the
+        // popover rather than the panel, and arrows select menu items.
+        if let menuPopover, gtk_widget_get_visible(menuPopover) != 0 { return false }
         let kind = focusedControl.map { controls[$0].kind }
         guard let intent = LinuxPickerKeys.intent(for: key, modifiers: modifiers, state: picker.state, fieldKind: kind) else { return false }
         if intent == .usePreferred, let focus = gtk_window_get_focus(mp_window(window)), mp_is_button(focus) != 0 {
