@@ -73,7 +73,7 @@ final class MacMainMenuTests: XCTestCase {
         XCTAssertEqual(titles(menu), [MainMenuStrings.about, MainMenuStrings.checkForUpdates, "-",
             MainMenuStrings.settings, "-", MainMenuStrings.services, "-", MainMenuStrings.hide,
             MainMenuStrings.hideOthers, MainMenuStrings.showAll, "-", MainMenuStrings.quit])
-        try check(row(menu, MainMenuStrings.about), action: "orderFrontStandardAboutPanel:",
+        try check(row(menu, MainMenuStrings.about), action: "showAboutPanel:",
                   key: "", modifiers: .command)
         try check(row(menu, MainMenuStrings.checkForUpdates), action: "checkForUpdates:",
                   key: "", modifiers: .command)
