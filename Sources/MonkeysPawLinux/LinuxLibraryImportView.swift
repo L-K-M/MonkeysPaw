@@ -6,6 +6,7 @@ import MonkeysPawCore
 /// Widgets only: selections enter the graph's import state; report opens use
 /// its composition callback and the Library editor's existing discard guard.
 final class LinuxLibraryImportView {
+    var onChange: (() -> Void)?
     let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
     let report = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
     private let files = GTK.button(LinuxImportStrings.importAction) {}
@@ -85,7 +86,7 @@ final class LinuxLibraryImportView {
     private func render() {
         guard let state else { return }
         isRendering = true
-        defer { isRendering = false }
+        defer { isRendering = false; onChange?() }
         for widget in [files, folder, destination] { gtk_widget_set_sensitive(widget, state.canImport ? 1 : 0) }
         if renderedDestinations != state.destinations {
             renderedDestinations = state.destinations

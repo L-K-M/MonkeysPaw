@@ -4,6 +4,7 @@ enum LibraryEditorDialog: Equatable {
     case decision(EditorPendingDecision, status: EditorStatus)
     case conflict(EditorConflict, status: EditorStatus)
     case fileCommand(LibraryFileCommandRequest)
+    case newPrompt(LibraryNewPromptRequest)
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
@@ -14,6 +15,7 @@ enum LibraryEditorDialog: Equatable {
         case (.fileCommand(let left), .fileCommand(let right)):
             // Reopened forms must replace their native sheet and callback token.
             return left.id == right.id && left == right
+        case (.newPrompt(let left), .newPrompt(let right)): return left == right
         default: return false
         }
     }
@@ -24,6 +26,7 @@ enum LibraryEditorDialog: Equatable {
         case .conflict(let conflict, _):
             return conflict.kind == .deleted ? "The prompt was deleted on disk" : "The prompt changed on disk"
         case .fileCommand(let request): return request.title
+        case .newPrompt: return LibraryCommandStrings.newPromptTitle
         }
     }
 
@@ -34,7 +37,7 @@ enum LibraryEditorDialog: Equatable {
             switch decision.action {
             case .quit: text = "Save or discard your edits before quitting. Cancel keeps Library open."
             case .revert: text = "Save or discard your edits before reloading the prompt from disk."
-            case .open, .close, .rename, .move, .delete, .librarySwitch:
+            case .open, .close, .rename, .move, .delete, .create, .librarySwitch:
                 text = "Save or discard your edits before continuing. Cancel keeps your draft."
             }
             return text + failureMessage(status)
@@ -46,6 +49,7 @@ enum LibraryEditorDialog: Equatable {
             if let reason = conflict.readOnlyReason { text += " " + EditorStrings.readOnly(reason) }
             return text + failureMessage(status)
         case .fileCommand(let request): return request.message
+        case .newPrompt(let request): return LibraryCommandStrings.newPromptHint(request.folder)
         }
     }
 
@@ -55,6 +59,7 @@ enum LibraryEditorDialog: Equatable {
         case .conflict(let conflict, _):
             return conflict.choices.map(LibraryEditorResponse.conflict) + [.dismissConflict]
         case .fileCommand(let request): return request.responses
+        case .newPrompt: return [.createPrompt(LibraryStrings.newPromptDefaultTitle), .cancelFileCommand]
         }
     }
 
@@ -63,6 +68,7 @@ enum LibraryEditorDialog: Equatable {
         switch (self, response) {
         case (.fileCommand(let request), .rename): return request.command == .rename
         case (.fileCommand(let request), .move): return request.command == .move
+        case (.newPrompt, .createPrompt): return true
         default: return responses.contains(response)
         }
     }
@@ -79,6 +85,7 @@ enum LibraryEditorResponse: Equatable {
     /// Native dismissal leaves Core's conflict and draft available for repair.
     case dismissConflict
     case rename(String), move(String), delete, cancelFileCommand
+    case createPrompt(String)
 
     var title: String {
         switch self {
@@ -92,6 +99,7 @@ enum LibraryEditorResponse: Equatable {
         case .move: return LibraryCommandStrings.moveButton
         case .delete: return LibraryCommandStrings.deleteButton
         case .cancelFileCommand: return LibraryCommandStrings.cancel
+        case .createPrompt: return LibraryCommandStrings.create
         }
     }
 }

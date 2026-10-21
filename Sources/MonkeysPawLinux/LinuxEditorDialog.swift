@@ -1,14 +1,22 @@
 #if os(Linux)
 import CGtk
+import Foundation
 import MonkeysPawCore
+
+struct LinuxNewPromptRequest: Equatable {
+    let id = UUID()
+    let folder: RelativePath
+}
 
 enum LinuxEditorDialogState: Equatable {
     case decision(EditorPendingDecision, status: EditorStatus)
     case conflict(EditorConflict, status: EditorStatus)
+    case newPrompt(LinuxNewPromptRequest)
 
     var title: String {
         switch self {
         case .decision: return "Save your edits?"
+        case .newPrompt: return LinuxStrings.newPromptTitle
         case .conflict(let conflict, _):
             return conflict.kind == .deleted ? "The prompt was deleted on disk" : "The prompt changed on disk"
         }
@@ -21,10 +29,11 @@ enum LinuxEditorDialogState: Equatable {
             switch decision.action {
             case .quit: text = "Save or discard your edits before quitting. Cancel keeps Library open."
             case .revert: text = "Save or discard your edits before reloading the prompt from disk."
-            case .open, .close, .rename, .move, .delete, .librarySwitch:
+            case .open, .close, .rename, .move, .delete, .create, .librarySwitch:
                 text = "Save or discard your edits before continuing. Cancel keeps your draft."
             }
             return text + failureMessage(status)
+        case .newPrompt(let request): return LinuxStrings.newPromptHint(request.folder)
         case .conflict(let conflict, let status):
             var text = conflict.kind == .deleted
                 ? "Keep Mine recreates the file. Save as Copy keeps your edits in a new file. Discard closes this draft."
@@ -38,6 +47,7 @@ enum LinuxEditorDialogState: Equatable {
     var responses: [LinuxEditorResponse] {
         switch self {
         case .decision: return [.decision(.save), .decision(.discard), .decision(.cancel)]
+        case .newPrompt: return [.createPrompt(LinuxStrings.newPromptDefaultTitle), .cancelNewPrompt]
         case .conflict(let conflict, _):
             return conflict.choices.map(LinuxEditorResponse.conflict) + [.dismissConflict]
         }
@@ -54,6 +64,7 @@ enum LinuxEditorResponse: Equatable {
     case conflict(EditorConflictChoice)
     /// Native dismissal leaves Core's conflict and draft available for repair.
     case dismissConflict
+    case createPrompt(String), cancelNewPrompt
 
     var title: String {
         switch self {
@@ -63,6 +74,8 @@ enum LinuxEditorResponse: Equatable {
         case .conflict(.keepMine): return "Keep Mine"
         case .conflict(.takeTheirs): return "Take Theirs"
         case .conflict(.saveAsCopy): return "Save Mine as Copy"
+        case .createPrompt: return LinuxStrings.newPromptCreate
+        case .cancelNewPrompt: return LinuxEditorStrings.cancel
         }
     }
 }
@@ -73,6 +86,7 @@ final class LinuxEditorDialog {
     private let window: GTK.Widget
     private var isDestroyed = false
     private var hasResponded = false
+    private var hasPreedit = false
 
     init(parent: GTK.Widget, state: LinuxEditorDialogState, respond: @escaping (LinuxEditorResponse) -> Void) {
         window = gtk_window_new()!
@@ -82,20 +96,29 @@ final class LinuxEditorDialog {
         gtk_window_set_modal(mp_window(window), 1)
         gtk_window_set_destroy_with_parent(mp_window(window), 1)
         GTK.onSignal(window, "destroy") { [weak self] in self?.isDestroyed = true }
+        let input: GTK.Widget?
+        if case .newPrompt = state {
+            input = gtk_entry_new()!
+        } else { input = nil }
         let respondOnce: (LinuxEditorResponse) -> Void = { [weak self] response in
             guard let self, !self.isDestroyed, !self.hasResponded else { return }
             self.hasResponded = true
-            respond(response)
+            if case .createPrompt = response, let input {
+                respond(.createPrompt(String(cString: mp_entry_text(input))))
+            } else { respond(response) }
         }
         let cancel: LinuxEditorResponse = {
-            if case .decision = state { return .decision(.cancel) }
-            return .dismissConflict
+            switch state {
+            case .decision: return .decision(.cancel)
+            case .conflict: return .dismissConflict
+            case .newPrompt: return .cancelNewPrompt
+            }
         }()
         GTK.onCloseRequested(window) { respondOnce(cancel) }
-        GTK.observeKeys(window) { key, modifiers in
+        GTK.observeKeys(window) { [weak self] key, modifiers in
             let relevant = GDK_CONTROL_MASK.rawValue | GDK_SHIFT_MASK.rawValue | GDK_ALT_MASK.rawValue
                 | GDK_SUPER_MASK.rawValue | GDK_META_MASK.rawValue | GDK_HYPER_MASK.rawValue
-            guard key == UInt32(GDK_KEY_Escape), modifiers & relevant == 0 else { return false }
+            guard self?.hasPreedit == false, key == UInt32(GDK_KEY_Escape), modifiers & relevant == 0 else { return false }
             respondOnce(cancel)
             return true
         }
@@ -106,6 +129,17 @@ final class LinuxEditorDialog {
         gtk_widget_set_name(message, "library-dialog-message")
         gtk_label_set_max_width_chars(mp_label(message), 64)
         gtk_box_append(mp_box(content), message)
+        if let input {
+            gtk_widget_set_name(input, "library-new-prompt-title")
+            mp_accessible_label(input, LinuxStrings.promptTitle)
+            mp_entry_set_text(input, LinuxStrings.newPromptDefaultTitle)
+            gtk_box_append(mp_box(content), GTK.label(LinuxStrings.promptTitle))
+            gtk_box_append(mp_box(content), input)
+            if let text = mp_entry_text_delegate(input) {
+                GTK.onPreeditChanged(text) { [weak self] active in self?.hasPreedit = active }
+            }
+            GTK.onSignal(input, "activate") { respondOnce(.createPrompt("")) }
+        }
         let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         var cancelButton: GTK.Widget?
         for (position, response) in state.responses.enumerated() {
@@ -118,7 +152,10 @@ final class LinuxEditorDialog {
         gtk_box_append(mp_box(content), buttons)
         gtk_window_set_child(mp_window(window), content)
         gtk_window_present(mp_window(window))
-        if let cancelButton { gtk_widget_grab_focus(cancelButton) }
+        if let input {
+            gtk_widget_grab_focus(input)
+            gtk_editable_select_region(OpaquePointer(input), 0, -1)
+        } else if let cancelButton { gtk_widget_grab_focus(cancelButton) }
     }
 
     func destroy() {

@@ -421,6 +421,10 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertTrue(input.hasMarkedText())
         let controller = try controller()
         XCTAssertFalse(controller.handleKeyEvent(try key(kVK_Escape, in: window)))
+        XCTAssertFalse(controller.handleKeyEvent(try key(kVK_ANSI_N, characters: "n", modifiers: .command, in: window)))
+        let newPrompt = NSMenuItem(title: LibraryCommandStrings.newPrompt,
+            action: #selector(AppDelegate.newLibraryPrompt), keyEquivalent: "n")
+        XCTAssertFalse(delegate.validateLibraryFileMenuItem(newPrompt, in: window))
         XCTAssertFalse(controller.handleKeyEvent(try key(kVK_ANSI_F, characters: "F", modifiers: [.command, .shift], in: window)))
         XCTAssertEqual(presentation.snapshot.filter, "one")
         XCTAssertEqual(presentation.snapshot.selectedPrompt?.favorite, false)
@@ -432,6 +436,57 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertTrue(controller.handleKeyEvent(try key(kVK_Escape, in: window)))
         XCTAssertEqual(presentation.snapshot.filter, "")
         XCTAssertTrue(window.isVisible)
+    }
+
+    func testCommandNUsesSharedGateAndRefusesOtherWindowsAndDialogs() throws {
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let presentation = try presentation()
+        let window = try window()
+        let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { other.close() }
+        XCTAssertTrue(LibraryStrings.keyboardHint.contains("⌘N: new prompt"))
+        XCTAssertTrue(presentation.canCreatePrompt, "An empty library can create its first prompt")
+        XCTAssertFalse(controller.handleKeyEvent(try key(kVK_ANSI_N, characters: "n", modifiers: .command, in: other)))
+        XCTAssertNil(presentation.newPromptRequest)
+        let event = try key(kVK_ANSI_N, characters: "n", modifiers: .command, in: window)
+        XCTAssertTrue(controller.handleKeyEvent(event))
+        let request = try XCTUnwrap(presentation.newPromptRequest)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        XCTAssertFalse(controller.handleKeyEvent(event))
+        XCTAssertEqual(presentation.newPromptRequest?.id, request.id)
+        presentation.resolveNewPrompt(.cancelFileCommand, id: request.id)
+        XCTAssertTrue(presentation.canCreatePrompt)
+        presentation.setLibraryAvailable(false)
+        XCTAssertFalse(controller.handleKeyEvent(event))
+        XCTAssertNil(presentation.newPromptRequest)
+        presentation.setLibraryAvailable(true)
+        presentation.didHide()
+        XCTAssertFalse(presentation.canCreatePrompt)
+    }
+
+    func testImportChooserPublishesNewPromptToolbarGateChanges() throws {
+        try start()
+        delegate.showLibrary()
+        let presentation = try presentation()
+        let imports = try XCTUnwrap(presentation.imports)
+        var finishChoosing: (([URL]) -> Void)?
+        imports.onChoose = { done in finishChoosing = done; return {} }
+        var publications = 0
+        let subscription = presentation.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+        XCTAssertTrue(presentation.canCreatePrompt)
+        imports.choose()
+        XCTAssertGreaterThan(publications, 0)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        presentation.requestNewPrompt()
+        XCTAssertNil(presentation.newPromptRequest)
+        let choosingPublications = publications
+        try XCTUnwrap(finishChoosing)([])
+        XCTAssertGreaterThan(publications, choosingPublications)
+        XCTAssertTrue(presentation.canCreatePrompt)
     }
 
     func testLibrarySwitchRebindsExistingWindowAndRetiresOldBrowserAndCallbacks() throws {

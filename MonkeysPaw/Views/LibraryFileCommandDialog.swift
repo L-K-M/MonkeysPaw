@@ -1,6 +1,11 @@
 import AppKit
 
 extension LibraryWindowController {
+    static func configureNewPromptAlert(_ alert: NSAlert) {
+        let input = NSTextField(string: LibraryStrings.newPromptDefaultTitle)
+        configureTextInput(alert, input: input, label: LibraryCommandStrings.promptTitle)
+    }
+
     static func configureFileCommandAlert(_ alert: NSAlert, request: LibraryFileCommandRequest) {
         let input: NSTextField
         let label: String
@@ -17,6 +22,10 @@ extension LibraryWindowController {
             label = LibraryCommandStrings.folder
         case .delete: return
         }
+        configureTextInput(alert, input: input, label: label)
+    }
+
+    private static func configureTextInput(_ alert: NSAlert, input: NSTextField, label: String) {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 54))
         let caption = NSTextField(labelWithString: label)
         caption.frame = NSRect(x: 0, y: 32, width: 320, height: 20)
@@ -35,6 +44,7 @@ extension LibraryWindowController {
         switch response {
         case .rename: return .rename(text)
         case .move: return .move(text)
+        case .createPrompt: return .createPrompt(text)
         default: return response
         }
     }

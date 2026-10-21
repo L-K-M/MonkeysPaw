@@ -9,6 +9,7 @@ final class LinuxLibraryCommands {
     var onChange: (() -> Void)?
     private(set) var message: String?
     var hasDialog: Bool { dialog != nil }
+    var isScopeDropPending: Bool { pendingDrop != nil }
 
     private let parent: GTK.Widget
     private weak var editor: EditorModel?

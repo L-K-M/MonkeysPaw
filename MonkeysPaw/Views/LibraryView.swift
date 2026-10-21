@@ -59,6 +59,9 @@ struct LibraryView: View {
                 .focused($focusedPane, equals: .filter)
                 .accessibilityLabel(LibraryStrings.filter)
                 .accessibilityIdentifier("library-filter")
+            Button(LibraryCommandStrings.newPrompt, action: presentation.requestNewPrompt)
+                .disabled(!presentation.canCreatePrompt)
+                .accessibilityIdentifier("library-new-prompt")
             Button(presentation.snapshot.selectedPrompt?.favorite == true
                 ? LibraryStrings.removeFavorite : LibraryStrings.addFavorite,
                 systemImage: presentation.snapshot.selectedPrompt?.favorite == true ? "star.fill" : "star",
