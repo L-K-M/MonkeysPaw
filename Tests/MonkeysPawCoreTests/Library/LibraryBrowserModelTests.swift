@@ -597,6 +597,23 @@ final class LibraryBrowserModelTests: XCTestCase {
         }
     }
 
+    func testNewPromptDestinationMapsEverySectionKindAndRejectsDeactivation() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("---\ntitle: Alpha\ntags: [code]\n---\nBody", at: "work/deep/a.md")
+        try h.index.rebuild()
+        let model = browser(h)
+        for section in [LibrarySectionID.all, .favourites, .recent, .conflicts, .tag("code")] {
+            model.selectSection(section)
+            XCTAssertEqual(model.newPromptDestination(), RelativePath(""), "\(section)")
+        }
+        model.selectSection(.folder("work"))
+        XCTAssertEqual(model.newPromptDestination(), "work")
+        model.selectSection(.folder("work/deep"))
+        XCTAssertEqual(model.newPromptDestination(), "work/deep")
+        model.deactivate()
+        XCTAssertNil(model.newPromptDestination())
+    }
+
     func testFiveThousandEntryFilterSmokeHasNoFilesystemWork() throws {
         let h = PromptFlowHarness()
         for number in 0..<5_000 {

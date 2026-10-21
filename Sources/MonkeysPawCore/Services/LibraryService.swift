@@ -168,8 +168,7 @@ public final class LibraryService: PromptFavoriteEditing {
                 try requireMutation(at: source.relativePath.string, identity: current?.entry.identity)
             }
             let folder = destination == .privateCopy ? "" : (current?.entry.folder ?? "")
-            let name = PromptCreation.relativePath(title: prepared.content.document.frontMatter.title, now: clock.now())
-            let path = (folder.isEmpty ? "" : folder + "/") + name
+            let path = creationPath(title: prepared.content.document.frontMatter.title, in: folder)
             do {
                 let outcome = try editingCommit {
                     try createDocument(prepared.content.document, near: path, naming: .preferredPath,
@@ -224,12 +223,20 @@ public final class LibraryService: PromptFavoriteEditing {
     /// Create from a picker query with the usual filename and first-save rules.
     /// Raced destinations survive; alternate-name or publication exhaustion
     /// returns LibraryError.copyLimitReached. Other failures are not retried.
-    public func createPrompt(titled title: String, body: String) throws -> LibraryEntry {
+    public func createPrompt(titled title: String, body: String,
+                             in folder: RelativePath = RelativePath("")) throws -> LibraryEntry {
         try locked {
-            let path = PromptCreation.relativePath(title: title, now: clock.now())
+            let path = creationPath(title: title, in: folder.string)
             let document = try PromptCodec.newDocument(title: title, body: body)
             return try createDocument(document, near: path, naming: .preferredPath)
         }
+    }
+
+    /// Every title-based creation composes the same way: an empty folder is the
+    /// library root. The composed path still passes validation and access checks.
+    private func creationPath(title: String, in folder: String) -> String {
+        let name = PromptCreation.relativePath(title: title, now: clock.now())
+        return (folder.isEmpty ? "" : folder + "/") + name
     }
 
     private func createDocument(_ document: PromptDocument, near path: String,
