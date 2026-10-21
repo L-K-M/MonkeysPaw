@@ -398,6 +398,7 @@ final class LinuxLibraryWindow {
             ? LinuxStrings.newPromptDefaultTitle : input
         let revision = bindingRevision
         editor.request(.create) { [weak self] result in
+            // A close, open or hide during the guard's save supersedes creation.
             guard let self, self.bindingRevision == revision, result == .allowed,
                   self.canCreatePrompt else { return }
             guard let selection = self.createPrompt(title, request.folder) else {

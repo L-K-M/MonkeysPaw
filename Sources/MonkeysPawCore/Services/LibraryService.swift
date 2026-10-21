@@ -220,7 +220,8 @@ public final class LibraryService: PromptFavoriteEditing {
         try locked { try saveDocument(document, at: path, mode: .createOnly) }
     }
 
-    /// Create from a picker query with the usual filename and first-save rules.
+    /// Create from a picker query or Library title in `folder` (root by default)
+    /// with the usual filename and first-save rules.
     /// Raced destinations survive; alternate-name or publication exhaustion
     /// returns LibraryError.copyLimitReached. Other failures are not retried.
     public func createPrompt(titled title: String, body: String,

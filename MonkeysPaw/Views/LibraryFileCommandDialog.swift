@@ -4,6 +4,7 @@ extension LibraryWindowController {
     static func configureNewPromptAlert(_ alert: NSAlert) {
         let input = NSTextField(string: LibraryStrings.newPromptDefaultTitle)
         configureTextInput(alert, input: input, label: LibraryCommandStrings.promptTitle)
+        input.setAccessibilityIdentifier("library-new-prompt-title")
     }
 
     static func configureFileCommandAlert(_ alert: NSAlert, request: LibraryFileCommandRequest) {

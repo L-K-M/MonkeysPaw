@@ -441,6 +441,7 @@ final class LibraryViewState: ObservableObject {
         let revision = bindingRevision
         // Ask for the title first; only an approved draft guard may write a file.
         editor.request(.create) { [weak self] result in
+            // A close, open or hide during the guard's save supersedes creation.
             guard let self, self.isActive, self.bindingRevision == revision,
                   result == .allowed, self.canCreatePrompt else { return }
             guard let selection = self.createPrompt(title, request.folder) else {
