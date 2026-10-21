@@ -6,7 +6,7 @@
 |---|---|
 | Picker panel (hidden at start, `PANEL_SIZE = 640×420`) | search field, result list, preview pane, footer with key hints, the paste target, and sync status |
 | Fill form (same panel, next state) | one control per field, live preview, Deliver / Copy / Cancel |
-| Library (menu bar or tray → "Library…", or `⌘L` / `Ctrl+L` in the picker) | sidebar: All, Favourites, Recent, Conflicts, folders, groups, tags; list; editor with tabs Edit · Preview · Fields · History |
+| Library (menu bar or tray → "Library…", or `⌘L` / `Ctrl+L` in the picker) | sidebar: All, Favourites, Recent, Conflicts, folders, groups, tags; list; Edit/Preview editor; Fields, History and Assistant inspector |
 | Assistant (panel inside Library) | write from a description, review findings, improve diff |
 | Settings | General · Shortcuts · Delivery · Assistant · Account (sign in, devices, groups, members, invites) |
 | Setup | §6.4 |
@@ -115,9 +115,9 @@ Per OS:
     silently in text fields (Vervellum).
 - **Linux.** GTK4 through the shim:
   - `GtkListBox` with single selection for the picker
-  - `GtkEntry`, `GtkComboBoxText`, `GtkTextView`
-  - `GtkNotebook` for tabs
-  - `GtkApplication` actions for menus
+  - `GtkSearchEntry`, `GtkEntry`, `GtkComboBoxText`, `GtkTextView`
+  - `GtkHeaderBar`, nested `GtkPaned` panes and `GtkStack` pages
+  - Window and application actions for menus and accelerators
 
   Choose **Settings…** in the picker footer, press **Ctrl+,** in the picker,
   or use your launcher's desktop action to open or raise the reusable General
@@ -133,7 +133,7 @@ Per OS:
   **Show Picker** toggling the picker, the shared library status row opening the
   Library window (§11.7) when available, and **Settings…**, **Setup…** and
   **Quit** actions.
-  Without a tray watcher, the hotkey, desktop actions and picker Settings button
+  Without a tray watcher, the hotkey, desktop actions and picker Settings menu item
   remain the entry points.
 
   Linux's **Repeat Last Prompt** desktop action and repeat shortcut share the
