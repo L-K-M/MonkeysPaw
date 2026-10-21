@@ -795,7 +795,13 @@ The owner's standalone `swift -O` probe accepted `device` and a generated
 UUID with both bound-method and explicit-closure CharacterSet checks.
 That probe does not reproduce the compiled app's failure.
 
-- [ ] Run the actual Core `SecretAccountTests` in Release configuration.
+The fix removes forced validation from the typed UUID factories. Why the
+original validator rejected the UUID in the installed app remains unconfirmed;
+passing automated tests alone does not establish owner acceptance.
+
+- [x] Before the fix (`5b1eee0f`), the Core Release tests passed on Linux
+      Swift 6.4 and Xcode 26 CI (run `39667130574`, job `119455091349`).
+      Neither reproduced the owner's Xcode 27 app failure.
 - [ ] Rebuild and install from the fixed main commit, retry Sign In, then
       quit/reopen and confirm the saved connection resumes without a crash.
 - [ ] Confirm a failed sign-in remains an error in Account, without exposing

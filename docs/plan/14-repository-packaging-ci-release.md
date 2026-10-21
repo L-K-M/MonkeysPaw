@@ -140,6 +140,8 @@ Rollout by milestone:
     cancels superseded PR runs only, and `timeout-minutes` on every job.
   - Actions are pinned to commit SHAs, with `persist-credentials: false`.
   - macOS job: `macos-26`, with Xcode pinned.
+    Core also runs `SecretAccountTests` in Release configuration to exercise
+    optimized UUID account factories and stored-reference round trips.
   - `macos-artifacts` builds Release artifacts with test version `0.1.0-beta.7`
     and build number `42` on PRs and main, using Xcode 26.0 and system
     `/bin/bash` for the script and shell checks. It checks both architectures,

@@ -136,6 +136,9 @@ wire-path error can be recorded; acknowledged paths must be NFC sync paths.
   connection: normalized server URL, user ID, username, device ID/name and a
   local connection UUID. That UUID names `device:<UUID>` in `SecretStore`;
   no password, device token or invite token enters these records.
+  Device and provider account factories construct their canonical UUID names
+  without forced throwing validation. Raw strings and decoded account references
+  still pass the existing nonempty ASCII component validation.
   The optional `activation` is `inactive` or `enabled`; existing version-1
   connections without it infer enabled only when `account` is non-null.
   Login stages an inactive connection, then enables it after reserved-folder
