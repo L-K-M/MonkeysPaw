@@ -14,7 +14,7 @@ public enum EditorStatus: Equatable, Sendable {
 /// The same guard serves navigation and the model's stamped file commands.
 public enum EditorDiscardAction: Equatable, Sendable {
     case open(LibraryPromptSelection)
-    case close, revert, rename, move, delete, librarySwitch, quit
+    case close, revert, rename, move, delete, create, librarySwitch, quit
 }
 
 public enum EditorDecision: Equatable, Sendable { case save, discard, cancel }
@@ -669,7 +669,7 @@ public final class EditorModel: @unchecked Sendable {
         case .close: resetEditor(); changed()
         case .revert: load(.replace)
         case .librarySwitch: resetEditor(); deactivate()
-        case .rename, .move, .delete, .quit: break
+        case .rename, .move, .delete, .create, .quit: break
         }
         request.completion(.allowed)
     }

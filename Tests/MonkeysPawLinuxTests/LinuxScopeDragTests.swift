@@ -236,8 +236,13 @@ final class LinuxScopeDragTests: XCTestCase {
         drain()
         let otherPayload = try dragPayload(path: "b.md")
         rig.editor.edit(rig.editor.state.source! + "\nKeep current")
+        let newPrompt = try settingsWidget("library-new-prompt", in: rig.window)
         XCTAssertTrue(try drop(otherPayload, onto: .group(ScopeDragRig.team)))
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_sensitive(newPrompt) == 0
+            && self.rig.editor.state.pendingDecision != nil })
         try decide(.cancel, action: nil)
+        XCTAssertNotEqual(gtk_widget_get_sensitive(newPrompt), 0,
+            "Cancelling the pending drop must refresh the shared New prompt gate")
         XCTAssertEqual(rig.selection.relativePath, "a.md")
         XCTAssertTrue(rig.editor.state.source!.contains("Keep current"))
         XCTAssertTrue(try drop(dragPayload(path: "b.md"), onto: .group(ScopeDragRig.team)))

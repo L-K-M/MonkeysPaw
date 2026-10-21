@@ -13,9 +13,10 @@ enum LibraryStrings {
     static let invalid = "Invalid"
     static let noSelection = "Select a prompt to edit it."
     static let noRows = "No prompts in this view."
+    static let newPromptDefaultTitle = "New prompt"
     static let addFavorite = "Add to Favourites"
     static let removeFavorite = "Remove from Favourites"
-    static let keyboardHint = "↑↓: select · ⌘S: save · ⌘⇧F: favourite · ⌘⇧A: Assistant · Esc: close Assistant, clear filter, then close"
+    static let keyboardHint = "↑↓: select · ⌘N: new prompt · ⌘S: save · ⌘⇧F: favourite · ⌘⇧A: Assistant · Esc: close Assistant, clear filter, then close"
 
     static func role(_ role: AssistantGroupRole) -> String {
         switch role {

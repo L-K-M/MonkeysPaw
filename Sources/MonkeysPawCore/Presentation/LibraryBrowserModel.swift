@@ -155,6 +155,13 @@ public final class LibraryBrowserModel: @unchecked Sendable {
         }
     }
 
+    /// New prompts land in the selected folder or editable group. Every other
+    /// section, including a viewer group, falls back to the library root.
+    public func newPromptDestination() -> RelativePath? {
+        guard isActive else { return nil }
+        return moveDestination(for: selectedSection) ?? RelativePath("")
+    }
+
     /// The open editor owns its buffer and stamped save. Unrelated prompts
     /// continue through the favourite port; only committed entries enter the index.
     @discardableResult

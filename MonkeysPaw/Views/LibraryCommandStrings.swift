@@ -4,6 +4,10 @@ import MonkeysPawCore
 /// Copy for History and the native file-command forms and outcomes.
 enum LibraryCommandStrings {
     static let fileMenu = "File"
+    static let newPrompt = "New Prompt…"
+    static let newPromptTitle = "New prompt"
+    static let create = "Create"
+    static let promptTitle = "Title"
     static let rename = "Rename…"
     static let move = "Move…"
     static let delete = "Delete…"
@@ -47,6 +51,10 @@ enum LibraryCommandStrings {
     static let relocated = "The file moved, but its destination changed or could not be checked. Resolve the conflict or check the library before retrying."
 
     static func deleteTitle(_ path: String) -> String { "Delete “\(path)”?" }
+    static func newPromptHint(_ folder: RelativePath) -> String {
+        folder.string.isEmpty ? "Creates the prompt in the library root."
+            : "Creates the prompt in \(folder.string)."
+    }
     static func deleteHint(_ path: String) -> String {
         "Delete “\(path)” from your library? This removes the file and closes the editor. Its history is kept."
     }

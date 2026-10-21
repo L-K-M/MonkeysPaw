@@ -107,6 +107,19 @@ final class GroupAccessServiceTests: XCTestCase {
         XCTAssertNil(browser.moveDestination(for: .all))
     }
 
+    func testBrowserNewPromptDestinationUsesEditableGroupAndViewerFallsBackToRoot() throws {
+        let rig = try GroupAccessRig(role: .editor)
+        let browser = LibraryBrowserModel(index: rig.index, usage: rig.base.usage,
+            favorites: rig.base.library, main: rig.main, editor: rig.model)
+        browser.selectSection(.group(SyncTestValues.group))
+        XCTAssertEqual(browser.newPromptDestination(), "Groups/Team")
+        try rig.role(.viewer)
+        XCTAssertEqual(browser.newPromptDestination(), RelativePath(""),
+            "A viewer group's new-prompt destination is the library root")
+        browser.deactivate()
+        XCTAssertNil(browser.newPromptDestination())
+    }
+
     func testNewLocalGroupFavoriteSurvivesRestartAndIngestWithoutUIByteWrites() throws {
         for initial in [nil, false, true] as [Bool?] {
             let rig = try GroupAccessRig(role: .editor)

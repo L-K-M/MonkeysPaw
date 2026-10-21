@@ -29,6 +29,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
          conflictProvider: LibraryViewState.ConflictProvider? = nil,
          syncStatus: SyncStatusViewState? = nil,
          importChooser: @escaping ImportChooser = MacImportChooser.choose,
+         createPrompt: @escaping (String, RelativePath) -> LibraryPromptSelection? = { _, _ in nil },
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
         self.activation = activation
@@ -37,7 +38,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         presentation = LibraryViewState(model: model, editor: editor, libraryPath: libraryPath, available: available,
             mainThread: mainThread, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
             conflictProvider: conflictProvider, syncStatus: syncStatus,
-            revealLibrary: revealLibrary)
+            createPrompt: createPrompt, revealLibrary: revealLibrary)
         super.init()
         connectImportChooser()
         presentation.onEditorChange = { [weak self] in self?.updateDialog() }
@@ -147,6 +148,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
                 desired = .conflict(conflict, status: state.status)
             } else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status) }
             else if let request = self.presentation.fileCommandRequest { desired = .fileCommand(request) }
+            else if let request = self.presentation.newPromptRequest { desired = .newPrompt(request) }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
             self.endDialog()
@@ -173,6 +175,8 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
                         }
                     case (.fileCommand(let request), _):
                         self.presentation.resolveFileCommand(response, id: request.id)
+                    case (.newPrompt(let request), _):
+                        self.presentation.resolveNewPrompt(response, id: request.id)
                     default: break
                     }
                 }
@@ -211,6 +215,12 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
         if event.keyCode == UInt16(kVK_Escape), flags.isEmpty {
             guard activeDialog == nil else { return false }
             escape()
+            return true
+        }
+        if flags == [.command],
+           event.keyCode == UInt16(kVK_ANSI_N) || event.charactersIgnoringModifiers?.lowercased() == "n" {
+            guard activeDialog == nil, window.attachedSheet == nil, presentation.canCreatePrompt else { return false }
+            presentation.requestNewPrompt()
             return true
         }
         if flags == [.command],
@@ -266,13 +276,14 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             let button = alert.addButton(withTitle: response.title)
             // Return saves unsaved edits; overwriting an external version requires an explicit choice.
             switch response {
-            case .decision(.save), .rename, .move: button.keyEquivalent = "\r"
+            case .decision(.save), .rename, .move, .createPrompt: button.keyEquivalent = "\r"
             case .decision(.cancel), .dismissConflict, .cancelFileCommand: button.keyEquivalent = "\u{1b}"
             case .decision(.discard), .conflict, .delete: button.keyEquivalent = ""
             }
             button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard) || response == .delete
         }
         if case .fileCommand(let request) = dialog { configureFileCommandAlert(alert, request: request) }
+        if case .newPrompt = dialog { configureNewPromptAlert(alert) }
         return alert
     }
 
@@ -290,8 +301,11 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             switch dialog {
             case .decision: done(.decision(.cancel))
             case .conflict: done(.dismissConflict)
-            case .fileCommand: done(.cancelFileCommand)
+            case .fileCommand, .newPrompt: done(.cancelFileCommand)
             }
+        }
+        if case .newPrompt = dialog {
+            (alert.window.initialFirstResponder as? NSTextField)?.selectText(nil)
         }
         return {
             guard alert.window.sheetParent === window else { return }

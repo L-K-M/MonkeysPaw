@@ -41,9 +41,11 @@ final class MacLibrarySwitchTests: XCTestCase {
                        recordLegacySetup: @escaping () -> Void = {},
                        scheduler: MonkeysPawCore.Scheduler = SwitchScheduler(),
                        focusSource: WorkspaceFocusTracker.Source? = nil,
+                       editorDialog: @escaping LibraryWindowController.DialogPresenter = LibraryWindowController.presentEditorDialog,
                        onWatcherStart: @escaping (URL) throws -> Void = { _ in }) throws -> PickerModel {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, legacyFirstRun: legacyFirstRun,
             recordLegacySetup: recordLegacySetup, launchURI: { [weak self] in self?.launched.append($0) },
+            editorDialog: editorDialog,
             makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: focusSource ?? .init(frontmost: { nil }, activate: { _ in
                     XCTFail("Library switch tests must not activate an external app")
@@ -207,6 +209,68 @@ final class MacLibrarySwitchTests: XCTestCase {
         XCTAssertFalse(panel.isVisible)
         XCTAssertTrue(launched.isEmpty)
         XCTAssertFalse(try RootedFileStore(root: other).listFiles().contains { $0.relativePath == "Should not create a prompt.md" })
+    }
+
+    func testLibraryNewPromptRetiredTitleResponseWritesToNeitherLibrary() throws {
+        var titleReply: ((LibraryEditorResponse) -> Void)?
+        try start(editorDialog: { _, dialog, reply in
+            if case .newPrompt = dialog { titleReply = reply }
+            return {}
+        })
+        delegate.showLibrary()
+        let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
+        presentation.requestNewPrompt()
+        let request = try XCTUnwrap(presentation.newPromptRequest)
+        let stale = try XCTUnwrap(titleReply)
+        let other = try otherLibrary()
+        XCTAssertEqual(delegate.switchLibrary(to: other), .switched)
+        stale(.createPrompt("Retired title"))
+        presentation.resolveNewPrompt(.createPrompt("Retired title"), id: request.id)
+        XCTAssertNil(try files(at: root).stamp(at: "Retired title.md"))
+        XCTAssertNil(try files(at: other).stamp(at: "Retired title.md"))
+        XCTAssertNil(presentation.newPromptRequest)
+    }
+
+    func testLibraryNewPromptRetiresQueuedGuardApprovalOnRebind() throws {
+        let main = NewPromptSwitchMainThread()
+        let dataFiles = try files(at: data)
+        let clock = SystemClock()
+        func graph(at root: URL) throws -> (browser: LibraryBrowserModel, editor: EditorModel) {
+            let library = LibraryService(library: try files(at: root), data: dataFiles, clock: clock, entropy: SystemEntropy())
+            let usage = UsageStore(files: dataFiles, clock: clock)
+            let index = PromptIndex(service: library, usage: usage, clock: clock)
+            try index.rebuild()
+            let editing = PromptEditingService(library: library, index: index, work: NewPromptSwitchWork(), main: main)
+            let editor = EditorModel(editing: editing, clock: clock, timeZone: { TimeZone.current }, main: main)
+            return (LibraryBrowserModel(index: index, usage: usage, favorites: library, main: main, editor: editor), editor)
+        }
+        try files(at: root).write(Data("Original".utf8), at: "one.md")
+        let old = try graph(at: root)
+        let otherRoot = try otherLibrary()
+        let replacement = try graph(at: otherRoot)
+        var creations = 0
+        let presentation = LibraryViewState(model: old.browser, editor: old.editor, libraryPath: root.path,
+            available: true, mainThread: main, createPrompt: { _, _ in creations += 1; return nil }, revealLibrary: {})
+        defer {
+            presentation.deactivate()
+            old.browser.deactivate(); old.editor.deactivate()
+            replacement.browser.deactivate(); replacement.editor.deactivate()
+        }
+        presentation.didShow()
+        presentation.selectPath("one.md")
+        presentation.edit("Draft")
+        presentation.requestNewPrompt()
+        let request = try XCTUnwrap(presentation.newPromptRequest)
+        presentation.resolveNewPrompt(.createPrompt("Stale guard"), id: request.id)
+        let decision = try XCTUnwrap(old.editor.state.pendingDecision)
+        XCTAssertEqual(decision.action, .create)
+        main.queuesWork = true
+        old.editor.resolveDecision(.discard, id: decision.id)
+        presentation.rebind(to: replacement.browser, editor: replacement.editor, libraryPath: otherRoot.path, available: true)
+        main.drain()
+        XCTAssertEqual(creations, 0)
+        XCTAssertNil(try files(at: root).stamp(at: "Stale guard.md"))
+        XCTAssertNil(try files(at: otherRoot).stamp(at: "Stale guard.md"))
     }
 
     func testSwitchDiscardsShowHeldBehindFocusRestoration() throws {
@@ -377,6 +441,20 @@ private final class SwitchWatcher: FileStoreWatcher {
     func stop() { stopped = true }
     // Deliberately retains the callback to exercise a late native event.
     func emit(_ event: FileStoreWatchEvent) { onEvent?(event) }
+}
+
+private struct NewPromptSwitchWork: BackgroundWork {
+    func run(_ work: @escaping () -> Void) { work() }
+}
+
+private final class NewPromptSwitchMainThread: MainThread {
+    var queuesWork = false
+    private var pending: [() -> Void] = []
+    func run(_ work: @escaping () -> Void) {
+        if queuesWork { pending.append(work) }
+        else { work() }
+    }
+    func drain() { while !pending.isEmpty { pending.removeFirst()() } }
 }
 
 private final class SwitchScheduler: MonkeysPawCore.Scheduler {

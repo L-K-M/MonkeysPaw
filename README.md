@@ -43,9 +43,10 @@ fill fields and deliver. Multiline Return edits text; use the platform guide's
 delivery shortcut. Copy keeps the result for manual paste. Repeat starts
 unbound; assign it in Settings → Shortcuts.
 
-Your default library is Documents/MonkeysPaw. Use Library to edit prompts or
-General to choose a folder. See the [prompt format](docs/plan/05-prompt-library.md)
-and [shared fixtures](spec/README.md).
+Your default library is Documents/MonkeysPaw. Use Library to create and edit
+prompts or General to choose a folder. See the
+[prompt format](docs/plan/05-prompt-library.md) and
+[shared fixtures](spec/README.md).
 
 ## Host the sync server
 
