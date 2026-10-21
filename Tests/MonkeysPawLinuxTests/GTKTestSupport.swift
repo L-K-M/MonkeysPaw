@@ -71,7 +71,10 @@ enum GTKTestSupport {
 
     /// First descendant that can take keyboard focus, for focus-move assertions.
     static func firstFocusable(_ widget: GTK.Widget) -> GTK.Widget? {
-        if gtk_widget_get_can_focus(widget) != 0 { return widget }
+        // can-focus permits focus within a subtree; focusable identifies a
+        // widget that can receive it, rather than a switcher container.
+        if gtk_widget_get_focusable(widget) != 0, gtk_widget_is_sensitive(widget) != 0,
+           gtk_widget_get_mapped(widget) != 0 { return widget }
         var child = gtk_widget_get_first_child(widget)
         while let current = child {
             if let found = firstFocusable(current) { return found }
