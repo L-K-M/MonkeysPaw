@@ -67,8 +67,8 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
             item.searchField.delegate = self
             item.searchField.setAccessibilityLabel(LibraryStrings.search)
             item.searchField.setAccessibilityIdentifier("library-filter")
-            item.target = self
-            item.action = #selector(searchLibrary(_:))
+            item.searchField.target = self
+            item.searchField.action = #selector(filterSearch(_:))
             return item
         }
         let item = NSToolbarItem(itemIdentifier: identifier)
@@ -112,6 +112,9 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
     }
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        if item.itemIdentifier == .librarySearch {
+            return commandsAvailable(in: window, context: .textInput)
+        }
         if item.itemIdentifier == .libraryEditorMode {
             return commandsAvailable(in: window, context: .responderChain) && presentation.editorState.prompt != nil
         }
@@ -120,9 +123,28 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
         return validateMenuItem(menuItem)
     }
 
+    @objc func filterSearch(_ sender: NSSearchField) { presentation.setFilter(sender.stringValue) }
+
+    func searchFieldDidEndSearching(_ sender: NSSearchField) {
+        // The native cancel button and Escape can send a search action without
+        // a text-edit notification. Read the field's final value in both paths.
+        filterSearch(sender)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard let field = control as? NSSearchField, field === searchItem?.searchField,
+              commandSelector == #selector(NSResponder.cancelOperation(_:)), !textView.hasMarkedText(),
+              !field.stringValue.isEmpty else { return false }
+        // Consume the clear once; a second Escape can end native search editing.
+        field.stringValue = ""
+        textView.string = ""
+        filterSearch(field)
+        return true
+    }
+
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSSearchField else { return }
         // Composition stays native; filtering does not replace the field editor.
-        presentation.setFilter(field.stringValue)
+        filterSearch(field)
     }
 }

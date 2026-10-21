@@ -282,6 +282,17 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard) || response == .delete
         }
         if case .fileCommand(let request) = dialog { configureFileCommandAlert(alert, request: request) }
+        // Removing the key equivalent alone must not leave AppKit's first
+        // button as an implicit Return target for a destructive choice.
+        switch dialog {
+        case .conflict:
+            alert.window.defaultButtonCell = nil
+        case .decision(let decision, _, _) where decision.action == .revert:
+            alert.window.defaultButtonCell = nil
+        case .fileCommand(let request) where request.command == .delete:
+            alert.window.defaultButtonCell = nil
+        default: break
+        }
         return alert
     }
 

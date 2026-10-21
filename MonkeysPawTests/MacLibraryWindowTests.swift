@@ -352,7 +352,9 @@ final class MacLibraryWindowTests: XCTestCase {
         window.cancelOperation(nil)
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(presentation.snapshot.filter, "one", "Escape outside Search does not navigate")
-        XCTAssertTrue(presentation.clearFilterForEscape())
+        let search = try XCTUnwrap(controller().searchItem?.searchField)
+        search.stringValue = ""
+        try controller().filterSearch(search)
         XCTAssertEqual(presentation.snapshot.filter, "")
         window.cancelOperation(nil)
         XCTAssertTrue(window.isVisible)
@@ -619,6 +621,38 @@ final class MacLibraryWindowTests: XCTestCase {
         sheet.orderOut(nil)
         controller.presentation.setLibraryAvailable(false)
         XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+    }
+
+    func testSearchFieldActionsKeepTheBrowserFilterInSync() throws {
+        try put("Alpha", at: "alpha.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let search = try XCTUnwrap(controller.searchItem?.searchField)
+        XCTAssertTrue(search.target === controller)
+        XCTAssertEqual(search.action, #selector(LibraryWindowController.filterSearch(_:)))
+        search.stringValue = "Alpha"
+        controller.filterSearch(search)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Alpha")
+        let editor = NSTextView()
+        editor.string = "Alpha"
+        let cancel = #selector(NSResponder.cancelOperation(_:))
+        XCTAssertTrue(controller.control(search, textView: editor, doCommandBy: cancel))
+        XCTAssertEqual(editor.string, "")
+        controller.searchFieldDidEndSearching(search)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "")
+        XCTAssertFalse(controller.control(search, textView: editor, doCommandBy: cancel), "Empty Search ends natively")
+        search.stringValue = "Alpha"
+        controller.filterSearch(search)
+        editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        XCTAssertFalse(controller.control(search, textView: editor, doCommandBy: cancel))
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Alpha")
+        editor.unmarkText()
+        controller.presentation.setFilter("Other")
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(search.stringValue, "Other")
     }
 
     func testFindWithoutAnOpenEditorFocusesLibrarySearch() throws {

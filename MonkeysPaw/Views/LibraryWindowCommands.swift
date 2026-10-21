@@ -3,7 +3,7 @@ import MonkeysPawCore
 
 extension LibraryWindowController: NSMenuItemValidation {
     private enum FindAction { case panel, textFinder }
-    enum CommandContext { case responderChain, explicitWindow }
+    enum CommandContext { case responderChain, explicitWindow, textInput }
     /// Hosted windows need not become key. Production validation additionally
     /// requires key status before the responder chain can act on a prompt.
     func validateLibraryMenuItem(_ item: NSMenuItem, in candidate: NSWindow?) -> Bool {
@@ -19,7 +19,9 @@ extension LibraryWindowController: NSMenuItemValidation {
               presentation.editorState.pendingDecision == nil,
               presentation.editorState.queuedActions.isEmpty,
               presentation.imports?.isChoosing != true else { return false }
-        return (window.firstResponder as? NSTextInputClient)?.hasMarkedText() != true
+        // Filtering input remains enabled during its own composition. Menu and
+        // toolbar commands still wait for marked text to commit or cancel.
+        return context == .textInput || (window.firstResponder as? NSTextInputClient)?.hasMarkedText() != true
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {

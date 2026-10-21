@@ -531,14 +531,6 @@ final class LibraryViewState: ObservableObject {
         revealLibrary()
     }
 
-    /// Search cancellation preserves the reusable window and the open draft.
-    func clearFilterForEscape() -> Bool {
-        guard isActive, !snapshot.filter.isEmpty else { return false }
-        setFilter("")
-        focusRevision &+= 1
-        return true
-    }
-
     private func observeModel() {
         let revision = bindingRevision
         let model = self.model

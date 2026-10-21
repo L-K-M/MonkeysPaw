@@ -299,6 +299,10 @@ final class LibraryPromptTableView: NSTableView {
         super.draggingExited(sender)
         onDropExit?()
     }
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        super.draggingEnded(sender)
+        onDropExit?()
+    }
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             .subtracting([.capsLock, .numericPad, .function])

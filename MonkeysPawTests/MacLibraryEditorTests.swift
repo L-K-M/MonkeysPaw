@@ -310,6 +310,7 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(revert.informativeText, "Your current changes will be lost.")
         XCTAssertEqual(revert.buttons.map(\.title), [EditorStrings.revert, "Cancel"])
         XCTAssertEqual(revert.buttons.map(\.keyEquivalent), ["", "\u{1b}"])
+        XCTAssertNil(revert.window.defaultButtonCell)
         XCTAssertFalse(revertDialog.accepts(.decision(.save)))
         try respond(.decision(.cancel))
     }
@@ -320,6 +321,7 @@ final class MacLibraryEditorTests: XCTestCase {
         let alert = LibraryWindowController.makeEditorAlert(for: .conflict(conflict, status: .idle, title: presentation.displayTitle))
         XCTAssertEqual(alert.messageText, "“" + presentation.displayTitle + "” was deleted on disk")
         XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["", "", "", "\u{1b}"])
+        XCTAssertNil(alert.window.defaultButtonCell)
     }
 
     func testNativeDecisionCancelKeepsDraftAndCompletesRequest() throws {

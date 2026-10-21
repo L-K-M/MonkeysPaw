@@ -582,6 +582,7 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertEqual(request.responses, [.delete, .cancelFileCommand])
         XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["", "\u{1b}"])
         XCTAssertTrue(alert.buttons[0].hasDestructiveAction)
+        XCTAssertNil(alert.window.defaultButtonCell)
         try respond(.delete)
         work.drain()
         XCTAssertNil(try files.stamp(at: "one.md"))
