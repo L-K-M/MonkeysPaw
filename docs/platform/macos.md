@@ -780,3 +780,23 @@ in this checklist, screenshots or logs.
 | Paste a link or enter a bare token with an explicit server; verify the HTTP warning, current-account join and new-account registration, wrong-server/account refusal, one-use failure and visible partial cleanup | NOT RUN | |
 | Close, minimize, hide the app or leave Account; secure inputs and staged links clear, late replies stay hidden, and reopening requires a fresh invite | NOT RUN | |
 | Onboarding's Join with an invite opens the same Account window; VoiceOver and Tab/Shift+Tab reach destination, secure inputs and both explicit accept actions | NOT RUN | |
+
+## Sync sign-in crash: 2026-10-21
+
+Owner reproduced on macOS 26.7.1, Apple Silicon, with a universal Release
+app built by Xcode 27. Launching the installed executable from Terminal and
+signing into the sync server produced:
+
+```text
+MonkeysPawCore/SecretTypes.swift:34: Fatal error: 'try!' expression unexpectedly raised an error: MonkeysPawCore.SecretStoreError.invalidAccount
+```
+
+The owner's standalone `swift -O` probe accepted `device` and a generated
+UUID with both bound-method and explicit-closure CharacterSet checks.
+That probe does not reproduce the compiled app's failure.
+
+- [ ] Run the actual Core `SecretAccountTests` in Release configuration.
+- [ ] Rebuild and install from the fixed main commit, retry Sign In, then
+      quit/reopen and confirm the saved connection resumes without a crash.
+- [ ] Confirm a failed sign-in remains an error in Account, without exposing
+      credentials in logs or this record.
