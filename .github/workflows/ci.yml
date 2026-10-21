@@ -673,6 +673,9 @@ jobs:
         with:
           xcode-version: '26.0'
       - name: Build and test app
+        env:
+          # xcodebuild strips the prefix; MacUITourTests renders the windows there.
+          TEST_RUNNER_MONKEYSPAW_UI_TOUR_DIR: ${{ runner.temp }}/ui-tour
         run: |
           xcodebuild \
             -project MonkeysPaw.xcodeproj \
@@ -681,6 +684,14 @@ jobs:
             -resultBundlePath MacAppTests.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             clean test
+      - name: Upload UI tour
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MacUITour
+          path: ${{ runner.temp }}/ui-tour
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload app test results on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
