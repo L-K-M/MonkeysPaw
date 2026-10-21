@@ -97,7 +97,7 @@ final class MacLibraryCommandTests: XCTestCase {
     }
 
     private func selectHistory(_ presentation: LibraryViewState, filename: String) {
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         work.drain()
         presentation.selectRevision(filename)
     }
@@ -112,7 +112,7 @@ final class MacLibraryCommandTests: XCTestCase {
             Data(repeating: 65, count: Limits.maxPromptBytes + 1)]
         let names = try sources.enumerated().map { try seedRevision($0.element, sequence: $0.offset) }
         let presentation = try open()
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         XCTAssertTrue(presentation.editorState.history.isLoading)
         XCTAssertFalse(presentation.canRestoreRevision)
         work.drain()
@@ -188,12 +188,32 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertEqual(presentation.commandMessage, LibraryCommandStrings.restored)
     }
 
+    func testHistoryReloadsWhenInspectorIsReopened() throws {
+        let first = try seedRevision(Data("Earlier".utf8))
+        let presentation = try open()
+        presentation.showInspector(.history)
+        work.drain()
+        XCTAssertEqual(presentation.editorState.history.revisions.map(\.revision.filename), [first])
+        presentation.setInspectorVisible(false)
+        let second = try seedRevision(Data("Later".utf8), sequence: 1)
+        presentation.setInspectorVisible(true)
+        XCTAssertTrue(presentation.editorState.history.isLoading)
+        work.drain()
+        XCTAssertEqual(presentation.editorState.history.revisions.map(\.revision.filename), [second, first])
+        presentation.showInspector(.fields)
+        presentation.showInspector(.history)
+        XCTAssertTrue(presentation.editorState.history.isLoading)
+        work.drain()
+        XCTAssertEqual(presentation.inspectorPane, .history)
+        XCTAssertTrue(presentation.isInspectorVisible)
+    }
+
     func testForensicAndFutureRevisionsReturnDistinctTypedRefusalsWithoutWriting() throws {
         let sources = [Data("---\ntitle: [broken\n---\nBroken".utf8), Data([0xff]),
             Data(repeating: 65, count: Limits.maxPromptBytes + 1), Data("---\nformat: 2\n---\nFuture".utf8)]
         let names = try sources.enumerated().map { try seedRevision($0.element, sequence: $0.offset) }
         let presentation = try open()
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         work.drain()
         for name in names {
             presentation.selectRevision(name)
@@ -218,7 +238,7 @@ final class MacLibraryCommandTests: XCTestCase {
         try files.write(Data((original + " external").utf8), at: "one.md")
         presentation.restoreRevision()
         work.drain()
-        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected conflict sheet") }
+        guard case .conflict(let conflict, _, _) = try dialog().dialog else { return XCTFail("Expected conflict sheet") }
         XCTAssertEqual(conflict.kind, .modified)
         XCTAssertEqual(conflict.theirsSource, original + " external")
         XCTAssertEqual(presentation.editorState.source, original)
@@ -249,6 +269,33 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertEqual(presentation.commandMessage, LibraryCommandStrings.renamed)
     }
 
+    func testRenameAlertSelectsBasenameAndDisablesEmptyOrUnchangedInput() throws {
+        let presentation = try open()
+        presentation.requestFileCommand(.rename)
+        let request = try XCTUnwrap(presentation.fileCommandRequest)
+        let alert = LibraryWindowController.makeEditorAlert(for: .fileCommand(request))
+        XCTAssertEqual(alert.messageText, "Rename “one.md”")
+        XCTAssertEqual(alert.informativeText, "Enter a new filename. The prompt's title stays the same.")
+        XCTAssertEqual(alert.buttons.map(\.title), ["Rename", "Cancel"])
+        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["\r", "\u{1b}"])
+        let input = try XCTUnwrap(alert.window.initialFirstResponder as? NSTextField)
+        XCTAssertFalse(alert.buttons[0].isEnabled)
+        input.stringValue = ""
+        input.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: input))
+        XCTAssertFalse(alert.buttons[0].isEnabled)
+        input.stringValue = "new.md"
+        input.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: input))
+        XCTAssertTrue(alert.buttons[0].isEnabled)
+        input.stringValue = "one.md"
+        input.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: input))
+        XCTAssertFalse(alert.buttons[0].isEnabled)
+        alert.layout()
+        XCTAssertTrue(alert.window.makeFirstResponder(input))
+        XCTAssertEqual((input.currentEditor() as? NSTextView)?.selectedRange(), NSRange(location: 0, length: 3))
+        alert.window.makeFirstResponder(nil)
+        try respond(.cancelFileCommand)
+    }
+
     func testMoveOffersKnownFoldersCreatesNestedDestinationAndEmptyReturnsToRoot() throws {
         try files.write(Data("Other".utf8), at: "known/nested/other.md")
         let presentation = try open()
@@ -259,6 +306,9 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertTrue(request.folders.contains("known/nested"))
         let alert = LibraryWindowController.makeEditorAlert(for: .fileCommand(request))
         let combo = try XCTUnwrap(alert.accessoryView?.subviews.compactMap { $0 as? NSComboBox }.first)
+        XCTAssertEqual(alert.messageText, "Move “one.md”")
+        XCTAssertEqual(combo.placeholderString, "Top level of the library")
+        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["\r", "\u{1b}"])
         XCTAssertTrue(combo.isEditable)
         XCTAssertTrue(combo.objectValues.contains { ($0 as? String) == "known/nested" })
         combo.stringValue = "new/deep"
@@ -300,7 +350,7 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertEqual(presentation.editorState.history.revisions.count, 1)
         presentation.selectPath("other.md")
         work.drain()
-        XCTAssertEqual(presentation.editorTab, .history)
+        XCTAssertEqual(presentation.inspectorPane, .history)
         XCTAssertEqual(presentation.editorState.prompt?.relativePath, "other.md")
         XCTAssertTrue(presentation.editorState.history.revisions.isEmpty)
         XCTAssertFalse(presentation.editorState.history.isLoading)
@@ -314,7 +364,7 @@ final class MacLibraryCommandTests: XCTestCase {
         let presentation = try open()
         try command(.rename, response: .rename("occupied.md"), in: presentation)
         XCTAssertEqual(presentation.editorState.status, .commandRunning)
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         XCTAssertFalse(presentation.canLoadHistory)
         XCTAssertFalse(presentation.editorState.history.isLoading)
         work.drain()
@@ -401,7 +451,7 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertEqual(presentation.editorState.status, .saving)
         work.drain()
         XCTAssertEqual(presentation.editorState.status, .saved)
-        XCTAssertEqual(presentation.editorTab, .history)
+        XCTAssertEqual(presentation.inspectorPane, .history)
         XCTAssertEqual(presentation.editorState.prompt, prompt)
         XCTAssertEqual(presentation.sourceRevision, sourceRevision)
         XCTAssertEqual(presentation.editorState.history.revisions.count, 2)
@@ -414,7 +464,7 @@ final class MacLibraryCommandTests: XCTestCase {
         let first = try seedRevision(Data("Earlier".utf8))
         let presentation = try open()
         presentation.setLibraryAvailable(false)
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         XCTAssertFalse(presentation.editorState.history.isLoading)
         XCTAssertTrue(presentation.editorState.history.revisions.isEmpty)
         presentation.setLibraryAvailable(true)
@@ -428,7 +478,7 @@ final class MacLibraryCommandTests: XCTestCase {
         presentation.setLibraryAvailable(true)
         XCTAssertTrue(presentation.editorState.history.isLoading)
         work.drain()
-        XCTAssertEqual(presentation.editorTab, .history)
+        XCTAssertEqual(presentation.inspectorPane, .history)
         XCTAssertEqual(presentation.editorState.history.revisions.map(\.revision.filename), [second, first])
         XCTAssertEqual(presentation.editorState.history.selectedRevision?.filename, first)
         presentation.setLibraryAvailable(true)
@@ -439,7 +489,7 @@ final class MacLibraryCommandTests: XCTestCase {
         let presentation = try open(Data("Plain".utf8))
         let before = try XCTUnwrap(presentation.editorState.prompt)
         let sourceRevision = presentation.sourceRevision
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         work.drain()
         XCTAssertTrue(presentation.editorState.history.revisions.isEmpty)
         presentation.edit("Plain edited")
@@ -469,7 +519,7 @@ final class MacLibraryCommandTests: XCTestCase {
         let presentation = try open(Data("Plain".utf8))
         let before = try XCTUnwrap(presentation.editorState.prompt)
         let sourceRevision = presentation.sourceRevision
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         work.drain()
         XCTAssertTrue(presentation.editorState.history.revisions.isEmpty)
         try files.write(Data(original.utf8), at: "one.md")
@@ -528,10 +578,11 @@ final class MacLibraryCommandTests: XCTestCase {
         let request = try XCTUnwrap(presentation.fileCommandRequest)
         let alert = LibraryWindowController.makeEditorAlert(for: .fileCommand(request))
         XCTAssertTrue(alert.messageText.contains("one.md"))
-        XCTAssertTrue(alert.informativeText.contains("one.md"))
-        XCTAssertEqual(request.responses, [.cancelFileCommand, .delete])
-        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["\u{1b}", ""])
-        XCTAssertTrue(alert.buttons[1].hasDestructiveAction)
+        XCTAssertEqual(alert.informativeText, "The prompt is removed from your library. Its history is kept.")
+        XCTAssertEqual(request.responses, [.delete, .cancelFileCommand])
+        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["", "\u{1b}"])
+        XCTAssertTrue(alert.buttons[0].hasDestructiveAction)
+        XCTAssertNil(alert.window.defaultButtonCell)
         try respond(.delete)
         work.drain()
         XCTAssertNil(try files.stamp(at: "one.md"))
@@ -634,7 +685,7 @@ final class MacLibraryCommandTests: XCTestCase {
         try files.delete(at: "one.md")
         try command(.delete, response: .delete, in: presentation)
         work.drain()
-        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected missing-file conflict") }
+        guard case .conflict(let conflict, _, _) = try dialog().dialog else { return XCTFail("Expected missing-file conflict") }
         XCTAssertEqual(conflict.kind, .deleted)
         XCTAssertEqual(presentation.commandMessage, LibraryCommandStrings.missing)
         XCTAssertEqual(presentation.editorState.source, loaded)
@@ -754,39 +805,30 @@ final class MacLibraryCommandTests: XCTestCase {
         let presentation = try open()
         delegate.installMainMenu()
         let main = try XCTUnwrap(NSApp.mainMenu)
-        let fileItem = try XCTUnwrap(main.item(at: 1))
-        XCTAssertEqual(fileItem.title, LibraryCommandStrings.fileMenu)
-        XCTAssertTrue(fileItem.menu === main)
-        let menu = try XCTUnwrap(fileItem.submenu)
-        XCTAssertEqual(menu.title, LibraryCommandStrings.fileMenu)
-        XCTAssertEqual(menu.items.map(\.title), [EditorStrings.save, LibraryCommandStrings.rename,
-            LibraryCommandStrings.move, LibraryCommandStrings.delete, LibraryAssistantStrings.title])
-        XCTAssertEqual(menu.items[0].keyEquivalent, "s")
-        XCTAssertEqual(menu.items[0].keyEquivalentModifierMask, .command)
-        XCTAssertEqual(menu.items.map(\.action), [#selector(AppDelegate.saveLibraryPrompt),
-            #selector(AppDelegate.renameLibraryPrompt), #selector(AppDelegate.moveLibraryPrompt),
-            #selector(AppDelegate.deleteLibraryPrompt), #selector(AppDelegate.showLibraryAssistant)])
-        XCTAssertEqual(menu.items.last?.keyEquivalent, "A")
-        XCTAssertEqual(menu.items.last?.keyEquivalentModifierMask, [.command, .shift])
+        let menu = try XCTUnwrap(main.items.first { $0.title == LibraryCommandStrings.fileMenu }?.submenu)
+        let actions = [#selector(LibraryWindowController.saveDocument(_:)),
+            #selector(LibraryWindowController.duplicateDocument(_:)), #selector(LibraryWindowController.renameDocument(_:)),
+            #selector(LibraryWindowController.moveDocument(_:)), #selector(LibraryWindowController.revertDocumentToSaved(_:)),
+            #selector(LibraryWindowController.showInFinder(_:)), #selector(LibraryWindowController.deleteLibraryPrompt(_:))]
+        let items = actions.compactMap { action in menu.items.first { $0.action == action } }
+        XCTAssertEqual(items.count, actions.count)
         let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         other.isReleasedWhenClosed = false
         defer { other.close() }
-        for item in menu.items {
-            XCTAssertTrue(item.target === delegate)
+        for item in items {
+            XCTAssertNil(item.target)
             XCTAssertTrue(delegate.validateLibraryFileMenuItem(item, in: try window()))
             XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: other))
             XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: nil))
         }
         presentation.edit(original + " draft")
         try command(.rename, response: .rename("renamed.md"), in: presentation)
-        for item in menu.items.dropLast() { XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window())) }
+        for item in items { XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window())) }
         try respond(.decision(.cancel))
         presentation.setLibraryAvailable(false)
-        for item in menu.items { XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window())) }
+        for item in items { XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window())) }
         let edit = try XCTUnwrap(main.items.compactMap(\.submenu).first { $0.title == "Edit" })
-        XCTAssertNil(edit.items.first { $0.keyEquivalent == "x" }?.target)
-        XCTAssertNil(edit.items.first { $0.keyEquivalent == "c" }?.target)
-        XCTAssertNil(edit.items.first { $0.keyEquivalent == "v" }?.target)
+        for key in ["x", "c", "v"] { XCTAssertNil(edit.items.first { $0.keyEquivalent == key }?.target) }
         let unknown = NSMenuItem(title: "Unknown", action: Selector("unknownLibraryAction:"), keyEquivalent: "")
         XCTAssertFalse(delegate.validateMenuItem(unknown))
         XCTAssertFalse(delegate.validateLibraryFileMenuItem(unknown, in: try window()))
@@ -796,8 +838,9 @@ final class MacLibraryCommandTests: XCTestCase {
 
     func testSaveMenuReopensDismissedConflictWithoutWritingDraft() throws {
         let presentation = try open()
-        let menu = try XCTUnwrap(delegate.makeLibraryFileMenu().submenu)
-        let save = try XCTUnwrap(menu.items.first)
+        delegate.installMainMenu()
+        let menu = try XCTUnwrap(NSApp.mainMenu?.items.first { $0.title == LibraryCommandStrings.fileMenu }?.submenu)
+        let save = try XCTUnwrap(menu.items.first { $0.action == #selector(LibraryWindowController.saveDocument(_:)) })
         presentation.edit(original + " draft")
         let external = original + " external"
         try files.write(Data(external.utf8), at: "one.md")
@@ -807,13 +850,15 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertFalse(presentation.canSave)
         XCTAssertTrue(presentation.canShowConflict)
         XCTAssertTrue(delegate.validateLibraryFileMenuItem(save, in: try window()))
-        for item in menu.items.dropFirst().dropLast() {
+        for action in [#selector(LibraryWindowController.renameDocument(_:)), #selector(LibraryWindowController.moveDocument(_:)),
+                       #selector(LibraryWindowController.deleteLibraryPrompt(_:))] {
+            let item = try XCTUnwrap(menu.items.first { $0.action == action })
             XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window()))
         }
         let dismissed = dialogs.count
         presentation.save()
         XCTAssertEqual(dialogs.count, dismissed + 1)
-        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected reopened conflict choices") }
+        guard case .conflict(let conflict, _, _) = try dialog().dialog else { return XCTFail("Expected reopened conflict choices") }
         XCTAssertEqual(conflict.theirsSource, external)
         XCTAssertEqual(presentation.editorState.source, original + " draft")
         XCTAssertTrue(presentation.editorState.isDirty)

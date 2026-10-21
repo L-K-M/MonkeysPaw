@@ -1,16 +1,16 @@
 import MonkeysPawCore
 
 enum LibraryEditorDialog: Equatable {
-    case decision(EditorPendingDecision, status: EditorStatus)
-    case conflict(EditorConflict, status: EditorStatus)
+    case decision(EditorPendingDecision, status: EditorStatus, title: String = LibraryStrings.title)
+    case conflict(EditorConflict, status: EditorStatus, title: String = LibraryStrings.title)
     case fileCommand(LibraryFileCommandRequest)
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case (.decision(let left, let leftStatus), .decision(let right, let rightStatus)):
-            return left == right && leftStatus == rightStatus
-        case (.conflict(let left, let leftStatus), .conflict(let right, let rightStatus)):
-            return left == right && leftStatus == rightStatus
+        case (.decision(let left, let leftStatus, let leftTitle), .decision(let right, let rightStatus, let rightTitle)):
+            return left == right && leftStatus == rightStatus && leftTitle == rightTitle
+        case (.conflict(let left, let leftStatus, let leftTitle), .conflict(let right, let rightStatus, let rightTitle)):
+            return left == right && leftStatus == rightStatus && leftTitle == rightTitle
         case (.fileCommand(let left), .fileCommand(let right)):
             // Reopened forms must replace their native sheet and callback token.
             return left.id == right.id && left == right
@@ -20,28 +20,21 @@ enum LibraryEditorDialog: Equatable {
 
     var title: String {
         switch self {
-        case .decision: return "Save your edits?"
-        case .conflict(let conflict, _):
-            return conflict.kind == .deleted ? "The prompt was deleted on disk" : "The prompt changed on disk"
+        case .decision(let decision, _, let title):
+            return decision.action == .revert ? LibraryDialogStrings.revertTitle(title) : LibraryDialogStrings.saveTitle(title)
+        case .conflict(let conflict, _, let title):
+            return LibraryDialogStrings.conflictTitle(title, kind: conflict.kind)
         case .fileCommand(let request): return request.title
         }
     }
 
     var message: String {
         switch self {
-        case .decision(let decision, let status):
-            let text: String
-            switch decision.action {
-            case .quit: text = "Save or discard your edits before quitting. Cancel keeps Library open."
-            case .revert: text = "Save or discard your edits before reloading the prompt from disk."
-            case .open, .close, .rename, .move, .delete, .librarySwitch:
-                text = "Save or discard your edits before continuing. Cancel keeps your draft."
-            }
+        case .decision(let decision, let status, _):
+            let text = decision.action == .revert ? LibraryDialogStrings.revert : LibraryDialogStrings.unsaved
             return text + failureMessage(status)
-        case .conflict(let conflict, let status):
-            var text = conflict.kind == .deleted
-                ? "Keep Mine recreates the file. Save as Copy keeps your edits in a new file. Discard closes this draft."
-                : "Keep Mine saves over the file on disk. Take Theirs reloads it. Save Mine as Copy keeps your edits in a new file."
+        case .conflict(let conflict, let status, _):
+            var text = conflict.kind == .deleted ? LibraryDialogStrings.deleted : LibraryDialogStrings.modified
             if let failure = conflict.failure { text += " " + EditorStrings.editingFailure(failure) }
             if let reason = conflict.readOnlyReason { text += " " + EditorStrings.readOnly(reason) }
             return text + failureMessage(status)
@@ -51,8 +44,10 @@ enum LibraryEditorDialog: Equatable {
 
     var responses: [LibraryEditorResponse] {
         switch self {
-        case .decision: return [.decision(.save), .decision(.discard), .decision(.cancel)]
-        case .conflict(let conflict, _):
+        case .decision(let decision, _, _):
+            return decision.action == .revert ? [.decision(.discard), .decision(.cancel)]
+                : [.decision(.save), .decision(.cancel), .decision(.discard)]
+        case .conflict(let conflict, _, _):
             return conflict.choices.map(LibraryEditorResponse.conflict) + [.dismissConflict]
         case .fileCommand(let request): return request.responses
         }
@@ -83,11 +78,12 @@ enum LibraryEditorResponse: Equatable {
     var title: String {
         switch self {
         case .decision(.save): return EditorStrings.save
-        case .decision(.discard), .conflict(.discard): return "Discard"
-        case .decision(.cancel), .dismissConflict: return "Cancel"
-        case .conflict(.keepMine): return "Keep Mine"
-        case .conflict(.takeTheirs): return "Take Theirs"
-        case .conflict(.saveAsCopy): return "Save Mine as Copy"
+        case .decision(.discard): return LibraryDialogStrings.dontSave
+        case .conflict(.discard): return LibraryDialogStrings.discard
+        case .decision(.cancel), .dismissConflict: return LibraryDialogStrings.cancel
+        case .conflict(.keepMine): return LibraryDialogStrings.keepMine
+        case .conflict(.takeTheirs): return LibraryDialogStrings.takeTheirs
+        case .conflict(.saveAsCopy): return LibraryDialogStrings.saveMineAsCopy
         case .rename: return LibraryCommandStrings.renameButton
         case .move: return LibraryCommandStrings.moveButton
         case .delete: return LibraryCommandStrings.deleteButton

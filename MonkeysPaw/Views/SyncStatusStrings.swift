@@ -2,6 +2,7 @@ import Foundation
 import MonkeysPawCore
 
 enum SyncStatusStrings {
+    static let moreActions = "More sync actions"
     static let syncNow = "Sync now"
     static let account = "Open Account…"
     static let errors = "Show sync errors"

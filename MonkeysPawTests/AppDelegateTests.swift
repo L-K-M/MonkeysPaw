@@ -31,6 +31,16 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(NSApp.windows.map(ObjectIdentifier.init), windows)
     }
 
+    func testHelpMenuOpensTheProjectReadmeThroughTheInjectedLauncher() {
+        var launched: [URL] = []
+        let delegate = AppDelegate(libraryRoot: directory.appendingPathComponent("library"),
+            dataRoot: directory.appendingPathComponent("data"), launchURI: { launched.append($0) })
+        let item = NSMenuItem(title: "Help", action: #selector(AppDelegate.openHelp(_:)), keyEquivalent: "")
+        XCTAssertTrue(delegate.validateMenuItem(item))
+        delegate.openHelp(item)
+        XCTAssertEqual(launched.map(\.absoluteString), ["https://github.com/L-K-M/MonkeysPaw#readme"])
+    }
+
     func testAutomationFallbackHasUsageDescriptionInHostedApp() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSAppleEventsUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)

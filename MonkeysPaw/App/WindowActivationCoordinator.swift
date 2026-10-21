@@ -21,7 +21,8 @@ final class WindowActivationCoordinator {
         self.mainThread = mainThread
         self.setPolicy = setPolicy
         self.activate = activate
-        for name in [NSWindow.willCloseNotification, NSWindow.didChangeOcclusionStateNotification] {
+        for name in [NSWindow.willCloseNotification, NSWindow.didChangeOcclusionStateNotification,
+                     NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
                 [weak self] notification in
                 guard let window = notification.object as? NSWindow else { return }
@@ -68,7 +69,9 @@ final class WindowActivationCoordinator {
 
     private func updatePolicy() {
         windows = windows.filter { $0.value.window != nil }
-        let policy: NSApplication.ActivationPolicy = windows.values.contains { $0.window?.isVisible == true }
+        let policy: NSApplication.ActivationPolicy = windows.values.contains {
+            $0.window?.isVisible == true || $0.window?.isMiniaturized == true
+        }
             ? .regular : .accessory
         guard policy != appliedPolicy else { return }
         appliedPolicy = policy

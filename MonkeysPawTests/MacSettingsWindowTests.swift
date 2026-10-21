@@ -493,13 +493,17 @@ final class MacSettingsWindowTests: XCTestCase {
 
     func testBothMenusRouteCommandCommaForSettingsAndSetupWindows() throws {
         try start()
+        let originalDelegate = NSApp.delegate
+        NSApp.delegate = delegate
+        defer { NSApp.delegate = originalDelegate }
         delegate.installMainMenu()
         let main = try XCTUnwrap(NSApp.mainMenu)
         let status = delegate.makeStatusMenu()
         let item = try XCTUnwrap(status.items.first { $0.title == Strings.settings })
         let appItem = try XCTUnwrap(main.items.first?.submenu?.items.first { $0.title == Strings.settings })
         for settingsItem in [item, appItem] {
-            XCTAssertTrue(settingsItem.target === delegate)
+            if settingsItem === appItem { XCTAssertNil(settingsItem.target) }
+            else { XCTAssertTrue(settingsItem.target === delegate) }
             XCTAssertEqual(settingsItem.action, #selector(AppDelegate.showSettings))
             XCTAssertEqual(settingsItem.keyEquivalent, ",")
             XCTAssertEqual(settingsItem.keyEquivalentModifierMask, .command)

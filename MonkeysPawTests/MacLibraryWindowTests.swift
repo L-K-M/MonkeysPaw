@@ -6,7 +6,7 @@ import SwiftUI
 import XCTest
 @testable import MonkeysPaw
 
-/// Inspect the hosting view's presentation, rather than SwiftUI's lazy
+/// Inspect the controller's presentation, rather than SwiftUI's lazy
 /// accessibility tree. Regular windows need not win activation on CI.
 final class MacLibraryWindowTests: XCTestCase {
     private var directory: URL!
@@ -81,8 +81,8 @@ final class MacLibraryWindowTests: XCTestCase {
 
     private func presentation() throws -> LibraryViewState {
         let controller = try controller()
-        let hosting = try XCTUnwrap(window().contentView as? NSHostingView<LibraryView>)
-        XCTAssertTrue(hosting.rootView.presentation === controller.presentation)
+        XCTAssertTrue(try window().contentViewController === controller.splitController)
+        XCTAssertEqual(controller.splitController?.splitViewItems.count, 4)
         return controller.presentation
     }
 
@@ -93,7 +93,7 @@ final class MacLibraryWindowTests: XCTestCase {
             characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: UInt16(code)))
     }
 
-    func testOpeningTwiceAndReopeningReusesOneWindowAndHostingView() throws {
+    func testOpeningTwiceAndReopeningReusesOneWindowAndNativeSplitView() throws {
         try put("Body", at: "one.md")
         try start()
         XCTAssertNil(try controller().window, "Hosted launch composes the browser without showing a window")
@@ -108,7 +108,7 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(applicationActivations, 2)
         XCTAssertEqual(policies, [.regular])
         XCTAssertEqual(NSApp.windows.filter {
-            !originalWindows.contains(ObjectIdentifier($0)) && $0.title == LibraryStrings.title
+            !originalWindows.contains(ObjectIdentifier($0)) && $0 === window
         }.count, 1)
         window.close()
         XCTAssertFalse(window.isVisible)
@@ -152,34 +152,27 @@ final class MacLibraryWindowTests: XCTestCase {
         try start()
         delegate.installMainMenu()
         let main = try XCTUnwrap(NSApp.mainMenu)
-        let appMenu = try XCTUnwrap(main.items.first?.submenu)
+        let windowMenu = try XCTUnwrap(NSApp.windowsMenu)
+        let mainItem = try XCTUnwrap(windowMenu.items.first { $0.action == #selector(AppDelegate.showLibrary) })
         let status = delegate.makeStatusMenu()
-        let mainItem = try XCTUnwrap(appMenu.items.first { $0.title == OnboardingStrings.libraryAvailableMenu })
         let statusItem = try XCTUnwrap(status.items.first { $0.title == OnboardingStrings.libraryAvailableMenu })
-        XCTAssertTrue(mainItem.target === delegate)
+        XCTAssertNil(mainItem.target)
         XCTAssertTrue(statusItem.target === delegate)
-        XCTAssertEqual(mainItem.action, statusItem.action)
         XCTAssertEqual(mainItem.keyEquivalent, "l")
         XCTAssertEqual(mainItem.keyEquivalentModifierMask, .command)
-        XCTAssertFalse(appMenu.autoenablesItems)
-        XCTAssertTrue(main.performKeyEquivalent(with: try key(kVK_ANSI_L, characters: "l", modifiers: .command)))
+        XCTAssertTrue(main.items.contains { $0.submenu === windowMenu })
+        XCTAssertTrue(delegate.validateMenuItem(mainItem))
+        delegate.showLibrary()
         let libraryWindow = try window()
         libraryWindow.close()
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(statusItem.action), to: statusItem.target, from: statusItem))
         XCTAssertTrue(try window() === libraryWindow)
         XCTAssertTrue(libraryWindow.isVisible)
-        XCTAssertTrue(revealed.isEmpty)
-
         watchers[0].emit(.rootUnavailable(.notFound))
         scheduler.drain()
-        for item in [mainItem, statusItem] {
-            XCTAssertEqual(item.title, OnboardingStrings.libraryUnavailableMenu)
-            XCTAssertFalse(item.isEnabled)
-        }
-        appMenu.update()
-        status.update()
-        XCTAssertFalse(mainItem.isEnabled)
+        XCTAssertEqual(statusItem.title, OnboardingStrings.libraryUnavailableMenu)
         XCTAssertFalse(statusItem.isEnabled)
+        XCTAssertFalse(delegate.validateMenuItem(mainItem))
         let presentation = try presentation()
         XCTAssertFalse(presentation.libraryAvailable)
         presentation.revealFolder()
@@ -335,7 +328,7 @@ final class MacLibraryWindowTests: XCTestCase {
         picker.open()
         XCTAssertEqual(picker.results.first?.favorite, true)
         delegate.showLibrary()
-        XCTAssertTrue(try controller().handleKeyEvent(try key(kVK_ANSI_F, characters: "F", modifiers: [.command, .shift], in: window())))
+        try controller().toggleFavorite(nil)
         XCTAssertEqual(presentation.snapshot.selectedPrompt?.favorite, false)
 
         let external = Data("---\ntitle: External\nfavorite: true\n---\nChanged outside the app".utf8)
@@ -348,7 +341,7 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(try files.read(at: "one.md"), external, "A failed favourite never overwrites an external edit")
     }
 
-    func testEscapeClearsFilterThenClosesAndReturnDoesNotOpenEditor() throws {
+    func testEscapeDoesNotCloseLibraryAndReturnFocusesEditor() throws {
         try put("Body", at: "one.md")
         try start()
         delegate.showLibrary()
@@ -356,27 +349,20 @@ final class MacLibraryWindowTests: XCTestCase {
         presentation.selectPath("one.md")
         presentation.setFilter("one")
         let window = try window()
-        let revision = presentation.focusRevision
-        let escape = try key(kVK_Escape, characters: "\u{1b}", in: window)
-        XCTAssertTrue(try controller().handleKeyEvent(escape))
+        window.cancelOperation(nil)
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(presentation.snapshot.filter, "one", "Escape outside Search does not navigate")
+        let search = try XCTUnwrap(controller().searchItem?.searchField)
+        search.stringValue = ""
+        try controller().filterSearch(search)
         XCTAssertEqual(presentation.snapshot.filter, "")
-        XCTAssertGreaterThan(presentation.focusRevision, revision)
+        window.cancelOperation(nil)
         XCTAssertTrue(window.isVisible)
-        // Return has no editor/open action in this shell. Native lists consume
-        // it; the window router only handles Escape and the favourite shortcut.
-        XCTAssertFalse(try controller().handleKeyEvent(try key(kVK_Return, characters: "\r", in: window)))
-        XCTAssertTrue(window.isVisible)
+        let revision = presentation.editorFocusRevision
+        try controller().promptList?.tableView.keyDown(with: key(kVK_Return, characters: "\r", in: window))
+        XCTAssertGreaterThan(presentation.editorFocusRevision, revision)
         XCTAssertTrue(launched.isEmpty)
         XCTAssertTrue(revealed.isEmpty)
-        XCTAssertTrue(try controller().handleKeyEvent(escape))
-        XCTAssertFalse(window.isVisible)
-        delegate.showLibrary()
-        presentation.setFilter("one")
-        window.cancelOperation(nil)
-        XCTAssertEqual(presentation.snapshot.filter, "")
-        XCTAssertTrue(window.isVisible)
-        window.cancelOperation(nil)
-        XCTAssertFalse(window.isVisible)
     }
 
     func testSettingsAndLibraryShareRegularPolicyUntilTheLastWindowCloses() throws {
@@ -400,38 +386,285 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(policies, [.regular, .accessory, .regular, .accessory])
     }
 
-    func testKeyRoutingLeavesMarkedTextAndOtherWindowEventsAlone() throws {
+    func testLibraryCommandValidationLeavesMarkedTextAndOtherWindowsAlone() throws {
         try put("Body", at: "one.md")
         try start()
         delegate.showLibrary()
         let presentation = try presentation()
         presentation.selectPath("one.md")
-        presentation.setFilter("one")
         let window = try window()
         let input = NSTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 40))
         window.contentView?.addSubview(input)
-        defer {
-            input.unmarkText()
-            window.makeFirstResponder(nil)
-            input.removeFromSuperview()
-        }
+        defer { input.unmarkText(); window.makeFirstResponder(nil); input.removeFromSuperview() }
         XCTAssertTrue(window.makeFirstResponder(input))
+        let controller = try controller()
+        let item = NSMenuItem(title: LibraryStrings.favourite,
+            action: #selector(LibraryWindowController.toggleFavorite(_:)), keyEquivalent: "d")
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
         input.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertTrue(input.hasMarkedText())
-        let controller = try controller()
-        XCTAssertFalse(controller.handleKeyEvent(try key(kVK_Escape, in: window)))
-        XCTAssertFalse(controller.handleKeyEvent(try key(kVK_ANSI_F, characters: "F", modifiers: [.command, .shift], in: window)))
-        XCTAssertEqual(presentation.snapshot.filter, "one")
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        controller.toggleFavorite(nil)
         XCTAssertEqual(presentation.snapshot.selectedPrompt?.favorite, false)
-        XCTAssertTrue(window.isVisible)
         input.unmarkText()
-        XCTAssertFalse(controller.handleKeyEvent(try key(kVK_Escape)))
-        XCTAssertFalse(controller.handleKeyEvent(try key(kVK_Escape, modifiers: .option, in: window)))
-        XCTAssertEqual(presentation.snapshot.filter, "one")
-        XCTAssertTrue(controller.handleKeyEvent(try key(kVK_Escape, in: window)))
-        XCTAssertEqual(presentation.snapshot.filter, "")
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: nil))
+        let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { other.close() }
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: other))
         XCTAssertTrue(window.isVisible)
+    }
+
+    func testNativeWindowSplitViewAndCustomizableToolbar() throws {
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let window = try window()
+        XCTAssertTrue(window.styleMask.contains(.fullSizeContentView))
+        XCTAssertEqual(window.toolbarStyle, .unified)
+        XCTAssertEqual(window.tabbingMode, .disallowed)
+        XCTAssertTrue(window.collectionBehavior.contains(.fullScreenPrimary))
+        XCTAssertFalse(window.isRestorable)
+        XCTAssertEqual(window.frameAutosaveName, "Library")
+        XCTAssertEqual(window.contentMinSize, NSSize(width: 820, height: 480))
+        let split = try XCTUnwrap(window.contentViewController as? NSSplitViewController)
+        XCTAssertEqual(split.splitView.autosaveName, "LibrarySplitView")
+        XCTAssertEqual(split.splitViewItems.count, 4)
+        let items = split.splitViewItems
+        XCTAssertEqual(items[0].behavior, .sidebar)
+        XCTAssertEqual(items[0].minimumThickness, 180)
+        XCTAssertEqual(items[0].maximumThickness, 320)
+        XCTAssertEqual(items[1].behavior, .contentList)
+        XCTAssertEqual(items[1].minimumThickness, 240)
+        XCTAssertEqual(items[2].minimumThickness, 360)
+        XCTAssertLessThan(items[2].holdingPriority.rawValue, items[1].holdingPriority.rawValue)
+        XCTAssertEqual(items[3].behavior, .inspector)
+        XCTAssertEqual(items[3].minimumThickness, 280)
+        XCTAssertEqual(items[3].maximumThickness, 560)
+        XCTAssertTrue(items[3].isCollapsed)
+        items[0].isCollapsed = false
+        let sidebarCommand = NSMenuItem(title: "Sidebar", action: Selector(("toggleSidebar:")), keyEquivalent: "")
+        XCTAssertTrue(controller.validateLibraryMenuItem(sidebarCommand, in: window))
+        XCTAssertEqual(sidebarCommand.title, "Hide Sidebar")
+        items[0].isCollapsed = true
+        XCTAssertTrue(controller.validateLibraryMenuItem(sidebarCommand, in: window))
+        XCTAssertEqual(sidebarCommand.title, "Show Sidebar")
+        let toolbar = try XCTUnwrap(window.toolbar)
+        XCTAssertEqual(toolbar.identifier, "LibraryToolbar")
+        XCTAssertEqual(toolbar.displayMode, .iconOnly)
+        XCTAssertTrue(toolbar.allowsUserCustomization)
+        XCTAssertTrue(toolbar.autosavesConfiguration)
+        let toolbarCommand = NSMenuItem(title: "Toolbar", action: Selector(("toggleToolbarShown:")), keyEquivalent: "")
+        toolbar.isVisible = false
+        XCTAssertTrue(controller.validateLibraryMenuItem(toolbarCommand, in: window))
+        XCTAssertEqual(toolbarCommand.title, "Show Toolbar")
+        toolbar.isVisible = true
+        XCTAssertTrue(controller.validateLibraryMenuItem(toolbarCommand, in: window))
+        XCTAssertEqual(toolbarCommand.title, "Hide Toolbar")
+        XCTAssertEqual(controller.toolbarDefaultItemIdentifiers(toolbar), [.toggleSidebar, .sidebarTrackingSeparator,
+            .flexibleSpace, .libraryListSeparator, .libraryEditorMode, .flexibleSpace, .libraryFavorite,
+            .libraryAssistant, .librarySearch, .inspectorTrackingSeparator, .toggleInspector])
+        for id in [NSToolbarItem.Identifier.libraryReveal, .libraryImport, .libraryDelete, .space] {
+            XCTAssertTrue(controller.toolbarAllowedItemIdentifiers(toolbar).contains(id))
+        }
+    }
+
+    func testInspectorCollapseAndPresentationStayInSyncWithoutResizingWindow() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let item = try XCTUnwrap(controller.inspectorItem)
+        let window = try window()
+        let frame = window.frame
+        let minimum = window.contentMinSize
+        item.isCollapsed = false
+        XCTAssertTrue(controller.presentation.isInspectorVisible)
+        item.isCollapsed = true
+        XCTAssertFalse(controller.presentation.isInspectorVisible)
+        controller.presentation.showInspector(.fields)
+        controller.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertFalse(item.isCollapsed)
+        controller.presentation.setInspectorVisible(false)
+        controller.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertTrue(item.isCollapsed)
+        XCTAssertEqual(window.frame, frame)
+        XCTAssertEqual(window.contentMinSize, minimum)
+    }
+
+    func testWindowDocumentIdentityAndEditorModeCommands() throws {
+        try put("---\ntitle: Display Title\n---\nBody", at: "folder/one.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let presentation = controller.presentation
+        let window = try window()
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(window.title, "All Prompts")
+        XCTAssertEqual(window.subtitle, "1 prompt")
+        XCTAssertNil(window.representedURL)
+        XCTAssertFalse(window.isDocumentEdited)
+        presentation.selectSection(.favourites)
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(window.title, "Favourites")
+        XCTAssertEqual(window.subtitle, "0 prompts")
+        presentation.selectSection(.all)
+        presentation.selectPath("folder/one.md")
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(window.title, "Display Title")
+        XCTAssertEqual(window.subtitle, "folder/one.md")
+        XCTAssertEqual(window.representedURL, root.appendingPathComponent("folder/one.md"))
+        presentation.setFilter("No match")
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(window.title, "Display Title", "A filtered-out row never changes the open document title")
+        presentation.setFilter("")
+        presentation.edit("Draft")
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.03))
+        XCTAssertTrue(window.isDocumentEdited)
+        controller.showPreview(nil)
+        XCTAssertEqual(presentation.editorMode, .preview)
+        let toolbar = try XCTUnwrap(window.toolbar)
+        let group = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .libraryEditorMode,
+            willBeInsertedIntoToolbar: false) as? NSToolbarItemGroup)
+        group.selectedIndex = 0
+        controller.selectEditorMode(group)
+        XCTAssertEqual(presentation.editorMode, .edit)
+        group.selectedIndex = 1
+        controller.selectEditorMode(group)
+        XCTAssertEqual(presentation.editorMode, .preview)
+        controller.showEdit(nil)
+        XCTAssertEqual(presentation.editorMode, .edit)
+        let item = NSMenuItem(title: "Preview", action: #selector(LibraryWindowController.showPreview(_:)), keyEquivalent: "2")
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        XCTAssertEqual(item.state, .off)
+        controller.showPreview(nil)
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        XCTAssertEqual(item.state, .on)
+        controller.showInFinder(nil)
+        XCTAssertEqual(revealed, [root.appendingPathComponent("folder/one.md")])
+    }
+
+    func testPromptTableRowsTypeSelectionKeyboardOpenAndDeleteIntent() throws {
+        try put("---\ntitle: Alpha\ndescription: A description\n---\nBody", at: "a.md")
+        try put("---\ntitle: Beta\ntags: [code]\n---\nBody", at: "folder/b.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let list = try XCTUnwrap(controller.promptList)
+        let table = list.tableView
+        XCTAssertEqual(table.numberOfRows, 2)
+        XCTAssertNil(table.headerView)
+        XCTAssertTrue(table.allowsTypeSelect)
+        XCTAssertTrue(table.allowsEmptySelection)
+        XCTAssertFalse(table.allowsMultipleSelection)
+        let cell = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 0) as? LibraryPromptCell)
+        XCTAssertEqual(cell.titleField.stringValue, "Alpha")
+        XCTAssertEqual(cell.detailField.stringValue, "A description")
+        let second = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 1) as? LibraryPromptCell)
+        XCTAssertEqual(second.detailField.stringValue, "folder · #code")
+        XCTAssertEqual(list.tableView(table, typeSelectStringFor: table.tableColumns.first, row: 1), "Beta")
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        XCTAssertEqual(controller.presentation.editorState.prompt?.relativePath, "folder/b.md")
+        controller.presentation.setFilter("Alpha")
+        XCTAssertEqual(table.selectedRow, -1, "A hidden selection has no highlighted row")
+        XCTAssertEqual(controller.presentation.editorState.prompt?.relativePath, "folder/b.md")
+        controller.presentation.setFilter("")
+        let revision = controller.presentation.editorFocusRevision
+        table.keyDown(with: try key(kVK_Return, in: try window()))
+        XCTAssertGreaterThan(controller.presentation.editorFocusRevision, revision)
+        table.keyDown(with: try key(kVK_Delete, modifiers: .command, in: try window()))
+        XCTAssertEqual(controller.presentation.fileCommandRequest?.command, .delete)
+    }
+
+    func testSelectionDefersMouseUpAndCancelsDraggedClick() {
+        var buttonDown = false
+        var opened: [RelativePath] = []
+        let deferral = LibrarySelectionDeferral(isButtonDown: { buttonDown }, open: { opened.append($0) })
+        deferral.select("keyboard.md")
+        XCTAssertEqual(opened, ["keyboard.md"])
+        buttonDown = true
+        deferral.beginMouseSelection("mouse.md")
+        deferral.select("mouse.md")
+        XCTAssertEqual(opened, ["keyboard.md"])
+        buttonDown = false
+        deferral.endMouseSelection()
+        XCTAssertEqual(opened, ["keyboard.md", "mouse.md"])
+        buttonDown = true
+        deferral.beginMouseSelection("drag.md")
+        deferral.select("drag.md")
+        deferral.beginDrag()
+        buttonDown = false
+        deferral.endMouseSelection()
+        XCTAssertEqual(opened, ["keyboard.md", "mouse.md"])
+    }
+
+    func testLibraryValidationRejectsSheetsNoPromptAndUnavailableLibrary() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let window = try window()
+        let item = NSMenuItem(title: EditorStrings.save,
+            action: #selector(LibraryWindowController.saveDocument(_:)), keyEquivalent: "s")
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        controller.presentation.selectPath("one.md")
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        let sheet = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        sheet.isReleasedWhenClosed = false
+        window.beginSheet(sheet)
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        window.endSheet(sheet)
+        sheet.orderOut(nil)
+        controller.presentation.setLibraryAvailable(false)
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+    }
+
+    func testSearchFieldActionsKeepTheBrowserFilterInSync() throws {
+        try put("Alpha", at: "alpha.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let search = try XCTUnwrap(controller.searchItem?.searchField)
+        XCTAssertTrue(search.target === controller)
+        XCTAssertEqual(search.action, #selector(LibraryWindowController.filterSearch(_:)))
+        search.stringValue = "Alpha"
+        controller.filterSearch(search)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Alpha")
+        let editor = NSTextView()
+        editor.string = "Alpha"
+        let cancel = #selector(NSResponder.cancelOperation(_:))
+        XCTAssertTrue(controller.control(search, textView: editor, doCommandBy: cancel))
+        XCTAssertEqual(editor.string, "")
+        controller.searchFieldDidEndSearching(search)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "")
+        XCTAssertFalse(controller.control(search, textView: editor, doCommandBy: cancel), "Empty Search ends natively")
+        search.stringValue = "Alpha"
+        controller.filterSearch(search)
+        editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        XCTAssertFalse(controller.control(search, textView: editor, doCommandBy: cancel))
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Alpha")
+        editor.unmarkText()
+        controller.presentation.setFilter("Other")
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(search.stringValue, "Other")
+    }
+
+    func testFindWithoutAnOpenEditorFocusesLibrarySearch() throws {
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let item = NSMenuItem(title: "Find…", action: #selector(LibraryWindowController.performFindPanelAction(_:)), keyEquivalent: "f")
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        controller.performFindPanelAction(item)
+        let search = try XCTUnwrap(controller.searchItem?.searchField)
+        let responder = try window().firstResponder
+        XCTAssertTrue(responder === search.currentEditor() || responder === search)
     }
 
     func testLibrarySwitchRebindsExistingWindowAndRetiresOldBrowserAndCallbacks() throws {
