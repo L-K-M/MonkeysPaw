@@ -571,8 +571,13 @@ final class LinuxLibraryImportTests: XCTestCase {
     private func click(_ name: String, in window: GTK.Widget) throws {
         let requests = chooser.requests.count
         if name == "library-import" || name == "library-import-folder" {
+            let action = name == "library-import" ? "import-files" : "import-folder"
+            XCTAssertNotEqual(g_action_group_get_action_enabled(mp_window_action_group(window), action), 0)
             g_action_group_activate_action(mp_window_action_group(window),
-                name == "library-import" ? "import-files" : "import-folder", nil)
+                action, nil)
+            let button = try settingsWidget(name, in: window)
+            // GtkButton's timed activation needs the newly revealed bar mapped.
+            XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_mapped(button) != 0 })
         }
         XCTAssertNotEqual(gtk_widget_activate(try settingsWidget(name, in: window)), 0)
         if name == "library-import" || name == "library-import-folder" {

@@ -232,8 +232,9 @@ final class LinuxPanel: PanelWindow {
         let captions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
         gtk_widget_set_hexpand(captions, 1)
         let sessionLabel = GTK.label(LinuxStrings.pickerSession(session))
-        hint = GTK.label(LinuxStrings.pickerHint)
+        hint = GTK.label(picker.deliveryHint + " · " + LinuxPickerStrings.escapePicker)
         gtk_widget_set_name(hint, "picker-hint")
+        gtk_widget_set_tooltip_text(hint, LinuxStrings.pickerHint)
         gtk_widget_set_hexpand(hint, 1)
         gtk_label_set_wrap(mp_label(hint), 0)
         gtk_label_set_ellipsize(mp_label(hint), PANGO_ELLIPSIZE_END)

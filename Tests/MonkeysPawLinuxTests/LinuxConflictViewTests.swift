@@ -434,15 +434,17 @@ final class LinuxConflictViewTests: XCTestCase {
         gtk_expander_set_expanded(mp_expander(try widget("library-conflict-comparison")), 1)
     }
     private func resolved(_ action: ConflictResolutionAction) throws {
+        // Resolution includes durable journal I/O. Drain the accepted worker
+        // with the suite's I/O budget before checking its GLib publication.
+        waitForModelDrain()
         XCTAssertTrue(GTKTestSupport.spin { self.outcomes.contains(action) },
             "Resolution not observed: operation=\(String(describing: environment.conflictModel?.state.operation)) resolved=\(String(describing: environment.conflictModel?.state.resolved)) errorPresent=\(environment.conflictModel?.state.error != nil) writes=\(transport.originalPuts.count)")
-        waitForModelDrain()
     }
     private func waitForModelDrain(_ model: ConflictModel? = nil) {
         guard let model = model ?? environment?.conflictModel else { return }
         let done = ConflictViewFlag()
         Task.detached { await model.drain(); done.set() }
-        XCTAssertTrue(GTKTestSupport.spin { done.value })
+        XCTAssertTrue(GTKTestSupport.spin(until: { done.value }, timeout: Self.syncIOTimeout))
         drain()
     }
     private func widget(_ name: String) throws -> GTK.Widget { try settingsWidget(name, in: XCTUnwrap(window)) }
