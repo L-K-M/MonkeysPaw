@@ -120,7 +120,7 @@ final class LinuxLibraryWindow {
             if self.isVisible { self.syncStatusView.show(); self.render() }
             else {
                 self.newPromptRequest = nil
-                self.endDialog()
+                if case .newPrompt = self.activeDialog { self.endDialog() }
                 self.syncStatusView.suspend()
                 self.commands.cancelDialog(); self.assistantPanel.close(); self.conflictView.close()
             }
