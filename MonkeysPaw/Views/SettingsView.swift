@@ -3,9 +3,12 @@ import SwiftUI
 
 /// Each model's view hook has one owner; independent service observers survive.
 final class SettingsViewState: ObservableObject {
-    enum Tab: Hashable { case general, shortcuts, delivery, assistant, account }
+    enum Tab: Int, CaseIterable { case general, shortcuts, delivery, assistant, account }
     @Published var selectedTab: Tab = .general {
-        didSet { updateAccountVisibility() }
+        didSet {
+            updateAccountVisibility()
+            if selectedTab != oldValue { onSelectedTabChange?(selectedTab) }
+        }
     }
     @Published private(set) var general: GeneralSettingsModel.State
     @Published private(set) var togglePicker: ShortcutsSettingsModel.ActionState
@@ -24,6 +27,7 @@ final class SettingsViewState: ObservableObject {
     let account: AccountSettingsViewState
     var onChooseFolder: (() -> Void)?
     var onRememberedValuesChange: (() -> Void)?
+    var onSelectedTabChange: ((Tab) -> Void)?
     /// An installed override may return nil to hide a resolved busy outcome.
     var librarySwitchMessage: (() -> String?)?
     private let openSetup: () -> Void
@@ -201,47 +205,31 @@ final class SettingsViewState: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var presentation: SettingsViewState
+    let pane: SettingsViewState.Tab
 
+    @ViewBuilder
     var body: some View {
-        TabView(selection: $presentation.selectedTab) {
-            general.tabItem { Text(Strings.generalTab) }.tag(SettingsViewState.Tab.general)
-            shortcuts.tabItem { Text(Strings.shortcutsTab) }.tag(SettingsViewState.Tab.shortcuts)
+        switch pane {
+        case .general: general
+        case .shortcuts: shortcuts
+        case .delivery:
             SettingsDeliveryView(presentation: presentation.delivery)
-                .tabItem { Text(DeliverySettingsStrings.title) }.tag(SettingsViewState.Tab.delivery)
+        case .assistant:
             if let assistant = presentation.assistant {
-                SettingsAssistantView(presentation: assistant).tabItem { Text(SettingsAssistantStrings.tab) }
-                    .tag(SettingsViewState.Tab.assistant)
+                SettingsAssistantView(presentation: assistant)
+            } else {
+                ProgressView(SettingsAssistantStrings.progress(.loading))
             }
+        case .account:
             SettingsAccountView(presentation: presentation.account)
-                .tabItem { Text(SettingsAccountStrings.tab) }.tag(SettingsViewState.Tab.account)
-                .onAppear { presentation.updateAccountVisibility() }
         }
-        // Composition also publishes when a refused drain restores models but
-        // General's path/outcome is unchanged, so its onChange need not fire.
-        .onReceive(presentation.objectWillChange) { _ in presentation.account.refreshBinding() }
     }
 
     private var general: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(Strings.libraryFolder).font(.headline)
-                Text(presentation.general.activeLibraryPath)
-                    .textSelection(.enabled)
-                    .accessibilityLabel(Strings.libraryFolder)
-                    .accessibilityValue(presentation.general.activeLibraryPath)
-                Text(presentation.general.isDefaultLibrary ? Strings.defaultLibraryFolder : Strings.chosenLibraryFolder)
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Button(Strings.chooseFolder) { presentation.chooseFolder() }
-                        .disabled(presentation.isChoosingFolder)
-                    Button(Strings.useDefaultFolder) { presentation.useDefaultFolder() }
-                        .disabled(!presentation.canUseDefault)
-                    Button(Strings.showInFinder) { presentation.revealFolder() }
-                }
-                ForEach(presentation.generalMessages, id: \.self) { message in
-                    Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-                }
-                Divider()
+        Form {
+            libraryFolder
+            Section {
+                Text(Strings.rememberedValuesExplanation)
                 Button(Strings.forgetAllValues, action: presentation.requestForgetAll)
                     .disabled(presentation.isChoosingFolder || presentation.rememberedValues.confirmation != .none)
                     .accessibilityLabel(Strings.forgetAllValues)
@@ -251,26 +239,51 @@ struct SettingsView: View {
                         .accessibilityLabel(message)
                         .accessibilityIdentifier("settings-forget-message")
                 }
-                Divider()
-                SettingsUpdateView(presentation: presentation.updates)
+            } header: {
+                Text(Strings.rememberedValues)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            SettingsUpdateView(presentation: presentation.updates)
+        }
+        .formStyle(.grouped)
+    }
+
+    private var libraryFolder: some View {
+        Section {
+            LabeledContent(Strings.libraryFolder) {
+                Label(presentation.general.activeLibraryPath, systemImage: "folder")
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(presentation.general.activeLibraryPath)
+                    .accessibilityLabel(Strings.libraryFolder)
+                    .accessibilityValue(presentation.general.activeLibraryPath)
+            }
+            HStack {
+                Button(Strings.chooseFolder, action: presentation.chooseFolder)
+                    .disabled(presentation.isChoosingFolder)
+                Button(Strings.useDefaultFolder, action: presentation.useDefaultFolder)
+                    .disabled(!presentation.canUseDefault)
+                Button(Strings.showInFinder, action: presentation.revealFolder)
+            }
+            ForEach(presentation.generalMessages, id: \.self) { message in
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+        } header: {
+            Text(Strings.libraryFolder)
+        } footer: {
+            Text(presentation.general.isDefaultLibrary ? Strings.defaultLibraryFolder : Strings.chosenLibraryFolder)
         }
     }
 
     private var shortcuts: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                ShortcutSettingsRow(presentation: presentation, action: .togglePicker)
-                Divider()
-                ShortcutSettingsRow(presentation: presentation, action: .repeatLast)
-                Divider()
+        Form {
+            ShortcutSettingsRow(presentation: presentation, action: .togglePicker)
+            ShortcutSettingsRow(presentation: presentation, action: .repeatLast)
+            Section {
                 Button(Strings.openSetup) { presentation.showSetup() }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
         }
+        .formStyle(.grouped)
     }
 }
 
@@ -282,23 +295,31 @@ private struct ShortcutSettingsRow: View {
     private var title: String { action == .togglePicker ? Strings.togglePicker : Strings.repeatLast }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.headline)
-            Text(Strings.shortcutBinding(state.binding))
-            if let registration = state.registration {
-                Text(Strings.shortcutRegistration(registration))
-                Text(registration.detail).font(.caption).foregroundStyle(.secondary)
-            }
+        Section {
+            LabeledContent(Strings.shortcutBindingLabel) { Text(Strings.shortcutBinding(state.binding)) }
             shortcutChange
-            if let error = presentation.displayedShortcutError(for: action) {
-                Text(error).foregroundStyle(.red)
+            if let registration = state.registration {
+                Label(Strings.shortcutRegistration(registration), systemImage: registrationSymbol)
+                    .foregroundStyle(registrationColor)
             }
-            if let instructions = presentation.instructions(for: action) { Text(instructions) }
+            if let error = presentation.displayedShortcutError(for: action) {
+                Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            }
             HStack {
-                Button(SetupStrings.pressShortcut) { presentation.beginVerification(action) }
+                Button(Strings.testShortcut) { presentation.beginVerification(action) }
                     .disabled(!presentation.canVerifyShortcut(action))
                     .accessibilityLabel(Strings.verifyShortcutLabel(title))
-                Text(Strings.shortcutVerification(state.verification))
+                Label(Strings.shortcutVerification(state.verification), systemImage: verificationSymbol)
+                    .foregroundStyle(state.verification == .verified ? Color.green : Color.secondary)
+            }
+        } header: {
+            Text(title)
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                if let registration = state.registration { Text(registration.detail) }
+                if state.changePath == .inApp { Text(Strings.shortcutCaptureHint) }
+                if let guidance = changeGuidance { Text(guidance) }
+                if let instructions = presentation.instructions(for: action) { Text(instructions) }
             }
         }
         .accessibilityIdentifier("settings-shortcut-" + action.rawValue)
@@ -307,7 +328,6 @@ private struct ShortcutSettingsRow: View {
     @ViewBuilder private var shortcutChange: some View {
         switch state.changePath {
         case .inApp:
-            Text(Strings.shortcutCaptureHint).font(.caption).foregroundStyle(.secondary)
             HStack {
                 ShortcutRecorder(label: Strings.recordShortcutLabel(title), onCapture: {
                     presentation.setAccelerator($0, for: action)
@@ -321,10 +341,35 @@ private struct ShortcutSettingsRow: View {
             Button(Strings.changeShortcut) { presentation.performPlatformChange(for: action) }
         case .setup:
             Button(Strings.configureShortcut) { presentation.performPlatformChange(for: action) }
-        case .systemSettingsGuidance(let text), .manualInstructions(let text):
-            Text(text)
-        case .unavailable:
+        case .systemSettingsGuidance, .manualInstructions, .unavailable:
             EmptyView()
         }
+    }
+
+    private var changeGuidance: String? {
+        switch state.changePath {
+        case .systemSettingsGuidance(let text), .manualInstructions(let text): return text
+        default: return nil
+        }
+    }
+
+    private var registrationSymbol: String {
+        switch state.registrationStatus {
+        case .registered: return "checkmark.circle.fill"
+        case .needsAction, .failed: return "exclamationmark.circle.fill"
+        case .unbound, nil: return "questionmark.circle"
+        }
+    }
+
+    private var registrationColor: Color {
+        switch state.registrationStatus {
+        case .registered: return .green
+        case .needsAction, .failed: return .orange
+        case .unbound, nil: return .secondary
+        }
+    }
+
+    private var verificationSymbol: String {
+        state.verification == .verified ? "checkmark.circle.fill" : "questionmark.circle"
     }
 }

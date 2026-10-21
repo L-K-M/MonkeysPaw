@@ -1,6 +1,7 @@
 import MonkeysPawCore
 
 enum SettingsDeliveryStrings {
+    static let pasteChord = "⌘V"
     static let restoreOwnership = "Restore skips newer clipboard copies, including identical text. A simultaneous external copy cannot be excluded by the operating system."
 
     static func status(_ snapshot: DeliveryStatusSnapshot?) -> String {

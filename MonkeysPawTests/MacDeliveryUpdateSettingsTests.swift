@@ -426,7 +426,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let page = try show()
         let content = NSHostingView(rootView: VStack {
             SettingsDeliveryView(presentation: page.delivery)
-            SettingsUpdateView(presentation: page.updates)
+            Form { SettingsUpdateView(presentation: page.updates) }.formStyle(.grouped)
         })
         // Like the shortcut tests, this host can become key while XCTest's app is inactive.
         let window = MacSettingsKeyViewPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 1400),

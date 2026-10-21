@@ -3,9 +3,12 @@ import MonkeysPawCore
 
 enum SettingsUpdateStrings {
     static let title = "Updates"
-    static let automatic = "Automatically check for updates"
+    static let automatic = "Check for updates automatically"
+    static let currentVersion = "Current version"
+    static let unavailableVersion = "unavailable"
+    static let lastCheck = "Last successful check"
     static let checkNow = "Check Now"
-    static let viewRelease = "View release"
+    static let viewRelease = "View Release"
     static let disclosure = "Automatically checks stable releases on GitHub at most once a day. GitHub receives your IP address and app version; no prompts, field values or account details. Check Now works while automatic checks are off. View release opens your browser; install updates yourself."
     static let openingFailed = "The release page could not be opened. Check your default browser and try again."
 
@@ -14,8 +17,10 @@ enum SettingsUpdateStrings {
     }
 
     static func lastChecked(_ date: Date?) -> String {
-        "Last successful check: " + (date.map(timestamp) ?? "never")
+        lastCheck + ": " + checkDate(date)
     }
+
+    static func checkDate(_ date: Date?) -> String { date.map(timestamp) ?? "never" }
 
     static func result(_ snapshot: UpdateSnapshot?) -> String {
         guard let snapshot else { return "Reading update status…" }

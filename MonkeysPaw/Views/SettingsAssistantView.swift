@@ -95,24 +95,19 @@ struct SettingsAssistantView: View {
     @ObservedObject var presentation: AssistantSettingsViewState
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                profiles
-                if presentation.state.isNewProfile {
-                    Text(SettingsAssistantStrings.newProfile).font(.caption)
-                }
-                if presentation.state.draft != nil { editor }
-                else if presentation.state.operation == nil { Text(SettingsAssistantStrings.empty) }
-                status
+        Form {
+            profiles
+            if presentation.state.draft != nil { editor }
+            else if presentation.state.operation == nil {
+                Section { Text(SettingsAssistantStrings.empty) }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
+            status
         }
+        .formStyle(.grouped)
     }
 
     private var profiles: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(SettingsAssistantStrings.profiles).font(.headline)
+        Section {
             List(selection: Binding(get: { presentation.profileSelection }, set: presentation.selectProfile)) {
                 ForEach(presentation.state.profiles, id: \.id) { profile in
                     Text(SettingsAssistantStrings.profileRow(profile.displayName,
@@ -123,66 +118,99 @@ struct SettingsAssistantView: View {
             .frame(height: 100)
             .disabled(!presentation.canChangeProfiles)
             .accessibilityLabel(SettingsAssistantStrings.profiles)
-            Text(presentation.activeProfileMessage).font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button(SettingsAssistantStrings.add, action: presentation.addProfile)
-                Button(SettingsAssistantStrings.delete, action: presentation.deleteProfile)
+                Button(action: presentation.addProfile) {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel(SettingsAssistantStrings.add)
+                .help(SettingsAssistantStrings.add)
+                Button(action: presentation.deleteProfile) {
+                    Image(systemName: "minus")
+                }
+                    .accessibilityLabel(SettingsAssistantStrings.delete)
+                    .help(SettingsAssistantStrings.delete)
                     .disabled(presentation.state.draft == nil)
+                Spacer()
                 if presentation.canActivateDraft {
                     Button(SettingsAssistantStrings.makeActive, action: presentation.activateProfile)
                 }
                 Button(SettingsAssistantStrings.disable) { presentation.selectProfile(nil) }
             }
+            .controlSize(.small)
+            .buttonStyle(.borderless)
             .disabled(!presentation.canChangeProfiles)
+        } header: {
+            Text(SettingsAssistantStrings.profiles)
+        } footer: {
+            Text(presentation.activeProfileMessage)
+            if presentation.state.isNewProfile { Text(SettingsAssistantStrings.newProfile) }
         }
     }
 
     private var editor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField(SettingsAssistantStrings.name, text: Binding(
-                get: { presentation.state.draft?.displayName ?? "" }, set: presentation.renameProfile))
-                .accessibilityLabel(SettingsAssistantStrings.name)
+        Section {
+            LabeledContent(SettingsAssistantStrings.name) {
+                TextField(SettingsAssistantStrings.name, text: Binding(
+                    get: { presentation.state.draft?.displayName ?? "" }, set: presentation.renameProfile))
+                    .labelsHidden().accessibilityLabel(SettingsAssistantStrings.name)
+            }
             Picker(SettingsAssistantStrings.kind, selection: Binding(
                 get: { presentation.state.draft?.kind ?? .anthropic }, set: presentation.setKind)) {
                 Text(SettingsAssistantStrings.anthropic).tag(ProviderKind.anthropic)
                 Text(SettingsAssistantStrings.compatible).tag(ProviderKind.openaiCompatible)
             }
-            TextField(SettingsAssistantStrings.baseURL, text: Binding(
-                get: { presentation.state.draft?.baseURL ?? "" }, set: presentation.setBaseURL))
-                .accessibilityLabel(SettingsAssistantStrings.baseURL)
-            TextField(SettingsAssistantStrings.modelID, text: Binding(
-                get: { presentation.state.draft?.modelID ?? "" }, set: presentation.setModelID))
-                .accessibilityLabel(SettingsAssistantStrings.modelID)
-            Menu(SettingsAssistantStrings.chooseModel) {
-                ForEach(presentation.state.availableModels, id: \.id) { model in
-                    Button(SettingsAssistantStrings.modelLabel(model)) { presentation.setModelID(model.id) }
+            LabeledContent(SettingsAssistantStrings.baseURL) {
+                TextField(SettingsAssistantStrings.baseURL, text: Binding(
+                    get: { presentation.state.draft?.baseURL ?? "" }, set: presentation.setBaseURL))
+                    .labelsHidden().accessibilityLabel(SettingsAssistantStrings.baseURL)
+            }
+            LabeledContent(SettingsAssistantStrings.modelID) {
+                HStack {
+                    TextField(SettingsAssistantStrings.modelID, text: Binding(
+                        get: { presentation.state.draft?.modelID ?? "" }, set: presentation.setModelID))
+                        .labelsHidden().accessibilityLabel(SettingsAssistantStrings.modelID)
+                    modelMenu
                 }
             }
-            .disabled(presentation.state.availableModels.isEmpty)
-            Text(SettingsAssistantStrings.manualModel).font(.caption).foregroundStyle(.secondary)
-            Divider()
-            Text(SettingsAssistantStrings.key).font(.headline)
-            SettingsAssistantKeyField(reset: presentation.state.keyInputReset,
-                isEditable: presentation.canEditDraft, onInput: presentation.setKeyInput)
-                .frame(height: 24)
+            LabeledContent(SettingsAssistantStrings.key) {
+                SettingsAssistantKeyField(reset: presentation.state.keyInputReset,
+                    isEditable: presentation.canEditDraft, onInput: presentation.setKeyInput)
+                    .frame(height: 24)
+            }
             HStack {
                 Button(SettingsAssistantStrings.keepKey, action: presentation.keepKey)
                 Button(SettingsAssistantStrings.clearKey, action: presentation.clearKey)
             }
-            Text(presentation.keyEditMessage).font(.caption).foregroundStyle(.secondary)
+        } header: {
+            Text(SettingsAssistantStrings.profile)
+        } footer: {
+            Text(SettingsAssistantStrings.manualModel)
+            Text(presentation.keyEditMessage)
             Text(presentation.storageMessage)
             if let warning = presentation.storageWarning {
-                Text(warning).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
         }
         .disabled(!presentation.canEditDraft)
     }
 
+    private var modelMenu: some View {
+        Menu(SettingsAssistantStrings.chooseModel) {
+            ForEach(presentation.state.availableModels, id: \.id) { model in
+                Button(SettingsAssistantStrings.modelLabel(model)) { presentation.setModelID(model.id) }
+            }
+        }
+        .fixedSize()
+        .disabled(presentation.state.availableModels.isEmpty)
+    }
+
     private var status: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Section {
             HStack {
-                Button(SettingsAssistantStrings.save, action: presentation.save).disabled(!presentation.canSave)
                 Button(SettingsAssistantStrings.test, action: presentation.testConnection).disabled(!presentation.canTest)
+                Button(SettingsAssistantStrings.save, action: presentation.save)
+                    .disabled(!presentation.canSave).keyboardShortcut(.defaultAction)
                 if presentation.state.isTesting {
                     Button(SettingsAssistantStrings.cancelTest, action: presentation.cancelTest)
                 }
@@ -197,7 +225,8 @@ struct SettingsAssistantView: View {
                 .accessibilityElement(children: .combine)
             }
             ForEach(presentation.errorMessages, id: \.self) { message in
-                Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
             if let message = presentation.testMessage {
                 Text(message).fixedSize(horizontal: false, vertical: true)

@@ -262,7 +262,9 @@ final class MacForgetControlsTests: XCTestCase {
         delegate.showSettings()
         let settings = try settings()
         let window = try XCTUnwrap(settings.window)
-        let hosting = try XCTUnwrap(window.contentView as? NSHostingView<SettingsView>)
+        let tabs = try XCTUnwrap(window.contentViewController as? NSTabViewController)
+        let hosting = try XCTUnwrap(tabs.tabViewItems[SettingsViewState.Tab.general.rawValue].viewController
+            as? NSHostingController<SettingsView>)
         XCTAssertTrue(hosting.rootView.presentation === settings.presentation)
         XCTAssertFalse(settings.presentation.isChoosingFolder)
         XCTAssertEqual(settings.presentation.rememberedValues.confirmation, .none)
