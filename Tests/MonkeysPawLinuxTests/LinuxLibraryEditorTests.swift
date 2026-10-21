@@ -214,6 +214,25 @@ final class LinuxLibraryEditorTests: XCTestCase {
         }
     }
 
+    func testCancellingConflictReenablesSaveWithoutAnotherModelChange() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Mine")
+        try files.delete(at: "a.md")
+        try waitForConflict(.deleted)
+        drain()
+        let conflict = environment.editorModel.state.conflict
+        XCTAssertFalse(actionEnabled("save", in: window))
+
+        gtk_window_close(mp_window(try XCTUnwrap(dialog)))
+
+        XCTAssertNil(dialog)
+        XCTAssertEqual(environment.editorModel.state.conflict, conflict)
+        XCTAssertEqual(environment.editorModel.state.source, "Mine")
+        XCTAssertTrue(actionEnabled("save", in: window),
+            "Dismissing the dialog must refresh actions without waiting for a model or focus event")
+    }
+
     func testDeletedConflictCancelKeepsDraftAndEachChoiceWorks() throws {
         for (index, choice) in [EditorConflictChoice.keepMine, .saveAsCopy, .discard].enumerated() {
             let path = "deleted-\(index).md"

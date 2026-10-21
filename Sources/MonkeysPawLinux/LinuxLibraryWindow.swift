@@ -1030,6 +1030,9 @@ final class LinuxLibraryWindow {
         dialog = LinuxEditorDialog(parent: window, state: desired) { [weak self] response in
             guard let self, !self.isDestroyed, self.dialogRevision == revision,
                   self.activeDialog == desired else { return }
+            // Cancelling a conflict can leave Core unchanged. Refresh the
+            // modal action gate even when no model publication follows.
+            defer { self.updateActions() }
             self.endDialog()
             switch (desired, response) {
             case (.decision(let decision, _), .decision(let choice)):
