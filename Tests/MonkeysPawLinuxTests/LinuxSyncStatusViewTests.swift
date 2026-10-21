@@ -264,8 +264,13 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         let fillHint = try XCTUnwrap(gtk_widget_get_tooltip_text(try settingsWidget("picker-hint", in: window)))
         XCTAssertEqual(String(cString: fillHint), LinuxStrings.fillHint)
         try click("picker-use", in: window)
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
-        XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
+        let pasteKeys = ["key", "--clearmodifiers", "ctrl+shift+v"]
+        XCTAssertTrue(GTKTestSupport.spin { self.tools.arguments.last == pasteKeys })
+        // Delivery precedes durable remembered-values, usage and repeat writes.
+        // Keep the paste response check separate from that learning I/O.
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.pickerModel.state == .done(.pasted(.xdotool))
+        }, timeout: Self.syncIOTimeout))
         let clipboard = StatusViewClipboard()
         GTKClipboard(owner: window).readText { clipboard.set($0) }
         XCTAssertTrue(GTKTestSupport.spin { clipboard.value == "Hello offline work" })

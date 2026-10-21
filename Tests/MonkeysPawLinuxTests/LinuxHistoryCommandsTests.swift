@@ -745,7 +745,17 @@ final class LinuxHistoryCommandsTests: XCTestCase {
     }
 
     private func wait(_ predicate: () -> Bool, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(GTKTestSupport.spin { self.work.releaseAll(); return predicate() }, file: file, line: line)
+        // Held work performs real disk I/O synchronously. Start each UI wait
+        // after that batch, so a slow write cannot spend its publication budget.
+        for _ in 0..<20 {
+            work.releaseAll()
+            if predicate() { return }
+            guard GTKTestSupport.spin(until: { predicate() || self.work.hasPending }) else {
+                XCTFail("Neither completion nor another work batch arrived", file: file, line: line)
+                return
+            }
+        }
+        XCTFail("Work did not settle after 20 batches", file: file, line: line)
     }
 
     private func drain(releaseWork: Bool = true) {
@@ -846,6 +856,7 @@ final class LinuxHistoryCommandsTests: XCTestCase {
 
 private final class LinuxHistoryHeldWork: BackgroundWork {
     private var pending: [() -> Void] = []
+    var hasPending: Bool { !pending.isEmpty }
     func run(_ work: @escaping () -> Void) { pending.append(work) }
     func releaseAll() { while !pending.isEmpty { pending.removeFirst()() } }
 }
