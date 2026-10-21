@@ -42,6 +42,7 @@ final class LinuxConflictView {
         gtk_scrolled_window_set_propagate_natural_height(mp_scrolled_window(scroll), 1)
         gtk_scrolled_window_set_child(mp_scrolled_window(scroll), diff.widget)
         let comparison = gtk_expander_new(LinuxLibraryStrings.comparison)!
+        gtk_widget_set_name(comparison, "library-conflict-comparison")
         gtk_expander_set_child(mp_expander(comparison), scroll)
         gtk_box_append(mp_box(content), comparison)
         gtk_widget_set_name(status, "conflict-status")

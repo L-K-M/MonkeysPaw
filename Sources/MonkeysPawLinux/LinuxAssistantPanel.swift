@@ -37,6 +37,7 @@ final class LinuxAssistantPanel {
     private let status = GTK.label("")
     private let footer = GTK.label("")
     private let diff = LinuxDiffView()
+    private let diffScroll = gtk_scrolled_window_new()!
     private var write: GTK.Widget!
     private var review: GTK.Widget!
     private var improve: GTK.Widget!
@@ -67,6 +68,7 @@ final class LinuxAssistantPanel {
         let scroll = gtk_scrolled_window_new()!
         gtk_widget_set_size_request(scroll, -1, 240)
         gtk_widget_set_vexpand(scroll, 1)
+        gtk_scrolled_window_set_policy(mp_scrolled_window(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
         gtk_scrolled_window_set_child(mp_scrolled_window(scroll), page)
         gtk_box_append(mp_box(widget), scroll)
         for (entry, name, title) in [(brief, "brief", "Write brief"), (instruction, "instruction", "Improve instruction"),
@@ -108,15 +110,23 @@ final class LinuxAssistantPanel {
         gtk_box_append(mp_box(page), draft)
         gtk_widget_set_name(notes, "assistant-notes")
         gtk_box_append(mp_box(page), notes)
-        gtk_box_append(mp_box(page), diff.widget)
+        // Comparisons can scroll across two columns without widening every
+        // other control and paragraph in the narrow inspector.
+        gtk_scrolled_window_set_policy(mp_scrolled_window(diffScroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER)
+        gtk_scrolled_window_set_child(mp_scrolled_window(diffScroll), diff.widget)
+        gtk_box_append(mp_box(page), diffScroll)
         gtk_widget_set_name(issues, "assistant-issues")
         gtk_label_set_selectable(mp_label(issues), 1)
         gtk_box_append(mp_box(page), issues)
-        let decisions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
-        showDiff = button("show-diff", "Show diff", in: decisions) { $0.model?.showDiff() }
-        accept = button("accept", "Accept", in: decisions) { $0.acceptCandidate() }
-        reject = button("reject", "Reject", in: decisions) { $0.reset(.reject) }
-        cancel = button("cancel", "Cancel", in: decisions) { $0.reset(.cancel) }
+        let decisions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
+        let first = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
+        let second = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
+        gtk_box_append(mp_box(decisions), first)
+        gtk_box_append(mp_box(decisions), second)
+        showDiff = button("show-diff", "Show diff", in: first) { $0.model?.showDiff() }
+        accept = button("accept", "Accept", in: first) { $0.acceptCandidate() }
+        reject = button("reject", "Reject", in: second) { $0.reset(.reject) }
+        cancel = button("cancel", "Cancel", in: second) { $0.reset(.cancel) }
         gtk_box_append(mp_box(page), decisions)
         gtk_box_append(mp_box(page), feedback)
         retry = button("retry", "Retry with feedback", in: page) {
@@ -269,6 +279,7 @@ final class LinuxAssistantPanel {
         renderDraft(state.artifact, hasDiff: state.diff != nil)
         onAvailabilityChange?()
         diff.update(state.diff)
+        gtk_widget_set_visible(diffScroll, state.diff == nil ? 0 : 1)
         let warnings = state.diff?.placeholderWarnings.map(LinuxAssistantStrings.placeholder) ?? []
         setLabel(issues, (state.issues.map(LinuxEditorStrings.issue) + warnings).joined(separator: "\n"))
         if let highlightedFinding, state.phase == .working || model.highlightFinding(at: highlightedFinding) == nil {

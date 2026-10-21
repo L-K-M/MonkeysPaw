@@ -420,7 +420,7 @@ final class LinuxConflictViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin {
             guard let row = gtk_list_box_get_row_at_index(mp_list_box(list), Int32(index)),
                   let content = gtk_list_box_row_get_child(row) else { return false }
-            return self.labels(content).contains(ConflictViewTransport.copyPath)
+            return gtk_widget_get_tooltip_text(content).map { String(cString: $0) } == ConflictViewTransport.copyPath
         }, "Conflict copy did not appear in the native Library list")
         gtk_list_box_select_row(mp_list_box(list), gtk_list_box_get_row_at_index(mp_list_box(list), Int32(index)))
         try ready()
@@ -431,9 +431,11 @@ final class LinuxConflictViewTests: XCTestCase {
             && self.environment.conflictModel?.state.isBusy == false
             && (try? self.sensitive("conflict-keep-both")) == true })
         drain()
+        gtk_expander_set_expanded(mp_expander(try widget("library-conflict-comparison")), 1)
     }
     private func resolved(_ action: ConflictResolutionAction) throws {
-        XCTAssertTrue(GTKTestSupport.spin { self.outcomes.contains(action) })
+        XCTAssertTrue(GTKTestSupport.spin { self.outcomes.contains(action) },
+            "Resolution not observed: operation=\(String(describing: environment.conflictModel?.state.operation)) resolved=\(String(describing: environment.conflictModel?.state.resolved)) errorPresent=\(environment.conflictModel?.state.error != nil) writes=\(transport.originalPuts.count)")
         waitForModelDrain()
     }
     private func waitForModelDrain(_ model: ConflictModel? = nil) {

@@ -196,6 +196,9 @@ final class LinuxLibraryNativeStructureTests: XCTestCase {
         let dialog = try XCTUnwrap(commandDialog)
         g_action_group_change_action_state(group, "inspector", g_variant_new_boolean(0))
         XCTAssertNotEqual(gtk_widget_get_visible(inspector), 0)
+        let state = try XCTUnwrap(g_action_group_get_action_state(group, "inspector"))
+        defer { g_variant_unref(state) }
+        XCTAssertNotEqual(g_variant_get_boolean(state), 0, "A refused request must preserve the action state as well as the pane")
         gtk_window_close(mp_window(dialog))
     }
 

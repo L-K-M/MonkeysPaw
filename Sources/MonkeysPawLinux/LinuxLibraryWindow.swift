@@ -475,8 +475,8 @@ final class LinuxLibraryWindow {
             && state.status != .saving && state.status != .commandRunning
         case .rename, .move, .delete: return commands.canRun
         case .favorite: return browser.map { canFavorite($0.state) } ?? false
-        case .review: return editorAvailable && assistantPanel.canStart(.review)
-        case .improve: return editorAvailable && assistantPanel.canStart(.improve)
+        case .review: return editorAvailable && assistantProvider() != nil && assistantPanel.canStart(.review)
+        case .improve: return editorAvailable && assistantProvider() != nil && assistantPanel.canStart(.improve)
         case .importFiles, .importFolder: return importView?.canImport == true
         case .showFiles: return available && state.prompt != nil
         case .edit, .preview: return state.prompt != nil
@@ -519,6 +519,9 @@ final class LinuxLibraryWindow {
         case .history: showInspector("history")
         case .assistant: showInspector("assistant")
         case .review, .improve:
+            guard let editor, let model = assistantProvider() else { return false }
+            assistantPanel.bind(model: model, editor: editor, available: available && !conflictView.isResolving)
+            guard assistantPanel.canStart(command == .review ? .review : .improve) else { return false }
             showInspector("assistant")
             return assistantPanel.start(command == .review ? .review : .improve)
         case .importFiles: importView?.show(.files)
@@ -1122,6 +1125,7 @@ final class LinuxLibraryWindow {
                     badges.append(label)
                 }
                 mp_accessible_label(content, ([row.title, row.relativePath.string] + badges).joined(separator: ", "))
+                gtk_widget_set_tooltip_text(content, row.relativePath.string)
                 commands.installDrag(on: content, selection: row.selection)
                 gtk_list_box_append(mp_list_box(list), content)
             }
