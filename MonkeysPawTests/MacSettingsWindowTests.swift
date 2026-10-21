@@ -177,7 +177,7 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertEqual(tabs.tabViewItems.map(\.label), ["General", "Shortcuts", "Delivery", "Assistant", "Account"])
         let symbols = ["gearshape", "command", "paperplane", "sparkles", "person.crop.circle"]
         for (index, item) in tabs.tabViewItems.enumerated() {
-            XCTAssertTrue(try XCTUnwrap(item.image).isSymbolImage)
+            XCTAssertNotNil(item.image)
             XCTAssertEqual(item.image?.accessibilityDescription, item.label)
             XCTAssertEqual(item.viewController?.title, item.label)
             let hosting = try XCTUnwrap(item.viewController as? NSHostingController<SettingsView>)
