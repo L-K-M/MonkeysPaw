@@ -5,6 +5,8 @@ import SwiftUI
 
 struct ShortcutRecorder: NSViewRepresentable {
     var label = Strings.recordShortcut
+    /// The current shortcut shown on the control, such as "⌃⌥P".
+    var title: String? = nil
     let onCapture: (String) -> Void
     let onError: (ShortcutRebindError) -> Void
 
@@ -14,6 +16,7 @@ struct ShortcutRecorder: NSViewRepresentable {
         view.onCapture = onCapture
         view.onError = onError
         view.captureLabel = label
+        view.idleTitle = title
     }
 
     static func dismantleNSView(_ view: ShortcutRecorderButton, coordinator: ()) {
@@ -33,11 +36,19 @@ final class ShortcutRecorderButton: NSButton {
 
     var onCapture: ((String) -> Void)?
     var onError: ((ShortcutRebindError) -> Void)?
+    /// Accessibility always names the action; the visible title shows the
+    /// current shortcut when one exists, like System Settings' recorders.
     var captureLabel = Strings.recordShortcut {
         didSet {
             guard !isRecording else { return }
-            title = captureLabel
+            title = idleTitle ?? captureLabel
             setAccessibilityLabel(captureLabel)
+        }
+    }
+    var idleTitle: String? {
+        didSet {
+            guard !isRecording, idleTitle != oldValue else { return }
+            title = idleTitle ?? captureLabel
         }
     }
     private(set) var isRecording = false
@@ -79,7 +90,7 @@ final class ShortcutRecorderButton: NSButton {
 
     func stopCapture() {
         isRecording = false
-        title = captureLabel
+        title = idleTitle ?? captureLabel
         setAccessibilityLabel(captureLabel)
         removeObservers()
     }

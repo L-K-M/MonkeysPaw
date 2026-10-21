@@ -1,6 +1,8 @@
 import MonkeysPawCore
 
 enum SettingsAccountStrings {
+    static let serverPrompt = "https://paw.example.com"
+    static let requiredPrompt = "Required"
     static let tab = "Account"
     static let server = "Server address"
     static let username = "Username"

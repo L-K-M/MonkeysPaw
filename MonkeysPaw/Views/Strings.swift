@@ -28,14 +28,16 @@ enum Strings {
     static let togglePicker = "Show Picker"
     static let repeatLast = "Repeat Last Prompt"
     static let shortcutBindingLabel = "Shortcut"
+    static let shortcutStatusLabel = "Status"
+    static let libraryLocation = "Location"
     static let testShortcut = "Test Shortcut"
     static let openRepeatPrompt = "Open prompt"
     static let clearShortcut = "Clear"
     static let openSetup = "Open Setup…"
     static let changeShortcut = "Change shortcut…"
     static let configureShortcut = "Configure in Setup…"
-    static let recordShortcut = "Record shortcut…"
-    static let recordingShortcut = "Press a shortcut; Escape cancels"
+    static let recordShortcut = "Record Shortcut"
+    static let recordingShortcut = "Type Shortcut…"
     static let shortcutCaptureHint = "Record a key with Control, Option, Shift or Command. Escape cancels."
     static let unknownShortcut = "Your shortcut is unknown."
     static let shortcutUnavailable = "Your shortcut cannot be changed right now."
@@ -103,6 +105,57 @@ enum Strings {
         }
     }
 
+    /// Mac menus and System Settings show shortcuts as symbols in ⌃⌥⇧⌘ order,
+    /// for example "⌃⌥P". Unbound or unknown bindings have no symbol form.
+    static func shortcutSymbols(_ binding: ShortcutsSettingsModel.Binding) -> String? {
+        guard case .accelerator(let accelerator) = binding else { return nil }
+        let modifiers: [(Accelerator.Modifier, String)] = [
+            (.control, "⌃"), (.alt, "⌥"), (.shift, "⇧"), (.superKey, "Super+"), (.command, "⌘"),
+            (.commandOrControl, "⌘"),
+        ]
+        var text = ""
+        for (modifier, symbol) in modifiers where accelerator.modifiers.contains(modifier) { text += symbol }
+        return text + keySymbol(accelerator.key)
+    }
+
+    private static func keySymbol(_ key: Accelerator.Key) -> String {
+        guard case .named(let name) = key else { return acceleratorKeyName(key) }
+        switch name {
+        case .space: return "Space"
+        case .enter: return "↩"
+        case .tab: return "⇥"
+        case .escape: return "⎋"
+        case .backspace: return "⌫"
+        case .delete: return "⌦"
+        case .home: return "↖"
+        case .end: return "↘"
+        case .pageUp: return "⇞"
+        case .pageDown: return "⇟"
+        case .up: return "↑"
+        case .down: return "↓"
+        case .left: return "←"
+        case .right: return "→"
+        case .comma: return ","
+        case .period: return "."
+        case .slash: return "/"
+        case .backslash: return "\\"
+        case .minus: return "-"
+        case .equal: return "="
+        case .plus: return "+"
+        case .semicolon: return ";"
+        case .quote: return "'"
+        case .grave: return "`"
+        case .bracketLeft: return "["
+        case .bracketRight: return "]"
+        case .insert, .printScreen: return acceleratorKeyName(key)
+        }
+    }
+
+    /// macOS has one registration mechanism, so its status needs no "Carbon" prefix.
+    static func shortcutStatus(_ registration: HotkeyRegistration) -> String {
+        registration.mechanism == .carbon ? registrationStatus(registration.status) : shortcutRegistration(registration)
+    }
+
     /// Native capture and binding display share names the Core parser accepts.
     static func acceleratorKeyName(_ key: Accelerator.Key) -> String {
         switch key {
@@ -135,7 +188,7 @@ enum Strings {
     static func registrationStatus(_ status: RegistrationStatus) -> String {
         switch status {
         case .registered: return "Registered"
-        case .unbound: return "Unbound"
+        case .unbound: return "Not set"
         case .needsAction: return "Action required"
         case .failed: return "Failed"
         }
@@ -206,7 +259,7 @@ enum Strings {
     static let accessibilityFix = "Grant Monkey's Paw in System Settings → Privacy & Security → Accessibility. An app update may require a new grant."
     static let selfTestWindowTitle = "Monkey's Paw Paste Test"
     static let selfTestPlaceholder = "The self-test pastes here"
-    static let defaultHotkey = "Carbon default: ⌃⌥P"
+    static let defaultHotkey = "Default shortcut: ⌃⌥P"
     static let carbonRegistered = "Carbon shortcut registered"
     static let carbonUnsupportedKey = "This key has no macOS Carbon shortcut equivalent. Choose another key."
     static let carbonOverlappingModifiers = "This shortcut repeats the Command modifier. Use Command only once."
@@ -222,7 +275,7 @@ enum Strings {
         case .accessibility: return "Accessibility"
         case .portal: return "GNOME/KDE portal"
         case .ydotool: return "ydotool"
-        case .hotkey: return "Hotkey"
+        case .hotkey: return "Keyboard Shortcut"
         case .kde: return "KDE shortcut"
         }
     }

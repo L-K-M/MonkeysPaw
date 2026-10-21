@@ -64,13 +64,17 @@ struct PickerView: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
                 Text(Strings.pasteTarget(presentation.pasteTarget))
                     .lineLimit(1).truncationMode(.tail)
                     .help(Strings.pasteTarget(presentation.pasteTarget))
                     .accessibilityIdentifier("picker-target")
-                if let syncStatus = presentation.syncStatus { SyncStatusView(presentation: syncStatus) }
+                if let syncStatus = presentation.syncStatus {
+                    Text("·").accessibilityHidden(true)
+                    SyncStatusView(presentation: syncStatus).fixedSize()
+                }
             }
+            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             PickerActionsView(presentation: presentation).fixedSize()
         }
@@ -99,11 +103,13 @@ struct PickerView: View {
     private var selectedDescription: String? { selectedRow?.previewLine }
 }
 
+/// Focus stays in the search field, as in Spotlight, so the list draws its
+/// own accent selection instead of a native list's inactive grey.
 private struct PickerResultsView: View {
     private struct IndexedResult: Identifiable {
         let position: Int
         let row: PickerResultRow
-        var id: RelativePath { RelativePath(row.relativePath) }
+        var id: Int { position }
     }
 
     @ObservedObject var presentation: PickerViewState
@@ -112,42 +118,70 @@ private struct PickerResultsView: View {
         if presentation.model.results.isEmpty {
             PickerEmptyView(presentation: presentation)
         } else {
-            List(selection: selection) {
-                ForEach(indexedResults) { result in
-                    PickerResultView(row: result.row).tag(result.position)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(indexedResults) { result in
+                            row(result)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .onChange(of: presentation.model.selectionIndex) { _, position in
+                    guard let position else { return }
+                    proxy.scrollTo(position)
                 }
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+            .accessibilityElement(children: .contain)
             .accessibilityLabel(Strings.promptResults)
         }
+    }
+
+    private func row(_ result: IndexedResult) -> some View {
+        let selected = result.position == presentation.model.selectionIndex
+        return PickerResultView(row: result.row, isSelected: selected)
+            .id(result.position)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                presentation.model.selectResult(at: result.position)
+                presentation.model.usePreferred()
+            }
+            .onTapGesture { presentation.model.selectResult(at: result.position) }
+            .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { presentation.model.selectResult(at: result.position) }
     }
 
     private var indexedResults: [IndexedResult] {
         presentation.model.results.enumerated().map { IndexedResult(position: $0.offset, row: $0.element) }
     }
-
-    private var selection: Binding<Int?> {
-        Binding(get: { presentation.model.selectionIndex }, set: { position in
-            if let position { presentation.model.selectResult(at: position) }
-        })
-    }
 }
 
 private struct PickerResultView: View {
     let row: PickerResultRow
+    let isSelected: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: row.favorite ? "star.fill" : "text.alignleft")
-                .foregroundStyle(row.favorite ? Color.yellow : Color.secondary)
+                .foregroundStyle(symbolColor)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.title).lineLimit(1)
-                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(detail).font(.caption).lineLimit(1)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Color.secondary)
             }
+            Spacer(minLength: 0)
         }
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 6).fill(isSelected ? Color.accentColor : Color.clear))
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel((row.favorite ? Strings.favorite + " " : "") + row.title + " " + detail)
+    }
+
+    private var symbolColor: Color {
+        if isSelected { return .white }
+        return row.favorite ? .yellow : .secondary
     }
 
     private var detail: String {

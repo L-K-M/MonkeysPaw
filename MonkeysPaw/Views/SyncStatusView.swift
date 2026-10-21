@@ -149,6 +149,7 @@ struct SyncStatusView: View {
                 .accessibilityIdentifier(prefix + "-summary")
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .controlSize(.small)
         .font(.caption).foregroundStyle(.secondary)
         .help(([presentation.summary, presentation.lastSuccess] + [presentation.state?.errorMessage].compactMap { $0 })
             .joined(separator: "\n"))

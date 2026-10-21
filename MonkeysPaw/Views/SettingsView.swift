@@ -249,7 +249,7 @@ struct SettingsView: View {
 
     private var libraryFolder: some View {
         Section {
-            LabeledContent(Strings.libraryFolder) {
+            LabeledContent(Strings.libraryLocation) {
                 Label(presentation.general.activeLibraryPath, systemImage: "folder")
                     .lineLimit(1).truncationMode(.middle)
                     .textSelection(.enabled)
@@ -296,11 +296,17 @@ private struct ShortcutSettingsRow: View {
 
     var body: some View {
         Section {
-            LabeledContent(Strings.shortcutBindingLabel) { Text(Strings.shortcutBinding(state.binding)) }
-            shortcutChange
+            if state.changePath == .inApp {
+                LabeledContent(Strings.shortcutBindingLabel) { inAppRecorder }
+            } else {
+                LabeledContent(Strings.shortcutBindingLabel) { Text(Strings.shortcutBinding(state.binding)) }
+                shortcutChange
+            }
             if let registration = state.registration {
-                Label(Strings.shortcutRegistration(registration), systemImage: registrationSymbol)
-                    .foregroundStyle(registrationColor)
+                LabeledContent(Strings.shortcutStatusLabel) {
+                    Label(Strings.shortcutStatus(registration), systemImage: registrationSymbol)
+                        .foregroundStyle(registrationColor)
+                }
             }
             if let error = presentation.displayedShortcutError(for: action) {
                 Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
@@ -316,7 +322,9 @@ private struct ShortcutSettingsRow: View {
             Text(title)
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                if let registration = state.registration { Text(registration.detail) }
+                // Registered and unbound states already read clearly in the Status row.
+                if let registration = state.registration, registration.status == .needsAction
+                    || registration.status == .failed { Text(registration.detail) }
                 if state.changePath == .inApp { Text(Strings.shortcutCaptureHint) }
                 if let guidance = changeGuidance { Text(guidance) }
                 if let instructions = presentation.instructions(for: action) { Text(instructions) }
@@ -325,18 +333,28 @@ private struct ShortcutSettingsRow: View {
         .accessibilityIdentifier("settings-shortcut-" + action.rawValue)
     }
 
+    /// A compact recorder showing the shortcut, with a clear button beside it.
+    private var inAppRecorder: some View {
+        HStack(spacing: 6) {
+            ShortcutRecorder(label: Strings.recordShortcutLabel(title), title: Strings.shortcutSymbols(state.binding),
+                onCapture: { presentation.setAccelerator($0, for: action) },
+                onError: { presentation.captureFailed($0, for: action) })
+                .frame(width: 150)
+            Button { presentation.clearShortcut(action) } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .disabled(!presentation.canClearShortcut(action))
+            .help(Strings.clearShortcut)
+            .accessibilityLabel(Strings.clearShortcutLabel(title))
+        }
+    }
+
     @ViewBuilder private var shortcutChange: some View {
         switch state.changePath {
         case .inApp:
-            HStack {
-                ShortcutRecorder(label: Strings.recordShortcutLabel(title), onCapture: {
-                    presentation.setAccelerator($0, for: action)
-                }, onError: { presentation.captureFailed($0, for: action) })
-                    .frame(height: 32)
-                Button(Strings.clearShortcut) { presentation.clearShortcut(action) }
-                    .disabled(!presentation.canClearShortcut(action))
-                    .accessibilityLabel(Strings.clearShortcutLabel(title))
-            }
+            EmptyView()
         case .systemSettings:
             Button(Strings.changeShortcut) { presentation.performPlatformChange(for: action) }
         case .setup:

@@ -38,7 +38,8 @@ struct SetupView: View {
     }
 
     private var rows: some View {
-        ForEach(presentation.rows, id: \.kind) { row in
+        // Rows for the other desktop (portal, ydotool, KDE) only add noise here.
+        ForEach(presentation.rows.filter(\.appliesHere), id: \.kind) { row in
             WelcomeStatusRow(symbol: Self.symbol(for: row.status)) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(Strings.rowTitle(row.kind)).font(.headline)
@@ -93,5 +94,13 @@ struct SetupView: View {
         case .pasted: return .ready
         case .sentButNotReceived, .failed: return .needsAttention
         }
+    }
+}
+
+extension SetupRow {
+    /// macOS hides checks that only apply to Linux desktops.
+    var appliesHere: Bool {
+        if case .notApplicable = status { return false }
+        return true
     }
 }

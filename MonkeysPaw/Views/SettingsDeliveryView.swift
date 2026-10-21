@@ -103,7 +103,8 @@ struct SettingsDeliveryView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label(SettingsDeliveryStrings.status(presentation.state.delivery), systemImage: backendSymbol)
                 .accessibilityIdentifier("settings-delivery-status")
-            ForEach(presentation.state.permissionRows, id: \.kind) { row in
+            // Rows for the other desktop (portal, ydotool) only add noise here.
+            ForEach(presentation.state.permissionRows.filter(\.appliesHere), id: \.kind) { row in
                 Label(SettingsDeliveryStrings.permission(row), systemImage: permissionSymbol(row.status))
                     .foregroundStyle(permissionColor(row.status))
             }

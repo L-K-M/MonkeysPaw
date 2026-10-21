@@ -92,17 +92,21 @@ struct SettingsUpdateView: View {
         }
     }
 
-    private var errors: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let error = presentation.state.settingsError {
-                Text(GeneralSettingsStrings.settingsError(error)).foregroundStyle(.red)
-            }
-            if let error = presentation.state.update?.stateError {
-                Text(SettingsUpdateStrings.stateError(error)).foregroundStyle(.red)
-            }
-            if presentation.state.update?.releasePageOpeningFailed == true {
-                Text(SettingsUpdateStrings.openingFailed).foregroundStyle(.red)
-            }
+    /// One form row per error; no empty row when everything is fine.
+    @ViewBuilder private var errors: some View {
+        if let error = presentation.state.settingsError {
+            errorRow(GeneralSettingsStrings.settingsError(error))
         }
+        if let error = presentation.state.update?.stateError {
+            errorRow(SettingsUpdateStrings.stateError(error))
+        }
+        if presentation.state.update?.releasePageOpeningFailed == true {
+            errorRow(SettingsUpdateStrings.openingFailed)
+        }
+    }
+
+    private func errorRow(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

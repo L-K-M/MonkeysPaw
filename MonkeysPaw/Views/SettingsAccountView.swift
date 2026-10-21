@@ -264,10 +264,13 @@ struct SettingsAccountView: View {
             } header: {
                 Text(SettingsAccountStrings.tab)
             }
-            Section {
-                devices
-            } header: {
-                Text(SettingsAccountStrings.devices)
+            // Devices exist only for a signed-in account; hide an empty section.
+            if !(presentation.state?.devices ?? []).isEmpty {
+                Section {
+                    devices
+                } header: {
+                    Text(SettingsAccountStrings.devices)
+                }
             }
             Section {
                 SettingsInviteView(presentation: presentation.invites)
@@ -288,11 +291,13 @@ struct SettingsAccountView: View {
     private var loginForm: some View {
         Group {
             LabeledContent(SettingsAccountStrings.server) {
-                TextField(SettingsAccountStrings.server, text: $presentation.server)
+                TextField(SettingsAccountStrings.server, text: $presentation.server,
+                          prompt: Text(SettingsAccountStrings.serverPrompt))
                     .labelsHidden().accessibilityLabel(SettingsAccountStrings.server)
             }
             LabeledContent(SettingsAccountStrings.username) {
-                TextField(SettingsAccountStrings.username, text: $presentation.username)
+                TextField(SettingsAccountStrings.username, text: $presentation.username,
+                          prompt: Text(SettingsAccountStrings.requiredPrompt))
                     .labelsHidden().accessibilityLabel(SettingsAccountStrings.username)
             }
             LabeledContent(SettingsAccountStrings.password) {
@@ -301,7 +306,8 @@ struct SettingsAccountView: View {
                     .frame(height: 24)
             }
             LabeledContent(SettingsAccountStrings.deviceName) {
-                TextField(SettingsAccountStrings.deviceName, text: $presentation.deviceName)
+                TextField(SettingsAccountStrings.deviceName, text: $presentation.deviceName,
+                          prompt: Text(SettingsAccountStrings.requiredPrompt))
                     .labelsHidden().accessibilityLabel(SettingsAccountStrings.deviceName)
             }
             HStack {
@@ -322,19 +328,21 @@ struct SettingsAccountView: View {
         }
     }
 
-    private var status: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let operation = presentation.state?.operation {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text(SettingsAccountStrings.progress(operation))
-                }
-                .accessibilityElement(children: .combine)
+    /// One form row per status line; nothing when the account is idle.
+    @ViewBuilder private var status: some View {
+        if let operation = presentation.state?.operation {
+            HStack {
+                ProgressView().controlSize(.small)
+                Text(SettingsAccountStrings.progress(operation))
             }
-            if let issue = presentation.state?.error { Text(issue.message).foregroundStyle(.red) }
-            if let message = presentation.cleanupMessage {
-                Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
+            .accessibilityElement(children: .combine)
+        }
+        if let issue = presentation.state?.error {
+            Label(issue.message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+        }
+        if let message = presentation.cleanupMessage {
+            Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
