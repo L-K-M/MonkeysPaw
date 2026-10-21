@@ -73,6 +73,8 @@ struct LibraryConflictView: View {
                 .frame(maxHeight: 320)
             }
         }
+        // Keep the bar a container so its controls stay individually reachable.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library-conflict")
     }
 }

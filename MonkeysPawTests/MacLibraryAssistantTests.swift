@@ -548,7 +548,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         let controller = try XCTUnwrap(h.delegate.libraryWindow)
         controller.requestClose()
         let dialog = try XCTUnwrap(dialogs.last)
-        guard case .decision(let decision, _, _) = dialog.dialog else { return XCTFail("Expected the close guard") }
+        guard case .decision(let decision, _, _, _) = dialog.dialog else { return XCTFail("Expected the close guard") }
         XCTAssertEqual(decision.action, .close)
         dialog.respond(.decision(.cancel))
         XCTAssertTrue(controller.window?.isVisible == true)
@@ -624,7 +624,7 @@ final class MacLibraryAssistantTests: XCTestCase {
                 try XCTUnwrap(dialogs.last).respond(.decision(.cancel))
             }
             let close = try XCTUnwrap(dialogs.last)
-            guard case .decision(let decision, _, _) = close.dialog else { return XCTFail("Expected the close guard") }
+            guard case .decision(let decision, _, _, _) = close.dialog else { return XCTFail("Expected the close guard") }
             XCTAssertEqual(decision.action, .close)
             close.respond(.decision(.cancel))
             XCTAssertTrue(controller.window?.isVisible == true)

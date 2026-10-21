@@ -43,6 +43,10 @@ final class SettingsTabViewController: NSTabViewController {
     private let presentation: SettingsViewState
     private let mainThread: MainThread
     private var isInstallingPanes = true
+    // AppKit selects the first tab while it loads the tab view. Only selections
+    // made after the window appears come from you; earlier ones must not
+    // overwrite a requested pane such as Account.
+    private var acceptsNativeSelection = false
     private var bindingObserver: AnyCancellable?
 
     init(presentation: SettingsViewState, mainThread: MainThread) {
@@ -77,15 +81,26 @@ final class SettingsTabViewController: NSTabViewController {
 
     required init?(coder: NSCoder) { return nil }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        select(presentation.selectedTab)
+    }
+
     override func viewDidAppear() {
         super.viewDidAppear()
         select(presentation.selectedTab)
+        acceptsNativeSelection = true
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        acceptsNativeSelection = false
     }
 
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         let previous = isViewLoaded ? view.window?.frame : nil
         super.tabView(tabView, didSelect: tabViewItem)
-        guard !isInstallingPanes,
+        guard !isInstallingPanes, acceptsNativeSelection,
               let tabViewItem, let index = tabViewItems.firstIndex(where: { $0 === tabViewItem }),
               let pane = SettingsViewState.Tab(rawValue: index) else { return }
         if presentation.selectedTab != pane { presentation.selectedTab = pane }

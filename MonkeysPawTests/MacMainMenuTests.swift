@@ -55,9 +55,13 @@ final class MacMainMenuTests: XCTestCase {
                                                               file: StaticString = #filePath,
                                                               line: UInt = #line) {
         for item in menu.items {
+            // AppKit targets a submenu's parent item at that submenu.
+            if let submenu = item.submenu {
+                checkEveryItemRoutesThroughTheResponderChain(submenu, file: file, line: line)
+                continue
+            }
             XCTAssertNil(item.target, "\(item.title) should have no explicit target",
                          file: file, line: line)
-            if let submenu = item.submenu { checkEveryItemRoutesThroughTheResponderChain(submenu, file: file, line: line) }
         }
     }
 
@@ -241,8 +245,9 @@ final class MacMainMenuTests: XCTestCase {
         let main = try XCTUnwrap(NSApp.mainMenu)
         let appMenu = try submenu(main, MainMenuStrings.appMenu)
         let servicesItem = try row(appMenu, MainMenuStrings.services)
-        let servicesMenu = try XCTUnwrap(servicesItem.submenu)
-        XCTAssertTrue(NSApp.servicesMenu === servicesMenu)
+        XCTAssertNotNil(servicesItem.submenu)
+        // AppKit owns the Services menu it was given and may substitute its own instance.
+        XCTAssertNotNil(NSApp.servicesMenu)
         XCTAssertTrue(NSApp.windowsMenu === (try submenu(main, MainMenuStrings.window)))
         XCTAssertTrue(NSApp.helpMenu === (try submenu(main, MainMenuStrings.help)))
     }

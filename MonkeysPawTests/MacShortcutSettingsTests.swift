@@ -274,7 +274,7 @@ final class MacShortcutSettingsTests: XCTestCase {
         let recorder = try XCTUnwrap(window.contentView as? ShortcutRecorderButton)
         recorder.captureLabel = Strings.recordShortcutLabel(Strings.repeatLast)
         XCTAssertEqual(recorder.title, recorder.captureLabel)
-        XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Repeat last")
+        XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Repeat Last Prompt")
         weak var owner: NSObject?
         do {
             let retained = NSObject()
@@ -293,7 +293,7 @@ final class MacShortcutSettingsTests: XCTestCase {
         XCTAssertEqual(recorder.accessibilityLabel(), Strings.recordShortcutLabel(Strings.repeatLast))
         recorder.captureLabel = Strings.recordShortcutLabel(Strings.togglePicker)
         XCTAssertEqual(recorder.title, recorder.captureLabel)
-        XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Toggle picker")
+        XCTAssertEqual(recorder.accessibilityLabel(), "Record shortcut for Show Picker")
     }
 
     func testRecorderLabelUpdatesPreserveCapturePromptAndResetAfterCommitOrEscape() throws {

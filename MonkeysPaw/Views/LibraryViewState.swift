@@ -72,6 +72,8 @@ final class LibraryViewState: ObservableObject {
     private var scopeDrop: ScopeDrop?
     private var scopeDropRequest: UUID?
     private var scopeDropLoad: Progress?
+    private enum RevertToSaved { case none, requested, presented }
+    private var revertToSaved = RevertToSaved.none
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, imports: LibraryImportViewState? = nil,
@@ -304,6 +306,7 @@ final class LibraryViewState: ObservableObject {
         editorMode = .edit
         fileCommandRequest = nil
         commandMessage = nil
+        revertToSaved = .none
         copySelection = nil
         isClosingEditor = false
         lastClosedPromptPath = nil
@@ -323,6 +326,7 @@ final class LibraryViewState: ObservableObject {
         conflictProvider = nil
         syncStatus?.retire()
         imports?.deactivate()
+        revertToSaved = .none
         isActive = false
         bindingRevision &+= 1
         sourceRevision &+= 1
@@ -434,7 +438,26 @@ final class LibraryViewState: ObservableObject {
         else if canSave { editor.save() }
     }
     func saveAsCopy() { if canSaveAsCopy { editor.saveAsCopy() } }
-    func revert() { if canRevert { editor.revert() } }
+    func revert() {
+        guard canRevert else { return }
+        if editorState.isDirty { revertToSaved = .requested }
+        editor.revert()
+    }
+
+    /// Revert to Saved asks only Revert or Cancel. Other reloads behind the
+    /// same guard (sync conflict resolution, History restore) still offer Save.
+    var isRevertingToSaved: Bool { revertToSaved != .none }
+
+    private func updateRevertToSaved(_ state: EditorState) {
+        switch revertToSaved {
+        case .none: return
+        case .requested:
+            if state.pendingDecision?.action == .revert { revertToSaved = .presented }
+            else if state.pendingDecision != nil || (!state.isDirty && state.queuedActions.isEmpty) { revertToSaved = .none }
+        case .presented:
+            if state.pendingDecision?.action != .revert { revertToSaved = .none }
+        }
+    }
 
     func loadHistory() { if canLoadHistory { editor.loadHistory() } }
 
@@ -579,6 +602,7 @@ final class LibraryViewState: ObservableObject {
                 let adoptedCopy = previousPrompt != nil
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
+                self.updateRevertToSaved(state)
                 self.updateConflict()
                 self.updateAssistantSession()
                 if let request = self.fileCommandRequest,

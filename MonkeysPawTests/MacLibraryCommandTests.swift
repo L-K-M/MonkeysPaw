@@ -174,6 +174,8 @@ final class MacLibraryCommandTests: XCTestCase {
         presentation.restoreRevision()
         XCTAssertEqual(presentation.editorState.pendingDecision?.action, .revert)
         XCTAssertFalse(presentation.canRestoreRevision)
+        // Restoring is not Revert to Saved: the guard still offers to save the draft first.
+        XCTAssertEqual(try dialog().dialog.responses, [.decision(.save), .decision(.cancel), .decision(.discard)])
         try respond(.decision(.cancel))
         work.drain()
         XCTAssertEqual(presentation.editorState.source, original + " draft")

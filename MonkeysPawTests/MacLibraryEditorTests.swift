@@ -605,7 +605,7 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertFalse(dialogs.contains { !$0.cancelled })
         window.orderFrontRegardless()
         delegate.applicationDidUnhide(Notification(name: NSApplication.didUnhideNotification))
-        guard case .decision(let decision, _, _) = try dialog().dialog else { return XCTFail("Expected restored decision") }
+        guard case .decision(let decision, _, _, _) = try dialog().dialog else { return XCTFail("Expected restored decision") }
         XCTAssertEqual(decision.action, .close)
         try respond(.decision(.cancel))
         XCTAssertTrue(window.isVisible)

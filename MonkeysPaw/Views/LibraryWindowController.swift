@@ -160,7 +160,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                 desired = nil
             } else if let conflict = state.conflict, conflict != self.dismissedConflict {
                 desired = .conflict(conflict, status: state.status, title: self.presentation.displayTitle)
-            } else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status, title: self.presentation.displayTitle) }
+            } else if let decision = state.pendingDecision {
+                let style: LibraryDecisionStyle = decision.action == .revert && self.presentation.isRevertingToSaved
+                    ? .revertToSaved : .save
+                desired = .decision(decision, status: state.status, title: self.presentation.displayTitle, style: style)
+            }
             else if let request = self.presentation.fileCommandRequest { desired = .fileCommand(request) }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
@@ -177,7 +181,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                     self.cancelDialog = nil
                     self.dialogRevision &+= 1
                     switch (desired, response) {
-                    case (.decision(let decision, _, _), .decision(let choice)):
+                    case (.decision(let decision, _, _, _), .decision(let choice)):
                         self.presentation.editor.resolveDecision(choice, id: decision.id)
                     case (.conflict, .conflict(let choice)):
                         self.presentation.editor.resolveConflict(choice)
@@ -263,7 +267,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         alert.messageText = dialog.title
         alert.informativeText = dialog.message
         let isRevert: Bool
-        if case .decision(let decision, _, _) = dialog { isRevert = decision.action == .revert }
+        if case .decision(_, _, _, let style) = dialog { isRevert = style == .revertToSaved }
         else { isRevert = false }
         for response in dialog.responses {
             let title = isRevert && response == .decision(.discard) ? EditorStrings.revert : response.title
@@ -287,7 +291,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         switch dialog {
         case .conflict:
             alert.window.defaultButtonCell = nil
-        case .decision(let decision, _, _) where decision.action == .revert:
+        case .decision(_, _, _, let style) where style == .revertToSaved:
             alert.window.defaultButtonCell = nil
         case .fileCommand(let request) where request.command == .delete:
             alert.window.defaultButtonCell = nil

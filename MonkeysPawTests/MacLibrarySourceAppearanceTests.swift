@@ -145,8 +145,11 @@ final class MacLibrarySourceAppearanceTests: XCTestCase {
         undo.redo()
         XCTAssertEqual(foreground(text, at: accent), .controlAccentColor)
 
+        // Manual grouping is still on: a model rewrite registers its own undo step.
+        undo.beginUndoGrouping()
         coordinator.update(text, source: "---\nk: v\n---\nPlain", path: "one.md",
             isEditable: true, onEdit: { edits.append($0) })
+        undo.endUndoGrouping()
         XCTAssertEqual(foreground(text, at: 0), .secondaryLabelColor)
         XCTAssertEqual(foreground(text, at: accent), .secondaryLabelColor,
             "Model rewrites replace the whole temporary color map")

@@ -1,14 +1,19 @@
 import MonkeysPawCore
 
+/// Revert to Saved discards; every other guarded reload offers Save first.
+enum LibraryDecisionStyle: Equatable { case save, revertToSaved }
+
 enum LibraryEditorDialog: Equatable {
-    case decision(EditorPendingDecision, status: EditorStatus, title: String = LibraryStrings.title)
+    case decision(EditorPendingDecision, status: EditorStatus, title: String = LibraryStrings.title,
+                  style: LibraryDecisionStyle = .save)
     case conflict(EditorConflict, status: EditorStatus, title: String = LibraryStrings.title)
     case fileCommand(LibraryFileCommandRequest)
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case (.decision(let left, let leftStatus, let leftTitle), .decision(let right, let rightStatus, let rightTitle)):
-            return left == right && leftStatus == rightStatus && leftTitle == rightTitle
+        case (.decision(let left, let leftStatus, let leftTitle, let leftStyle),
+              .decision(let right, let rightStatus, let rightTitle, let rightStyle)):
+            return left == right && leftStatus == rightStatus && leftTitle == rightTitle && leftStyle == rightStyle
         case (.conflict(let left, let leftStatus, let leftTitle), .conflict(let right, let rightStatus, let rightTitle)):
             return left == right && leftStatus == rightStatus && leftTitle == rightTitle
         case (.fileCommand(let left), .fileCommand(let right)):
@@ -20,8 +25,8 @@ enum LibraryEditorDialog: Equatable {
 
     var title: String {
         switch self {
-        case .decision(let decision, _, let title):
-            return decision.action == .revert ? LibraryDialogStrings.revertTitle(title) : LibraryDialogStrings.saveTitle(title)
+        case .decision(_, _, let title, let style):
+            return style == .revertToSaved ? LibraryDialogStrings.revertTitle(title) : LibraryDialogStrings.saveTitle(title)
         case .conflict(let conflict, _, let title):
             return LibraryDialogStrings.conflictTitle(title, kind: conflict.kind)
         case .fileCommand(let request): return request.title
@@ -30,8 +35,8 @@ enum LibraryEditorDialog: Equatable {
 
     var message: String {
         switch self {
-        case .decision(let decision, let status, _):
-            let text = decision.action == .revert ? LibraryDialogStrings.revert : LibraryDialogStrings.unsaved
+        case .decision(_, let status, _, let style):
+            let text = style == .revertToSaved ? LibraryDialogStrings.revert : LibraryDialogStrings.unsaved
             return text + failureMessage(status)
         case .conflict(let conflict, let status, _):
             var text = conflict.kind == .deleted ? LibraryDialogStrings.deleted : LibraryDialogStrings.modified
@@ -44,8 +49,8 @@ enum LibraryEditorDialog: Equatable {
 
     var responses: [LibraryEditorResponse] {
         switch self {
-        case .decision(let decision, _, _):
-            return decision.action == .revert ? [.decision(.discard), .decision(.cancel)]
+        case .decision(_, _, _, let style):
+            return style == .revertToSaved ? [.decision(.discard), .decision(.cancel)]
                 : [.decision(.save), .decision(.cancel), .decision(.discard)]
         case .conflict(let conflict, _, _):
             return conflict.choices.map(LibraryEditorResponse.conflict) + [.dismissConflict]
