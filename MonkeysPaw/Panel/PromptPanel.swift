@@ -33,7 +33,14 @@ final class PromptPanel: NSPanel {
         // drives the window's size from its intrinsic content and grows from the
         // bottom-left origin. A container keeps the frame under our control;
         // only the content resizes.
-        let container = NSView(frame: contentRect(forFrameRect: frame))
+        let container = NSVisualEffectView(frame: contentRect(forFrameRect: frame))
+        container.material = .popover
+        container.blendingMode = .behindWindow
+        container.state = .active
+        container.maskImage = Self.roundedMask()
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 12
+        container.layer?.masksToBounds = true
         container.autoresizesSubviews = true
         content.frame = container.bounds
         content.autoresizingMask = [.width, .height]
@@ -65,6 +72,8 @@ final class PromptPanel: NSPanel {
     }
 
     private func configure() {
+        isOpaque = false
+        backgroundColor = .clear
         isFloatingPanel = true
         // Default already, but stated because the opposite is an active hazard here:
         // with `becomesKeyOnlyIfNeeded` true a non-activating panel becomes key only
@@ -98,5 +107,18 @@ final class PromptPanel: NSPanel {
         //                             floating it on top, which stationary would do.
         collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications,
                               .fullScreenAuxiliary, .transient]
+    }
+
+    private static func roundedMask() -> NSImage {
+        let radius: CGFloat = 12
+        let image = NSImage(size: NSSize(width: radius * 2 + 1, height: radius * 2 + 1),
+            flipped: false) { rect in
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+                return true
+            }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
     }
 }

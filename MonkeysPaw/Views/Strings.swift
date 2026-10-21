@@ -2,7 +2,11 @@ import MonkeysPawCore
 
 /// Front-end copy; shared delivery and setup instructions stay in Core's tables.
 enum Strings {
-    static let showPanel = "Show Panel"
+    static let showPanel = "Show Picker"
+    static let about = "About Monkey's Paw"
+    static let quit = "Quit Monkey's Paw"
+    static let aboutDescription = "Keep your prompts ready to fill, copy and paste."
+    static let projectLink = "Monkey's Paw on GitHub"
     static let setup = "Setup…"
     static let setupTitle = "Monkey's Paw Setup"
     static let settings = "Settings…"
@@ -153,6 +157,11 @@ enum Strings {
     static let fillForm = "Fill prompt"
     static let chooseValue = "Choose a value"
     static let usePrompt = "Use"
+    static let paste = "Paste"
+    static let back = "Back"
+    static let pickerMore = "More actions"
+    static let writeWithAssistant = "Write with Assistant"
+    static func createPrompt(_ query: String) -> String { "Create “" + query + "”" }
     static let deliver = "Deliver"
     static let forgetValues = "Forget values"
     static let forgetAllValues = "Forget All Values…"
@@ -170,7 +179,7 @@ enum Strings {
     static let fillHint = "Tab: next field · Return (single-line): deliver · ⌘Return: paste · ⌥Return: copy · Esc: back"
     static let noPasteTarget = "No paste target"
 
-    static func pasteTarget(_ name: String) -> String { "→ " + name + " · Local library" }
+    static func pasteTarget(_ name: String) -> String { "→ " + name }
 
     static func persistenceWarning(_ warning: PromptPersistenceWarning) -> String {
         switch warning {

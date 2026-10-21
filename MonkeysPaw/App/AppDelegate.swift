@@ -877,6 +877,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
             syncStatus: makeSyncStatus(.picker),
+            openSetup: { [weak self] in self?.showSetup() },
+            openSettings: { [weak self] in self?.showSettings() },
             requestedIntent: { [weak self] intent in
                 guard isCurrent() else { return }
                 self?.handle(intent)
@@ -1264,21 +1266,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Pure menu construction lets hosted tests exercise the real equivalents
     /// without creating a status item or installing native hotkeys.
     func makeStatusMenu() -> NSMenu {
-        let menu = NSMenu()
+        let menu = StatusMenu(title: "")
         // Status owns this item's availability; AppKit must not re-enable it
         // merely because its target implements the open action.
         menu.autoenablesItems = false
-        let show = menu.addItem(withTitle: Strings.showPanel, action: #selector(showPanel),
-                                keyEquivalent: "")
+        let show = StatusShortcutMenuItem(title: Strings.showPanel, action: #selector(showPanel), keyEquivalent: "")
         show.target = self
-        addRepeatItem(to: menu)
+        menu.addItem(show)
+        let repeatItem = StatusShortcutMenuItem(title: Strings.repeatLast, action: #selector(repeatLast), keyEquivalent: "")
+        repeatItem.target = self
+        menu.addItem(repeatItem)
+        menu.onUpdate = { [weak self, weak show, weak repeatItem] _ in
+            self?.shortcutsSettingsModel?.refresh()
+            if let show { StatusMenuShortcut.apply(self?.shortcutsSettingsModel?.togglePicker, to: show) }
+            if let repeatItem { StatusMenuShortcut.apply(self?.shortcutsSettingsModel?.repeatLast, to: repeatItem) }
+        }
+        menu.onUpdate?(menu)
+        menu.addItem(.separator())
         addLibraryItem(to: menu, keyEquivalent: "")
+        menu.addItem(.separator())
         addSettingsItem(to: menu)
         let setup = menu.addItem(withTitle: Strings.setup, action: #selector(showSetup), keyEquivalent: "")
         setup.target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
-                     keyEquivalent: "q")
+        let about = menu.addItem(withTitle: Strings.about, action: #selector(showAboutPanel(_:)), keyEquivalent: "")
+        about.target = self
+        let quit = menu.addItem(withTitle: Strings.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.keyEquivalentModifierMask = .command
         return menu
     }
 

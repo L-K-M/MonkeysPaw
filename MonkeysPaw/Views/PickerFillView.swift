@@ -7,7 +7,7 @@ struct PickerFillView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 16) {
                 ForEach(model.fields.indices, id: \.self) { position in
                     PickerFillFieldView(field: model.fields[position], position: position,
                         model: model, wantsFocus: model.state == .editing && model.focusIndex == position,
@@ -30,8 +30,8 @@ private struct PickerFillFieldView: View {
     let focusRevision: UInt64
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(field.label).font(.caption)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(field.label).font(.callout).fontWeight(.medium)
             control
             if let description = field.description, !description.isEmpty {
                 PickerFieldDescription(text: description, name: field.name)

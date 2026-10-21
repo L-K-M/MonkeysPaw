@@ -129,7 +129,32 @@ struct SyncStatusView: View {
 
     private var prefix: String { presentation.surface == .picker ? "picker-sync" : "library-sync" }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if presentation.surface == .picker { compactPicker }
+        else { expandedStatus }
+    }
+
+    private var compactPicker: some View {
+        Menu {
+            Text(presentation.lastSuccess).accessibilityIdentifier(prefix + "-last-success")
+            if let message = presentation.state?.errorMessage {
+                Text(message).accessibilityIdentifier(prefix + "-message")
+            }
+            if presentation.primaryAction != .none {
+                Button(SyncStatusStrings.action(presentation.primaryAction), action: presentation.performPrimaryAction)
+                    .accessibilityIdentifier(prefix + "-action")
+            }
+        } label: {
+            Text(presentation.summary).lineLimit(1).truncationMode(.tail)
+                .accessibilityIdentifier(prefix + "-summary")
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .font(.caption).foregroundStyle(.secondary)
+        .help(([presentation.summary, presentation.lastSuccess] + [presentation.state?.errorMessage].compactMap { $0 })
+            .joined(separator: "\n"))
+    }
+
+    private var expandedStatus: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(presentation.summary).lineLimit(1).truncationMode(.tail)
