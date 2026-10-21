@@ -58,18 +58,20 @@ struct SettingsUpdateView: View {
     @ObservedObject var presentation: UpdateSettingsViewState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(SettingsUpdateStrings.title).font(.headline)
+        Section {
             Toggle(SettingsUpdateStrings.automatic, isOn: Binding(
                 get: { presentation.state.automaticUpdateChecks == .enabled },
                 set: presentation.setAutomatic))
                 .disabled(!presentation.canEdit)
                 .accessibilityLabel(SettingsUpdateStrings.automatic)
                 .accessibilityIdentifier("settings-automatic-updates")
-            Text(SettingsUpdateStrings.disclosure).font(.caption)
-            Text(SettingsUpdateStrings.version(presentation.state.update?.currentVersion))
+            LabeledContent(SettingsUpdateStrings.currentVersion) {
+                Text(presentation.state.update?.currentVersion?.description ?? SettingsUpdateStrings.unavailableVersion)
+            }
                 .accessibilityIdentifier("settings-update-version")
-            Text(SettingsUpdateStrings.lastChecked(presentation.state.update?.lastSuccessfulCheck))
+            LabeledContent(SettingsUpdateStrings.lastCheck) {
+                Text(SettingsUpdateStrings.checkDate(presentation.state.update?.lastSuccessfulCheck))
+            }
             Text(SettingsUpdateStrings.result(presentation.state.update))
                 .accessibilityIdentifier("settings-update-result")
             errors
@@ -83,8 +85,11 @@ struct SettingsUpdateView: View {
                     .accessibilityLabel(SettingsUpdateStrings.viewRelease)
                     .accessibilityIdentifier("settings-view-release")
             }
+        } header: {
+            Text(SettingsUpdateStrings.title)
+        } footer: {
+            Text(SettingsUpdateStrings.disclosure)
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var errors: some View {

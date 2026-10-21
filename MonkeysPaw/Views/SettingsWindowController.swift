@@ -104,7 +104,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             self.presentation.delivery.show()
             self.presentation.updates.show()
             let window = self.window ?? self.makeWindow()
-            if self.window == nil { window.center() }
             self.window = window
             self.isClosing = false
             self.activation.show(window)
@@ -234,16 +233,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func makeWindow() -> NSWindow {
-        let size = Limits.setupWindowSize
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: CGFloat(size.width), height: CGFloat(size.height)),
-                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.title = Strings.settingsTitle
+        let tabs = SettingsTabViewController(presentation: presentation, mainThread: mainThread)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: presentation.selectedTab.contentSize),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.isRestorable = false
+        window.collectionBehavior = [.fullScreenNone]
+        window.toolbarStyle = .preference
+        window.tabbingMode = .disallowed
         window.delegate = self
-        let content = NSHostingView(rootView: SettingsView(presentation: presentation))
-        content.sizingOptions = []
-        window.contentView = content
+        window.contentViewController = tabs
+        if !window.setFrameUsingName("Settings") { window.center() }
+        window.setFrameAutosaveName("Settings")
+        tabs.resizeWindowForSelection()
         return window
     }
 

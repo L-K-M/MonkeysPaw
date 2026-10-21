@@ -139,8 +139,10 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 | Safari | NOT RUN | NOT RUN | |
 | Terminal | NOT RUN | NOT RUN | |
 
-- [ ] NOT RUN: the remembered target's app name appears in the footer.
-- [ ] NOT RUN: search, favourites, folder/tags, arrow selection and preview work.
+- [ ] NOT RUN: the rounded translucent panel keeps its shadow and appears over the current Space; the large borderless native search field accepts typing immediately.
+- [ ] NOT RUN: the remembered target's app name and compact sync status appear at the leading edge of the footer; sync details and actions open from its menu.
+- [ ] NOT RUN: result symbols, favourite stars, folder/tags/group, arrow selection and the preview on its secondary background work.
+- [ ] NOT RUN: footer Paste ↩, Copy ⌥↩, Edit ⌘↩ and Library ⌘L perform the same actions as their keys; More actions offers Forget values, Setup… and Settings….
 - [ ] NOT RUN: selecting a result or tabbing into the list, then typing, continues search.
 - [ ] NOT RUN: repeated summon cycles focus search and accept typing immediately.
 - [ ] NOT RUN: the key panel toggles off; a visible non-key panel raises on toggle.
@@ -151,7 +153,7 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 - [ ] NOT RUN: picker Option+Return carries copy-only into fill's Return/Deliver action.
 - [ ] NOT RUN: required/invalid choice values block delivery with an actionable message.
 - [ ] NOT RUN: Escape from fill keeps the draft and returns to picker; another Escape closes.
-- [ ] NOT RUN: Cmd+W/Cancel/toggle-off close fill and keep its draft for reopening.
+- [ ] NOT RUN: fill footer Deliver ↩ is the default action, Copy ⌥↩ copies, and Back ⎋ retains the draft; Cmd+W/toggle-off close fill and keep its draft for reopening.
 - [ ] NOT RUN: clicking another app hides after about 300 ms, keeps its focus and retains the draft.
 - [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in Library's Edit tab; Cmd+L opens Library.
 - [ ] NOT RUN: a no-match title creates a safe free filename while retaining the exact title; the new file opens for editing.
@@ -227,11 +229,14 @@ previous shortcut and reports Failed, so record a working shortcut again.
 | Show in Finder reveals the active folder after choosing it and after Use Default | NOT RUN | |
 | Open Setup from Shortcuts; the existing Setup window and live registration are reused | NOT RUN | |
 | Record a modified physical key under a non-US layout; Escape cancels capture without closing Settings | NOT RUN | |
-| Rebind Toggle picker, press Press your shortcut now and release the shortcut; verification changes only after it fires | NOT RUN | |
+| Rebind Show Picker, press Test Shortcut and release the shortcut; verification changes only after it fires | NOT RUN | |
 | Try a conflicting shortcut; Failed and the backend detail appear; record a working key to recover | NOT RUN | |
 | Close Settings while Setup is key; activation policy returns to accessory and Setup remains usable | NOT RUN | |
 | Open Settings with the picker armed, then close; no old paste target is reactivated and a fresh summon still works | NOT RUN | |
-| VoiceOver identifies both tabs, folder path, recorder and actions; keyboard focus stays visible | NOT RUN | |
+| Settings toolbar tabs appear in order General, Shortcuts, Delivery, Assistant, Account with their symbols; VoiceOver reads their labels, grouped rows, footers and actions, and keyboard focus stays visible | NOT RUN | |
+| Settings cannot resize or enter full screen; selection changes the title and pane height while keeping the top-left fixed, tall forms scroll, Reduce Motion disables resizing animation, and reopening remembers the pane and window position for the session | NOT RUN | |
+| The status menu lists Show Picker, Repeat Last Prompt, Library, Settings…, Setup…, About and Quit with separators; confirmed global shortcuts update on opening and do not dispatch twice, while unbound actions show none | NOT RUN | |
+| About shows the bundle version and linked project credits; Setup, onboarding and Repeat share the icon/title/status layout, and Setup Done follows the title-bar close path | NOT RUN | |
 
 ## M2 Forget values controls: NOT RUN
 
@@ -246,8 +251,8 @@ fields. Forgetting must leave the clipboard and usage history unchanged.
 
 | Check | Result | Details |
 |---|---|---|
-| Picker action row: Forget values clears only the selected prompt's remembered fields and draft; another prompt keeps both | NOT RUN | |
-| Fill action row: Forget values keeps the form open and resets all native fields and preview to defaults without delivery | NOT RUN | |
+| Picker footer More actions → Forget values clears only the selected prompt's remembered fields and draft; another prompt keeps both | NOT RUN | |
+| Fill footer More actions → Forget values keeps the form open and resets all native fields and preview to defaults without delivery | NOT RUN | |
 | Search with no selection hides Forget values; delivery disables it and an attempted forget reports the wait message | NOT RUN | |
 | A corrupt or unreadable values.json gives a path-free failure for Forget values and retains the fields and draft; retry after repair succeeds | NOT RUN | |
 | Settings → General: Forget all values… opens a native confirmation sheet; Cancel and Escape keep values and drafts | NOT RUN | |
@@ -305,10 +310,10 @@ fresh-install checks do not overwrite your normal settings or prompts.
    a required empty field. Summon the panel over an editable target.
 2. Navigate search, results and preview with the keyboard and VoiceOver.
    Open fill, visit all field kinds, change a choice and read the live
-   preview and validation. Inspect Deliver, Copy, Cancel and Forget values,
-   including disabled states. Escape returns without delivery.
+   preview and validation. Inspect Deliver, Copy, Back and More actions →
+   Forget values, including disabled states. Escape returns without delivery.
 3. Open Settings from the status-menu Settings… item and inspect
-   General/Shortcuts tabs, the folder path,
+   the five toolbar panes, grouped rows and footers, the folder path,
    shortcut recorder/status and actions. Open Forget all confirmation, read
    its destructive action and Cancel, then cancel without clearing values.
 4. In the isolated account/directories described above, follow onboarding
@@ -726,7 +731,7 @@ only in a versioned runtime outside XCTest.
 
 | Check | Result | Details |
 |---|---|---|
-| Settings opens from the menu and Cmd+,; General, Shortcuts, Delivery and Assistant remain usable after repeated close/reopen, folder changes and Library window activation | NOT RUN | |
+| Settings opens from the menu and Cmd+,; General, Shortcuts, Delivery, Assistant and Account remain usable after repeated close/reopen, pane-height changes, folder changes and Library window activation | NOT RUN | |
 | Delivery shows fixed Cmd+V, current Accessibility and AppleScript fallback facts, cached failures and readback results. Test paste runs once; Open Setup reuses the existing window. Deny/revoke/grant Accessibility and Automation in a disposable session and check refresh without duplicate prompts or hotkey registration | NOT RUN | |
 | Restore starts off, persists when enabled, and states previous text only, 750 ms timing and the simultaneous-copy limitation. Try slow browser/chat/terminal paste: record actual readback and whether 750 ms is sufficient. Newer copies, including identical text, Copy, failed paste, Test paste, disabling restore and shutdown preserve the expected clipboard | NOT RUN | |
 | General displays the full installed beta version and numeric marketing version remains valid in both signed dmg/zip copies. Automatic off survives restart and prevents traffic; enabled checks remain at most daily across restart/offline failure. Inspect metadata only, never prompt/field/account content | NOT RUN | |

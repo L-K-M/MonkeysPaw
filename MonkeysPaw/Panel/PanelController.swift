@@ -114,6 +114,7 @@ final class PanelController: PanelWindow {
         // the current full-screen Space in place.
         NSApp.activate()
         panel.makeKey()
+        panel.invalidateShadow()
         presentationGeneration &+= 1
         pendingDismissal = .dismissal
         observeBlur(of: panel)

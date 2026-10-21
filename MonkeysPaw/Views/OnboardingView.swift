@@ -72,37 +72,69 @@ struct OnboardingView: View {
     @ObservedObject var presentation: OnboardingViewState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    step
-                    Button(SettingsInviteStrings.title, action: presentation.showInvite)
-                        .accessibilityIdentifier("onboarding-invite")
-                    ForEach(presentation.messages, id: \.self) { message in
-                        Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-                            .accessibilityIdentifier("onboarding-message")
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            HStack {
-                if presentation.state.step != .tour {
-                    Button(Strings.settings, action: presentation.showSettings)
-                }
-                Spacer()
-                if presentation.state.step == .tour {
-                    Button(OnboardingStrings.completeTour, action: presentation.completeTour)
-                        .disabled(!presentation.canCompleteTour)
-                        .keyboardShortcut(.defaultAction)
-                        .accessibilityIdentifier("onboarding-done")
-                } else if presentation.state.step == .complete {
-                    Button(Strings.done, action: presentation.close)
-                        .keyboardShortcut(.defaultAction)
-                        .accessibilityIdentifier("onboarding-done")
-                }
+        WelcomeWindowView(title: Strings.onboardingTitle, explanation: WelcomeStrings.onboardingExplanation) {
+            step
+            inviteButton
+            messages
+        } secondaryActions: {
+            secondaryButtons
+        } defaultAction: {
+            primaryButton
+        }
+    }
+
+    private var inviteButton: some View {
+        Button(SettingsInviteStrings.title, action: presentation.showInvite)
+            .accessibilityIdentifier("onboarding-invite")
+    }
+
+    private var messages: some View {
+        ForEach(presentation.messages, id: \.self) { message in
+            WelcomeStatusRow(symbol: .needsAttention) {
+                Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("onboarding-message")
             }
         }
-        .padding(24)
+    }
+
+    @ViewBuilder private var secondaryButtons: some View {
+        if presentation.state.step != .tour {
+            Button(Strings.settings, action: presentation.showSettings)
+        }
+        if presentation.state.step == .libraryFolder {
+            Button(OnboardingStrings.chooseFolder + "…", action: presentation.chooseFolder)
+                .disabled(!presentation.canChooseFolder)
+                .accessibilityIdentifier("onboarding-choose-folder")
+        } else if presentation.state.step == .seedOffer {
+            Button(OnboardingStrings.declineSeeds, action: presentation.declineSeeds)
+                .disabled(!presentation.canOfferSeeds)
+                .accessibilityIdentifier("onboarding-decline-seeds")
+        }
+    }
+
+    @ViewBuilder private var primaryButton: some View {
+        switch presentation.state.step {
+        case .libraryFolder:
+            Button(OnboardingStrings.useDefaultFolder, action: presentation.useDefaultFolder)
+                .disabled(!presentation.canChooseFolder)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("onboarding-use-default")
+        case .seedOffer:
+            Button(OnboardingStrings.acceptSeeds, action: presentation.acceptSeeds)
+                .disabled(!presentation.canOfferSeeds)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("onboarding-accept-seeds")
+        case .tour:
+            Button(OnboardingStrings.completeTour, action: presentation.completeTour)
+                .disabled(!presentation.canCompleteTour)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("onboarding-done")
+        case .complete:
+            Button(Strings.done, action: presentation.close)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("onboarding-done")
+        case .setup: EmptyView()
+        }
     }
 
     @ViewBuilder private var step: some View {
@@ -110,57 +142,82 @@ struct OnboardingView: View {
         case .setup:
             EmptyView() // The existing native Setup window owns this step.
         case .libraryFolder:
-            Text(OnboardingStrings.libraryFolderTitle).font(.title2)
-            Text(OnboardingStrings.libraryFolderHelp)
-            Text(Strings.libraryFolder).font(.headline)
-            Text(presentation.activeLibraryPath).textSelection(.enabled)
-                .accessibilityLabel(Strings.libraryFolder)
-                .accessibilityValue(presentation.activeLibraryPath)
-                .accessibilityIdentifier("onboarding-active-folder")
-            Text(Strings.defaultFolder).font(.headline)
-            Text(presentation.defaultLibraryPath).textSelection(.enabled)
-                .accessibilityLabel(Strings.defaultFolder)
-                .accessibilityValue(presentation.defaultLibraryPath)
-            HStack {
-                Button(OnboardingStrings.useDefaultFolder, action: presentation.useDefaultFolder)
-                    .disabled(!presentation.canChooseFolder)
-                    .accessibilityIdentifier("onboarding-use-default")
-                Button(OnboardingStrings.chooseFolder + "…", action: presentation.chooseFolder)
-                    .disabled(!presentation.canChooseFolder)
-                    .accessibilityIdentifier("onboarding-choose-folder")
-            }
+            libraryFolderStep
         case .seedOffer:
-            Text(OnboardingStrings.seedOfferTitle).font(.title2)
-            Text(OnboardingStrings.seedOfferHelp)
-            HStack {
-                Button(OnboardingStrings.acceptSeeds, action: presentation.acceptSeeds)
-                    .disabled(!presentation.canOfferSeeds)
-                    .accessibilityIdentifier("onboarding-accept-seeds")
-                Button(OnboardingStrings.declineSeeds, action: presentation.declineSeeds)
-                    .disabled(!presentation.canOfferSeeds)
-                    .accessibilityIdentifier("onboarding-decline-seeds")
-            }
+            seedOfferStep
         case .tour:
-            Text(OnboardingStrings.tourTitle).font(.title2)
-                .accessibilityIdentifier("onboarding-tour-title")
+            tourStep
+        case .complete:
+            completeStep
+        }
+    }
+
+    private var libraryFolderStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WelcomeStatusRow(symbol: librarySymbol) {
+                Text(OnboardingStrings.libraryFolderTitle).font(.headline)
+            }
+            Text(OnboardingStrings.libraryFolderHelp)
+            LabeledContent(Strings.libraryFolder) {
+                Text(presentation.activeLibraryPath)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(presentation.activeLibraryPath)
+                    .accessibilityLabel(Strings.libraryFolder)
+                    .accessibilityValue(presentation.activeLibraryPath)
+                    .accessibilityIdentifier("onboarding-active-folder")
+            }
+            LabeledContent(Strings.defaultFolder) {
+                Text(presentation.defaultLibraryPath)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(presentation.defaultLibraryPath)
+                    .accessibilityLabel(Strings.defaultFolder)
+                    .accessibilityValue(presentation.defaultLibraryPath)
+            }
+        }
+    }
+
+    private var seedOfferStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WelcomeStatusRow(symbol: .unchecked) {
+                Text(OnboardingStrings.seedOfferTitle).font(.headline)
+            }
+            Text(OnboardingStrings.seedOfferHelp)
+        }
+    }
+
+    private var tourStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            WelcomeStatusRow(symbol: librarySymbol) {
+                Text(OnboardingStrings.tourTitle).font(.headline)
+                    .accessibilityIdentifier("onboarding-tour-title")
+            }
             Text(OnboardingStrings.tourHelp).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("onboarding-tour-help")
             seedResult
-        case .complete:
-            Text(Strings.onboardingTitle).font(.title2)
-            if presentation.state.seedSummary != nil {
-                seedResult
-            } else if presentation.messages.isEmpty {
-                Text(Strings.onboardingComplete)
-            }
+        }
+    }
+
+    @ViewBuilder private var completeStep: some View {
+        if presentation.state.seedSummary != nil {
+            seedResult
+        } else if presentation.messages.isEmpty {
+            WelcomeStatusRow(symbol: .ready) { Text(Strings.onboardingComplete) }
         }
     }
 
     @ViewBuilder private var seedResult: some View {
         if let summary = presentation.state.seedSummary {
-            Text(OnboardingStrings.seedSummary(summary))
-                .accessibilityLabel(OnboardingStrings.seedSummary(summary))
-                .accessibilityIdentifier("onboarding-seed-summary")
+            WelcomeStatusRow(symbol: .ready) {
+                Text(OnboardingStrings.seedSummary(summary))
+                    .accessibilityLabel(OnboardingStrings.seedSummary(summary))
+                    .accessibilityIdentifier("onboarding-seed-summary")
+            }
         }
+    }
+
+    private var librarySymbol: WelcomeStatusSymbol {
+        presentation.state.libraryStatus == .available ? .ready : .needsAttention
     }
 }

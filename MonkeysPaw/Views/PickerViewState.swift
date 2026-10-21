@@ -15,10 +15,13 @@ final class PickerViewState: ObservableObject {
     private let isCurrent: () -> Bool
     private let requestedIntent: (PickerModel.Intent) -> Void
     private let createPrompt: (String) -> Void
+    private let openSetup: () -> Void
+    private let openSettings: () -> Void
 
     init(model: PickerModel, mainThread: MainThread,
          isCurrent: @escaping () -> Bool = { true },
          syncStatus: SyncStatusViewState? = nil,
+         openSetup: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
          requestedIntent: @escaping (PickerModel.Intent) -> Void,
          createPrompt: @escaping (String) -> Void) {
         self.model = model
@@ -27,6 +30,8 @@ final class PickerViewState: ObservableObject {
         self.isCurrent = isCurrent
         self.requestedIntent = requestedIntent
         self.createPrompt = createPrompt
+        self.openSetup = openSetup
+        self.openSettings = openSettings
         state = model.state
         model.onChange = { [weak self] in
             self?.mainThread.run { [weak self] in self?.refresh() }
@@ -50,6 +55,9 @@ final class PickerViewState: ObservableObject {
     }
 
     func didHide() { syncStatus?.hide() }
+
+    func showSetup() { if isCurrent() { openSetup() } }
+    func showSettings() { if isCurrent() { openSettings() } }
 
     deinit { syncStatus?.retire() }
 

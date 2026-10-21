@@ -3,6 +3,28 @@ import XCTest
 @testable import MonkeysPaw
 
 final class PromptPanelTests: XCTestCase {
+    func testRoundedPopoverMaterialKeepsTransparentPanelAndContentSizing() throws {
+        let content = NSView()
+        let panel = PromptPanel(content: content)
+        defer { panel.close() }
+        XCTAssertFalse(panel.isOpaque)
+        XCTAssertEqual(panel.backgroundColor, .clear)
+        XCTAssertTrue(panel.hasShadow)
+        let effect = try XCTUnwrap(panel.contentView as? NSVisualEffectView)
+        XCTAssertEqual(effect.material, .popover)
+        XCTAssertEqual(effect.blendingMode, .behindWindow)
+        XCTAssertEqual(effect.state, .active)
+        let mask = try XCTUnwrap(effect.maskImage)
+        XCTAssertEqual(mask.resizingMode, .stretch)
+        XCTAssertEqual(mask.capInsets.top, 12)
+        XCTAssertEqual(mask.capInsets.left, 12)
+        XCTAssertEqual(mask.capInsets.bottom, 12)
+        XCTAssertEqual(mask.capInsets.right, 12)
+        XCTAssertEqual(effect.layer?.cornerRadius, 12)
+        XCTAssertTrue(content.superview === effect)
+        XCTAssertEqual(content.frame, effect.bounds)
+    }
+
     func testEscapeAndCloseHaveSeparateIntents() throws {
         let panel = PromptPanel(content: NSView())
         defer { panel.close() }

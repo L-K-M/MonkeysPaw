@@ -86,7 +86,8 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertTrue(window.isVisible)
         XCTAssertTrue(view.state?.destination?.serverURL.absoluteString == "https://other.test/team")
         XCTAssertEqual(transport.redemptions, 0)
-        XCTAssertEqual(NSApp.windows.filter { !originalWindows.contains(ObjectIdentifier($0)) && $0.title == Strings.settingsTitle }.count, 1)
+        XCTAssertEqual(window.title, SettingsAccountStrings.tab)
+        XCTAssertEqual(NSApp.windows.filter { !originalWindows.contains(ObjectIdentifier($0)) && $0 === window }.count, 1)
     }
 
     func testColdLinkWithSavedAccountSurvivesInitialConnectionPublication() throws {

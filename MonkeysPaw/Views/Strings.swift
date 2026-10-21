@@ -2,7 +2,11 @@ import MonkeysPawCore
 
 /// Front-end copy; shared delivery and setup instructions stay in Core's tables.
 enum Strings {
-    static let showPanel = "Show Panel"
+    static let showPanel = "Show Picker"
+    static let about = "About Monkey's Paw"
+    static let quit = "Quit Monkey's Paw"
+    static let aboutDescription = "Keep your prompts ready to fill, copy and paste."
+    static let projectLink = "Monkey's Paw on GitHub"
     static let setup = "Setup…"
     static let setupTitle = "Monkey's Paw Setup"
     static let settings = "Settings…"
@@ -13,14 +17,18 @@ enum Strings {
     static let done = "Done"
     static let generalTab = "General"
     static let shortcutsTab = "Shortcuts"
-    static let libraryFolder = "Library folder"
+    static let libraryFolder = "Library Folder"
+    static let rememberedValues = "Remembered Values"
+    static let rememberedValuesExplanation = "Saved field values are reused the next time you fill a prompt."
     static let defaultLibraryFolder = "You are using the default library folder."
     static let chosenLibraryFolder = "You are using a folder you chose."
     static let chooseFolder = "Choose…"
     static let useDefaultFolder = "Use Default"
     static let showInFinder = "Show in Finder"
-    static let togglePicker = "Toggle picker"
-    static let repeatLast = "Repeat last"
+    static let togglePicker = "Show Picker"
+    static let repeatLast = "Repeat Last Prompt"
+    static let shortcutBindingLabel = "Shortcut"
+    static let testShortcut = "Test Shortcut"
     static let openRepeatPrompt = "Open prompt"
     static let clearShortcut = "Clear"
     static let openSetup = "Open Setup…"
@@ -149,9 +157,14 @@ enum Strings {
     static let fillForm = "Fill prompt"
     static let chooseValue = "Choose a value"
     static let usePrompt = "Use"
+    static let paste = "Paste"
+    static let back = "Back"
+    static let pickerMore = "More actions"
+    static let writeWithAssistant = "Write with Assistant"
+    static func createPrompt(_ query: String) -> String { "Create “" + query + "”" }
     static let deliver = "Deliver"
     static let forgetValues = "Forget values"
-    static let forgetAllValues = RememberedValuesStrings.forgetAll + "…"
+    static let forgetAllValues = "Forget All Values…"
     static let edit = "Edit"
     static let library = "Library"
     static let openLibrary = "Open Library"
@@ -166,7 +179,7 @@ enum Strings {
     static let fillHint = "Tab: next field · Return (single-line): deliver · ⌘Return: paste · ⌥Return: copy · Esc: back"
     static let noPasteTarget = "No paste target"
 
-    static func pasteTarget(_ name: String) -> String { "→ " + name + " · Local library" }
+    static func pasteTarget(_ name: String) -> String { "→ " + name }
 
     static func persistenceWarning(_ warning: PromptPersistenceWarning) -> String {
         switch warning {

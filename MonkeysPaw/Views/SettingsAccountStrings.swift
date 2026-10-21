@@ -11,6 +11,7 @@ enum SettingsAccountStrings {
     static let signOut = "Sign out"
     static let refresh = "Refresh account"
     static let devices = "Devices"
+    static let invites = "Invites"
     static let revoke = "Revoke device"
     static let revokeCurrent = "Revoke this device and sign out"
     static let signedOut = "Not signed in. Local prompts remain available."

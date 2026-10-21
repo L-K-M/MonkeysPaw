@@ -92,6 +92,8 @@ struct PickerTextInput: NSViewRepresentable {
     let focusRevision: UInt64
     let onChange: (String) -> Void
     var onFocus: () -> Void = {}
+    var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
+    var isBezeled = true
 
     func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange) }
 
@@ -114,6 +116,13 @@ struct PickerTextInput: NSViewRepresentable {
         field.fieldKind = kind
         field.isEnabled = context.environment.isEnabled
         field.onFocus = onFocus
+        if field.font != font { field.font = font }
+        if field.isBezeled != isBezeled || (!isBezeled && field.isBordered) {
+            field.isBordered = false
+            field.isBezeled = isBezeled
+        }
+        field.drawsBackground = isBezeled
+        field.focusRingType = isBezeled ? .exterior : .none
         field.placeholderString = label
         field.identifier = NSUserInterfaceItemIdentifier(identifier)
         field.setAccessibilityLabel(label)
