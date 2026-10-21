@@ -14,6 +14,7 @@ enum LinuxStyle {
         mp_css_load(provider, css)
         // The display holds the provider for its own lifetime.
         mp_add_style_provider(display, provider)
+        g_object_unref(UnsafeMutableRawPointer(provider))
     }
 
     // @borders is the theme's named border color; a theme missing it keeps
