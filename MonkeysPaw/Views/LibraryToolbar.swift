@@ -34,7 +34,7 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         if identifier == .libraryListSeparator, let split = splitController?.splitView {
-            let item = NSTrackingSeparatorToolbarItem(itemIdentifier: identifier, splitView: split, dividerIndex: 1)
+            let item = NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: split, dividerIndex: 1)
             item.label = LibraryStrings.editPreview
             item.paletteLabel = item.label
             item.toolTip = item.label

@@ -352,11 +352,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         let listItem = NSSplitViewItem(contentListWithViewController: list)
         listItem.minimumThickness = 240
         listItem.holdingPriority = .init(rawValue: 251)
-        listItem.automaticallyAdjustsSafeAreaInsets = true
         let editorItem = NSSplitViewItem(viewController: editor)
         editorItem.minimumThickness = 360
         editorItem.holdingPriority = .init(rawValue: 200)
-        editorItem.automaticallyAdjustsSafeAreaInsets = true
         let inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = 280
         inspectorItem.maximumThickness = 560
