@@ -50,6 +50,22 @@ final class LinuxConflictViewTests: XCTestCase {
         tools = nil
     }
 
+    func testEarlyHeldReleaseDoesNotSuspendALateConflictRequest() throws {
+        transport.holdNext = .get
+        transport.releaseHeld()
+        let transport = try XCTUnwrap(transport)
+        let request = try HTTPRequest(url: XCTUnwrap(URL(string:
+            "https://sync.example.test/api/v1/prompts/" + ConflictViewTransport.original)),
+            method: .get, deadline: ContinuousClock().now.advanced(by: .seconds(3)))
+        let done = ConflictViewFlag()
+        Task.detached {
+            _ = try? await transport.send(request)
+            done.set()
+        }
+        XCTAssertTrue(GTKTestSupport.spin { done.value })
+        XCTAssertFalse(transport.hasHeld)
+    }
+
     func testKeepMineShowsExactCandidateAndSendsItOnlyOnExplicitChoice() throws {
         try open()
         let preview = try XCTUnwrap(environment.conflictModel?.state.preview)
@@ -238,7 +254,7 @@ final class LinuxConflictViewTests: XCTestCase {
         let button = try widget("conflict-keep-mine")
         emitClick(button)
         emitClick(button) // Both activations precede the model's queued busy transition.
-        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.transport.hasHeld }, timeout: Self.syncIOTimeout))
         emitClick(button)
         drain()
         XCTAssertEqual(transport.originalPuts.count, 1)
@@ -278,7 +294,7 @@ final class LinuxConflictViewTests: XCTestCase {
         XCTAssertGreaterThan(writes, 0)
         transport.holdNext = .put
         try click("conflict-keep-mine")
-        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.transport.hasHeld }, timeout: Self.syncIOTimeout))
         XCTAssertEqual(gtk_text_view_get_editable(mp_text_view(try widget("library-source"))), 0)
         XCTAssertFalse(try sensitive("library-save"))
         XCTAssertFalse(try sensitive("conflict-keep-both"))
@@ -294,7 +310,7 @@ final class LinuxConflictViewTests: XCTestCase {
         try open()
         transport.holdNext = .put
         try click("conflict-keep-mine")
-        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.transport.hasHeld }, timeout: Self.syncIOTimeout))
         gtk_window_close(mp_window(window))
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(self.window) == 0
             && self.environment.conflictModel?.state.preview == nil })
@@ -311,7 +327,7 @@ final class LinuxConflictViewTests: XCTestCase {
         try open()
         transport.holdNext = .get
         try click("conflict-refresh")
-        XCTAssertTrue(GTKTestSupport.spin { self.transport.hasHeld })
+        XCTAssertTrue(GTKTestSupport.spin(until: { self.transport.hasHeld }, timeout: Self.syncIOTimeout))
         let old = try XCTUnwrap(environment.conflictModel)
         gtk_window_destroy(mp_window(window))
         window = nil
@@ -402,8 +418,17 @@ final class LinuxConflictViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !account.state.isBusy })
         var password = "test-password"
         account.login(server: "https://sync.example.test", username: "person", password: &password, deviceName: "Linux")
+        XCTAssertTrue(GTKTestSupport.spin {
+            account.state.operation == .signingIn || account.state.enabled || account.state.error != nil
+        })
+        // Login and initial sync are separate durable operations. Drain the
+        // admitted login before starting the initial-sync readiness budget.
+        let signedIn = ConflictViewFlag()
+        Task.detached { await account.drain(); signedIn.set() }
+        XCTAssertTrue(GTKTestSupport.spin(until: { signedIn.value }, timeout: Self.syncIOTimeout))
+        XCTAssertTrue(GTKTestSupport.spin { account.state.enabled })
         XCTAssertTrue(GTKTestSupport.spin(until: {
-            account.state.enabled && self.environment.syncService?.report.lastSuccess != nil
+            self.environment.syncService?.report.lastSuccess != nil
         }, timeout: Self.syncIOTimeout))
         environment.showLibrary()
         XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.library) != nil })
@@ -552,6 +577,7 @@ private final class ConflictViewTransport: HTTPTransporting, @unchecked Sendable
     private let lock = NSRecursiveLock()
     private var requests: [HTTPRequest] = []
     private var held: (HTTPRequest, CheckedContinuation<HTTPResponse, Error>)?
+    private var releaseRequested = false
     private var storedHold: HTTPMethod?
     private var storedGetFailure: SyncAPI.FailureCode?
     private var storedPutFailure: SyncAPI.FailureCode?
@@ -579,14 +605,31 @@ private final class ConflictViewTransport: HTTPTransporting, @unchecked Sendable
             return true
         }
         if hold {
-            return try await withCheckedThrowingContinuation { continuation in locked { held = (request, continuation) } }
+            return try await withCheckedThrowingContinuation { continuation in
+                let releaseNow = locked {
+                    if releaseRequested { releaseRequested = false; return true }
+                    held = (request, continuation)
+                    return false
+                }
+                if releaseNow { complete(request, continuation: continuation) }
+            }
         }
         return try response(to: request)
     }
 
     func releaseHeld() {
-        let pending = locked { let value = held; held = nil; return value }
+        let pending = locked {
+            let value = held
+            held = nil
+            // Teardown can release before the worker admits its held request.
+            if value == nil { releaseRequested = true }
+            return value
+        }
         guard let (request, continuation) = pending else { return }
+        complete(request, continuation: continuation)
+    }
+
+    private func complete(_ request: HTTPRequest, continuation: CheckedContinuation<HTTPResponse, Error>) {
         do { continuation.resume(returning: try response(to: request)) }
         catch { continuation.resume(throwing: HTTPTransportError.invalidResponse) }
     }

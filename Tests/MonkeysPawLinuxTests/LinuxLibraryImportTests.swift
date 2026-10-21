@@ -588,12 +588,21 @@ final class LinuxLibraryImportTests: XCTestCase {
         drain()
     }
 
-    private func finishImport() {
-        XCTAssertTrue(GTKTestSupport.spin {
-            self.work.runAll()
-            return !self.environment.libraryImportState.isBusy && !self.environment.libraryImportState.isChoosing
-        })
-        drain()
+    private func finishImport(file: StaticString = #filePath, line: UInt = #line) {
+        let completed = {
+            !self.environment.libraryImportState.isBusy && !self.environment.libraryImportState.isChoosing
+        }
+        // The held worker writes real files. Give GLib its response budget
+        // after each disk batch, including batches queued by earlier reports.
+        for _ in 0..<20 {
+            work.runAll()
+            if completed() { drain(); return }
+            guard GTKTestSupport.spin(until: { completed() || self.work.hasPending }) else {
+                XCTFail("Neither import completion nor another work batch arrived", file: file, line: line)
+                return
+            }
+        }
+        XCTFail("Import did not settle after 20 batches", file: file, line: line)
     }
 
     private func drainWork() {
@@ -671,6 +680,10 @@ private final class ImportTestChooser: LinuxImportChoosing {
 private final class ImportTestWork: BackgroundWork {
     private let lock = NSLock()
     private var work: [() -> Void] = []
+    var hasPending: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !work.isEmpty
+    }
     func run(_ work: @escaping () -> Void) {
         lock.lock(); self.work.append(work); lock.unlock()
     }
