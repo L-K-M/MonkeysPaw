@@ -41,6 +41,15 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(launched.map(\.absoluteString), ["https://github.com/L-K-M/MonkeysPaw#readme"])
     }
 
+    /// The main menu routes About through the responder chain to the app
+    /// delegate, whose validation must enable it.
+    func testAppMenuAboutIsEnabled() {
+        let delegate = AppDelegate(libraryRoot: directory.appendingPathComponent("library"),
+            dataRoot: directory.appendingPathComponent("data"), launchURI: { _ in })
+        let item = NSMenuItem(title: "About", action: #selector(AppDelegate.showAboutPanel(_:)), keyEquivalent: "")
+        XCTAssertTrue(delegate.validateMenuItem(item))
+    }
+
     func testAutomationFallbackHasUsageDescriptionInHostedApp() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSAppleEventsUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)
