@@ -15,6 +15,9 @@ struct LibraryAssistantView: View {
                 Text(LibraryAssistantStrings.improve).tag(LibraryAssistantViewState.Flow.improve)
             }
             .pickerStyle(.segmented)
+            // The inspector is narrow; the segment titles explain themselves.
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
             .disabled(presentation.isWorking || presentation.state.isAccepting)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {

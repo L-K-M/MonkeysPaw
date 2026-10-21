@@ -879,7 +879,11 @@ final class MacPickerViewTests: XCTestCase {
                 pressed.fulfill()
                 return
             }
-            XCTAssertEqual(AXUIElementPerformAction(button, kAXPressAction as CFString), .success)
+            // SwiftUI runs a pressed button's action on the calling thread and
+            // requires the main actor; XCTest's wait services this hop.
+            var result = AXError.failure
+            DispatchQueue.main.sync { result = AXUIElementPerformAction(button, kAXPressAction as CFString) }
+            XCTAssertEqual(result, .success)
             pressed.fulfill()
         }
         wait(for: [pressed], timeout: 5)

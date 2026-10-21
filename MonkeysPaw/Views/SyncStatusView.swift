@@ -130,7 +130,9 @@ struct SyncStatusView: View {
     private var prefix: String { presentation.surface == .picker ? "picker-sync" : "library-sync" }
 
     @ViewBuilder var body: some View {
-        if presentation.surface == .library { libraryBody } else { compactPicker }
+        if presentation.surface == .library { libraryBody }
+        // With sync off the picker has nothing to report, so its footer stays quiet.
+        else if presentation.state?.footer != .disabled { compactPicker }
     }
 
     /// The picker footer shows one summary line; its menu holds the details and actions.

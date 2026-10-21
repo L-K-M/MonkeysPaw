@@ -67,11 +67,11 @@ struct PickerView: View {
             HStack(spacing: 6) {
                 Text(Strings.pasteTarget(presentation.pasteTarget))
                     .lineLimit(1).truncationMode(.tail)
+                    .layoutPriority(1)
                     .help(Strings.pasteTarget(presentation.pasteTarget))
                     .accessibilityIdentifier("picker-target")
                 if let syncStatus = presentation.syncStatus {
-                    Text("·").accessibilityHidden(true)
-                    SyncStatusView(presentation: syncStatus).fixedSize()
+                    SyncStatusView(presentation: syncStatus)
                 }
             }
             .foregroundStyle(.secondary)

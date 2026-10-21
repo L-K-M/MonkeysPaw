@@ -336,7 +336,8 @@ private struct ShortcutSettingsRow: View {
     /// A compact recorder showing the shortcut, with a clear button beside it.
     private var inAppRecorder: some View {
         HStack(spacing: 6) {
-            ShortcutRecorder(label: Strings.recordShortcutLabel(title), title: Strings.shortcutSymbols(state.binding),
+            ShortcutRecorder(label: Strings.recordShortcutLabel(title),
+                title: Strings.shortcutSymbols(state.binding) ?? Strings.recordShortcut,
                 onCapture: { presentation.setAccelerator($0, for: action) },
                 onError: { presentation.captureFailed($0, for: action) })
                 .frame(width: 150)

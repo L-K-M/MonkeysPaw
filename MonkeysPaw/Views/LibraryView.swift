@@ -9,6 +9,15 @@ struct LibrarySidebarView: View {
     @State private var dropTarget: LibrarySectionID?
 
     var body: some View {
+        // A plain stack keeps the footer below the list; an inset let rows
+        // scroll underneath the sync line.
+        VStack(spacing: 0) {
+            sectionList
+            footer
+        }
+    }
+
+    private var sectionList: some View {
         List(selection: Binding<LibrarySectionID?>(get: { presentation.snapshot.selectedSection },
             set: { if let section = $0 { presentation.selectSection(section) } })) {
             Section {
@@ -43,7 +52,6 @@ struct LibrarySidebarView: View {
         .listStyle(.sidebar)
         .accessibilityLabel(LibraryStrings.sidebar)
         .accessibilityIdentifier("library-sidebar")
-        .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .onChange(of: presentation.scopeDragEpoch) { _ in dropTarget = nil }
     }
 
@@ -117,7 +125,7 @@ struct LibrarySidebarView: View {
     private func sectionLabel(_ section: LibraryBrowserSection) -> some View {
         Label {
             HStack(spacing: 6) {
-                Text(section.id == .all ? LibraryStrings.allPrompts : section.title)
+                Text(displayTitle(section))
                 if let role = section.role {
                     Text(LibraryStrings.role(role)).font(.caption).foregroundStyle(.secondary)
                 }
@@ -131,20 +139,47 @@ struct LibrarySidebarView: View {
         .accessibilityLabel(LibraryStrings.sectionLabel(title: section.id == .all ? LibraryStrings.allPrompts : section.title, role: section.role, count: section.count))
     }
 
+    /// The tag symbol already marks tags, so their "#" prefix is dropped.
+    private func displayTitle(_ section: LibraryBrowserSection) -> String {
+        switch section.id {
+        case .all: return LibraryStrings.allPrompts
+        case .tag:
+            return section.title.hasPrefix("#") ? String(section.title.dropFirst()) : section.title
+        default: return section.title
+        }
+    }
+
     @ViewBuilder
     private var footer: some View {
-        if presentation.syncStatus != nil || !presentation.libraryAvailable {
+        if let syncStatus = presentation.syncStatus { LibrarySidebarSyncFooter(status: syncStatus) }
+        if !presentation.libraryAvailable {
             VStack(alignment: .leading, spacing: 6) {
                 Divider()
-                if let syncStatus = presentation.syncStatus {
-                    SyncStatusView(presentation: syncStatus)
-                }
                 if !presentation.libraryAvailable {
                     Text(Strings.libraryUnavailable)
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("library-unavailable")
                 }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 2)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// Sync state at the sidebar's foot. With sync off there is nothing to
+/// report, so the line disappears; Settings ▸ Account sets sync up.
+private struct LibrarySidebarSyncFooter: View {
+    @ObservedObject var status: SyncStatusViewState
+
+    var body: some View {
+        if status.state?.footer != .disabled {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider()
+                SyncStatusView(presentation: status)
             }
             .padding(.horizontal, 10)
             .padding(.top, 2)

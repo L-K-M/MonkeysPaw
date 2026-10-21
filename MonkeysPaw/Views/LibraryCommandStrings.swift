@@ -21,6 +21,7 @@ enum LibraryCommandStrings {
     static let refreshHistory = "Refresh History"
     static let loadingHistory = "Loading history…"
     static let noHistory = "No saved revisions for this prompt."
+    static let noRevisionsTitle = "No Revisions"
     static let selectRevision = "Select a revision to preview it."
     static let restore = "Restore"
     static let valid = "Valid"

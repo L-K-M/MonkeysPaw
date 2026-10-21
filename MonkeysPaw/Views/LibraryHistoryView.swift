@@ -34,9 +34,17 @@ struct LibraryHistoryView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             Divider()
-            VSplitView {
-                revisionList
-                previewPane
+            if presentation.editorState.history.revisions.isEmpty, !presentation.editorState.history.isLoading {
+                // One centered message instead of an empty list over an empty preview.
+                ContentUnavailableView(LibraryCommandStrings.noRevisionsTitle, systemImage: "clock.arrow.circlepath",
+                    description: Text(LibraryCommandStrings.noHistory))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("library-history-preview")
+            } else {
+                VSplitView {
+                    revisionList
+                    previewPane
+                }
             }
             Divider()
             HStack {
