@@ -2,7 +2,7 @@
 # Build and sign a universal Release app, then package verified dmg and zip files.
 # Usage: scripts/package-macos.sh [version [build-number]]
 # Requires macOS and Xcode. create-dmg (brew install create-dmg) lays out
-# the dmg window; without it a local build packages a plain hdiutil image.
+# the dmg window; if unavailable or unsuccessful, local builds use a plain image.
 # CI requires create-dmg so releases keep the laid-out window.
 # With no arguments, use the committed Xcode version and build number.
 # An explicit version may have a v prefix; the optional second argument sets
@@ -99,14 +99,7 @@ printf '==> Packaging zip and dmg\n'
 /usr/bin/ditto -c -k --keepParent "$app" "$zip"
 
 volume_name="MonkeysPaw $version"
-if [[ "$dmg_tool" == hdiutil ]]; then
-  # Same contents as the release image (the app and an Applications link
-  # to drag it onto), without create-dmg's window layout.
-  printf -- '-- create-dmg not installed; packaging a plain dmg\n'
-  ln -s /Applications "$staging_directory/Applications"
-  /usr/bin/hdiutil create -volname "$volume_name" -srcfolder "$staging_directory" \
-    -format UDZO "$dmg" >/dev/null || fail 'hdiutil could not create the dmg'
-else
+if [[ "$dmg_tool" == create-dmg ]]; then
   dmg_arguments=(--volname "$volume_name" --window-size 540 380
     --icon-size 100 --icon MonkeysPaw.app 150 185 --app-drop-link 390 185)
   if [[ "${CI:-false}" == true ]]; then
@@ -119,9 +112,22 @@ else
   if ! create-dmg "${dmg_arguments[@]}" "$dmg" "$staging_directory"; then
     printf '!! create-dmg reported failure; checking the newly created image\n' >&2
   fi
+  if [[ ! -s "$dmg" ]] || ! /usr/bin/hdiutil verify "$dmg"; then
+    [[ "${CI:-false}" != true ]] || fail 'create-dmg did not produce a verified image'
+    printf '!! create-dmg did not produce a verified image; using a plain dmg\n' >&2
+    rm -f "$dmg"
+    dmg_tool=hdiutil
+  fi
 fi
-[[ -s "$dmg" ]] || fail "$dmg_tool did not produce an image"
-/usr/bin/hdiutil verify "$dmg"
+if [[ "$dmg_tool" == hdiutil ]]; then
+  # Avoid create-dmg's mount/style/convert cycle on local hosts where it fails.
+  printf -- '-- Packaging a plain dmg with an Applications link\n'
+  ln -s /Applications "$staging_directory/Applications"
+  /usr/bin/hdiutil create -volname "$volume_name" -srcfolder "$staging_directory" \
+    -format UDZO "$dmg" >/dev/null || fail 'hdiutil could not create the dmg'
+  [[ -s "$dmg" ]] || fail 'hdiutil did not produce an image'
+  /usr/bin/hdiutil verify "$dmg"
+fi
 [[ -s "$zip" ]] || fail 'ditto did not produce a zip'
 
 mkdir -p "$repo_root/dist"

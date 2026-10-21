@@ -288,8 +288,10 @@ Rollout by milestone:
     `--skip-jenkins`. A nonzero `create-dmg` status is tolerated only if a
     newly created image exists and passes `hdiutil verify`; stale output
     cannot satisfy this check. CI requires `create-dmg`; a local build
-    without it uses `hdiutil create` for an image with the same app and
-    link but no window layout. Only verified artifacts are copied to `dist/`.
+    without it, or whose image is missing or invalid, uses `hdiutil create`
+    for an image with the same app and link but no window layout. A failed
+    image is removed before recovery; CI fails without this fallback.
+    Only verified artifacts are copied to `dist/`.
     `dist/MonkeysPaw-<version>.sha256` records both files; download all three
     together and run `shasum -a 256 -c MonkeysPaw-<version>.sha256` before
     installation (`docs/platform/macos.md`).
@@ -298,6 +300,8 @@ Rollout by milestone:
   toolchain skips a default target but fails an explicitly named target.
   File outputs go to `dist/`, followed by one Summary block. On macOS it opens
   `dist/` when a file artifact was built, unless `--no-open` was passed.
+  After a successful macOS `--install`, it instead reveals
+  `/Applications/MonkeysPaw.app` in Finder. `--no-open` suppresses that too.
   `mac` calls the packager above; `deb` calls the builder below with the
   committed version; `flatpak` reuses that invocation's exact deb, building it
   once if needed even when targets are repeated or reversed. Failed or missing
