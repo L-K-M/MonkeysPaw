@@ -345,6 +345,7 @@ final class MacUITourTests: XCTestCase {
     private func describe(_ window: NSWindow, as name: String) {
         var parts = ["\(name): title=\"\(window.title)\" subtitle=\"\(window.subtitle)\"",
                      "frame=\(NSStringFromRect(window.frame))",
+                     "screenVisible=\(window.screen.map { NSStringFromRect($0.visibleFrame) } ?? "none")",
                      "contentMin=\(NSStringFromSize(window.contentMinSize))",
                      "style=\(window.styleMask.rawValue)",
                      "restorable=\(window.isRestorable)",
