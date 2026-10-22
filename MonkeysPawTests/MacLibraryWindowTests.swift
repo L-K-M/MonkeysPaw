@@ -685,7 +685,7 @@ final class MacLibraryWindowTests: XCTestCase {
         // A model publication can precede the toolbar's queued render. Ending
         // or collapsing search is a lifecycle event, not a new query edit.
         search.stringValue = ""
-        (search.delegate as? NSSearchFieldDelegate)?.searchFieldDidEndSearching?(search)
+        search.delegate?.searchFieldDidEndSearching?(search)
         XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
         controller.refreshWindowPresentation()
         XCTAssertEqual(search.stringValue, "Kept")
@@ -706,7 +706,7 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
         let cell = try XCTUnwrap(search.cell as? NSSearchFieldCell)
         let cancel = try XCTUnwrap(cell.cancelButtonCell)
-        cancel.performClick(withFrame: cell.cancelButtonRect(forBounds: search.bounds), in: search)
+        cancel.performClick(search)
         XCTAssertEqual(controller.presentation.snapshot.filter, "")
         XCTAssertEqual(search.stringValue, "")
     }
