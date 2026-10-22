@@ -86,6 +86,7 @@
     <string name="assistant_elapsed">%1$.1f s</string>
     <string name="assistant_usage">Tokens: %1$d input / %2$d output</string>
     <string name="assistant_idle">Enter a brief and tap Write. Changes require Accept.</string>
+    <string name="assistant_graph_loading">Loading the assistant…</string>
     <string name="assistant_working">Working…</string>
     <string name="assistant_draft_help">Check the draft and validation issues. Retry with feedback to revise it.</string>
     <string name="assistant_ready">Check the save preview, then Accept or Reject.</string>

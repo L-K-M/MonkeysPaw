@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="design_back">Back</string>
+    <string name="design_close">Close</string>
+    <string name="design_more_options">More options</string>
+    <string name="design_clear_search">Clear search</string>
+    <string name="design_browse">Browse library</string>
+    <string name="design_library_title">Library</string>
+    <string name="design_setup_title">Quick setup</string>
+    <string name="design_setup_loading">Checking your setup…</string>
+    <string name="design_no_matches_title">No matching prompts</string>
+    <string name="design_empty_library_title">A place for your prompts</string>
+    <string name="design_empty_library_body">Create a prompt for the things you write often. It will be ready whenever you need it.</string>
+    <string name="design_account_subtitle">Your server, devices and shared libraries</string>
+    <string name="design_assistant_subtitle">Provider, model and API key</string>
+    <string name="design_assistant_section">Assistant</string>
+    <string name="design_keyboard_subtitle">Enable the picker and set up quick access</string>
+    <string name="design_library_group">Your workspace</string>
+    <string name="design_prompt_options">Options for %1$s</string>
+    <string name="design_full_preview">Show full preview</string>
+    <string name="design_show_less">Show less</string>
+</resources>

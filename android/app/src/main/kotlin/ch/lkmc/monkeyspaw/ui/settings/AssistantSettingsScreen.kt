@@ -3,11 +3,19 @@ package ch.lkmc.monkeyspaw.ui.settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDropDown
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.SmartToy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.llm.ConnectionTestResult
@@ -15,8 +23,11 @@ import ch.lkmc.monkeyspaw.core.domain.llm.ProviderKind
 import ch.lkmc.monkeyspaw.core.domain.llm.ProviderProfileID
 import ch.lkmc.monkeyspaw.core.domain.llm.ProviderSettingsError
 import ch.lkmc.monkeyspaw.core.domain.llm.SecretStoreError
+import ch.lkmc.monkeyspaw.ui.components.*
+import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 
 /** Renders safe metadata and forwards intents; only the native password field owns raw input. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun AssistantSettingsScreen(
     state: AssistantSettingsUiState,
@@ -40,100 +51,174 @@ internal fun AssistantSettingsScreen(
 ) {
     BackHandler(onBack = onBack)
     DisposableEffect(Unit) { onDispose { onKeyInputDiscarded() } }
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) { Text(stringResource(R.string.assistant_settings_back)) }
-        Text(stringResource(R.string.assistant_settings_title), style = MaterialTheme.typography.headlineMedium)
-        // Disclose storage and outbound data before the first editable control.
-        Text(stringResource(R.string.assistant_key_disclosure), style = MaterialTheme.typography.bodySmall)
-        Text(stringResource(R.string.assistant_outbound_disclosure), style = MaterialTheme.typography.bodySmall)
-        Text(stringResource(R.string.assistant_profiles), style = MaterialTheme.typography.titleMedium)
-        var profilesExpanded by remember { mutableStateOf(false) }
-        Box {
-            OutlinedButton(onClick = { profilesExpanded = true }, enabled = state.canChangeProfiles) {
-                Text(state.draft?.displayName ?: stringResource(R.string.assistant_no_profile))
-            }
-            DropdownMenu(expanded = profilesExpanded, onDismissRequest = { profilesExpanded = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_disable)) },
-                    onClick = { profilesExpanded = false; onSelect(null) })
-                for (profile in state.profiles) DropdownMenuItem(text = {
-                    Text(if (profile.id == state.selectedProfileID) stringResource(R.string.assistant_profile_active, profile.displayName)
-                        else profile.displayName)
-                }, onClick = { profilesExpanded = false; onSelect(profile.id) })
-            }
-        }
-        val active = state.profiles.firstOrNull { it.id == state.selectedProfileID }
-        Text(if (active == null) stringResource(R.string.assistant_inactive)
-            else stringResource(R.string.assistant_active_provider, active.displayName))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onAdd, enabled = state.canChangeProfiles) { Text(stringResource(R.string.assistant_add)) }
-            TextButton(onClick = { state.draft?.id?.let(onDelete) }, enabled = state.canSave) {
-                Text(stringResource(R.string.assistant_delete))
-            }
-        }
-        if (!state.isNewProfile && state.draft != null && state.draft.id != state.selectedProfileID) {
-            TextButton(onClick = { onSelect(state.draft.id) }, enabled = state.canChangeProfiles) {
-                Text(stringResource(R.string.assistant_make_active))
-            }
-        }
-        TextButton(onClick = { onSelect(null) }, enabled = state.canChangeProfiles) {
-            Text(stringResource(R.string.assistant_disable))
-        }
-        val draft = state.draft
-        if (state.isNewProfile) Text(stringResource(R.string.assistant_new_profile))
-        if (draft != null) {
-            OutlinedTextField(value = draft.displayName, onValueChange = onRename, enabled = state.canEditDraft,
-                label = { Text(stringResource(R.string.assistant_profile_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text(stringResource(R.string.assistant_provider_kind))
-            for (kind in ProviderKind.entries) {
-                FilterChip(selected = draft.kind == kind, onClick = { onKind(kind) }, enabled = state.canEditDraft,
-                    label = { Text(stringResource(if (kind == ProviderKind.ANTHROPIC) R.string.assistant_anthropic
-                        else R.string.assistant_compatible)) })
-            }
-            OutlinedTextField(value = draft.baseURL, onValueChange = onBaseURL, enabled = state.canEditDraft,
-                label = { Text(stringResource(R.string.assistant_base_url)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = draft.modelID, onValueChange = onModelID, enabled = state.canEditDraft,
-                label = { Text(stringResource(R.string.assistant_model_id)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text(stringResource(R.string.assistant_manual_model), style = MaterialTheme.typography.bodySmall)
-            var modelsExpanded by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    PawScreen(stringResource(R.string.assistant_settings_title), modifier, onBack = onBack,
+        actions = {
             Box {
-                OutlinedButton(onClick = { modelsExpanded = true }, enabled = state.canEditDraft && state.availableModels.isNotEmpty()) {
-                    Text(stringResource(R.string.assistant_choose_model))
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Rounded.MoreVert, stringResource(R.string.design_more_options))
                 }
-                DropdownMenu(expanded = modelsExpanded, onDismissRequest = { modelsExpanded = false }) {
-                    for (model in state.availableModels) DropdownMenuItem(text = {
-                        val name = model.displayName
-                        Text(if (name == null || name == model.id) model.id
-                            else stringResource(R.string.assistant_model_label, name, model.id))
-                    }, onClick = { modelsExpanded = false; onModelID(model.id) })
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.assistant_refresh)) },
+                        leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
+                        enabled = state.operation == null,
+                        onClick = { menuOpen = false; onRefresh() })
                 }
             }
-            HorizontalDivider()
-            Text(stringResource(R.string.assistant_api_key), style = MaterialTheme.typography.titleMedium)
-            AssistantSettingsKeyField(state.keyInputReset, state.canEditDraft,
-                stringResource(R.string.assistant_key_placeholder), onKeyInput, Modifier.fillMaxWidth())
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onKeepKey, enabled = state.canEditDraft) { Text(stringResource(R.string.assistant_keep_key)) }
-                TextButton(onClick = onClearKey, enabled = state.canEditDraft) { Text(stringResource(R.string.assistant_clear_key)) }
+        }, bottomBar = {
+            AssistantSettingsDock(state, onSave, onTest, onCancelTest)
+        }) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawSpacing.large),
+            verticalArrangement = Arrangement.spacedBy(PawSpacing.section)) {
+            // Disclose storage and outbound data before the first editable control.
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Column(Modifier.padding(PawSpacing.large), verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                    Text(stringResource(R.string.assistant_key_disclosure), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.assistant_outbound_disclosure), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            Text(stringResource(when (state.keyEdit) {
-                AssistantKeyEdit.KEEP -> R.string.assistant_key_keep
-                AssistantKeyEdit.REPLACE -> R.string.assistant_key_replace
-                AssistantKeyEdit.CLEAR -> R.string.assistant_key_clear
-            }))
-            Text(stringResource(when (state.keyStorage) {
-                AssistantKeyStorage.None -> R.string.assistant_key_none
-                AssistantKeyStorage.Loading -> R.string.assistant_key_loading
-                is AssistantKeyStorage.Saved -> R.string.assistant_key_saved
-                is AssistantKeyStorage.Failed -> R.string.assistant_key_unknown
-            }))
-        } else if (state.operation == null) Text(stringResource(R.string.assistant_empty))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onSave, enabled = state.canSave) { Text(stringResource(R.string.assistant_save)) }
-            OutlinedButton(onClick = onTest, enabled = state.canTest) { Text(stringResource(R.string.assistant_test)) }
+            AssistantSection(stringResource(R.string.assistant_profiles)) {
+                var profilesExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(expanded = profilesExpanded, onExpandedChange = { profilesExpanded = it }) {
+                    OutlinedTextField(
+                        value = state.draft?.displayName ?: stringResource(R.string.assistant_no_profile),
+                        onValueChange = {}, readOnly = true, singleLine = true,
+                        label = { Text(stringResource(R.string.assistant_profile_label)) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = profilesExpanded) },
+                        enabled = state.canChangeProfiles,
+                        modifier = Modifier
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, state.canChangeProfiles)
+                            .fillMaxWidth())
+                    ExposedDropdownMenu(expanded = profilesExpanded, onDismissRequest = { profilesExpanded = false }) {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.assistant_disable)) },
+                            onClick = { profilesExpanded = false; onSelect(null) })
+                        for (profile in state.profiles) DropdownMenuItem(text = {
+                            Text(if (profile.id == state.selectedProfileID)
+                                stringResource(R.string.assistant_profile_active, profile.displayName)
+                                else profile.displayName)
+                        }, onClick = { profilesExpanded = false; onSelect(profile.id) })
+                    }
+                }
+                val active = state.profiles.firstOrNull { it.id == state.selectedProfileID }
+                PawMessage(if (active == null) stringResource(R.string.assistant_inactive)
+                    else stringResource(R.string.assistant_active_provider, active.displayName),
+                    tone = if (active == null) PawMessageTone.WARNING else PawMessageTone.INFO)
+                if (state.isNewProfile) {
+                    PawMessage(stringResource(R.string.assistant_new_profile), tone = PawMessageTone.INFO)
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                    FilledTonalButton(onClick = onAdd, enabled = state.canChangeProfiles) {
+                        Text(stringResource(R.string.assistant_add))
+                    }
+                    TextButton(onClick = { state.draft?.id?.let(onDelete) }, enabled = state.canSave,
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                        Text(stringResource(R.string.assistant_delete))
+                    }
+                    if (!state.isNewProfile && state.draft != null && state.draft.id != state.selectedProfileID) {
+                        TextButton(onClick = { onSelect(state.draft.id) }, enabled = state.canChangeProfiles) {
+                            Text(stringResource(R.string.assistant_make_active))
+                        }
+                    }
+                    TextButton(onClick = { onSelect(null) }, enabled = state.canChangeProfiles) {
+                        Text(stringResource(R.string.assistant_disable))
+                    }
+                }
+            }
+            val draft = state.draft
+            if (draft != null) {
+                AssistantSection(stringResource(R.string.assistant_section_profile)) {
+                    OutlinedTextField(value = draft.displayName, onValueChange = onRename, enabled = state.canEditDraft,
+                        label = { Text(stringResource(R.string.assistant_profile_name)) }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth())
+                    Text(stringResource(R.string.assistant_provider_kind), style = MaterialTheme.typography.labelLarge)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        ProviderKind.entries.forEachIndexed { index, kind ->
+                            SegmentedButton(selected = draft.kind == kind, onClick = { onKind(kind) },
+                                enabled = state.canEditDraft,
+                                shape = SegmentedButtonDefaults.itemShape(index, ProviderKind.entries.size)) {
+                                Text(stringResource(if (kind == ProviderKind.ANTHROPIC) R.string.assistant_anthropic
+                                    else R.string.assistant_compatible))
+                            }
+                        }
+                    }
+                }
+                AssistantSection(stringResource(R.string.assistant_section_endpoint)) {
+                    OutlinedTextField(value = draft.baseURL, onValueChange = onBaseURL, enabled = state.canEditDraft,
+                        label = { Text(stringResource(R.string.assistant_base_url)) }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        modifier = Modifier.fillMaxWidth())
+                }
+                AssistantSection(stringResource(R.string.assistant_section_model)) {
+                    var modelsExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedTextField(value = draft.modelID, onValueChange = onModelID, enabled = state.canEditDraft,
+                            label = { Text(stringResource(R.string.assistant_model_id)) }, singleLine = true,
+                            supportingText = { Text(stringResource(R.string.assistant_manual_model)) },
+                            trailingIcon = {
+                                IconButton(onClick = { modelsExpanded = true },
+                                    enabled = state.canEditDraft && state.availableModels.isNotEmpty()) {
+                                    Icon(Icons.Rounded.ArrowDropDown, stringResource(R.string.assistant_choose_model))
+                                }
+                            }, modifier = Modifier.fillMaxWidth())
+                        DropdownMenu(expanded = modelsExpanded, onDismissRequest = { modelsExpanded = false }) {
+                            for (model in state.availableModels) DropdownMenuItem(text = {
+                                val name = model.displayName
+                                Text(if (name == null || name == model.id) model.id
+                                    else stringResource(R.string.assistant_model_label, name, model.id))
+                            }, onClick = { modelsExpanded = false; onModelID(model.id) })
+                        }
+                    }
+                }
+                AssistantSection(stringResource(R.string.assistant_api_key)) {
+                    AssistantSettingsKeyField(state.keyInputReset, state.canEditDraft,
+                        stringResource(R.string.assistant_key_placeholder), onKeyInput, Modifier.fillMaxWidth())
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                        TextButton(onClick = onKeepKey, enabled = state.canEditDraft) {
+                            Text(stringResource(R.string.assistant_keep_key))
+                        }
+                        TextButton(onClick = onClearKey, enabled = state.canEditDraft) {
+                            Text(stringResource(R.string.assistant_clear_key))
+                        }
+                    }
+                    Text(stringResource(when (state.keyEdit) {
+                        AssistantKeyEdit.KEEP -> R.string.assistant_key_keep
+                        AssistantKeyEdit.REPLACE -> R.string.assistant_key_replace
+                        AssistantKeyEdit.CLEAR -> R.string.assistant_key_clear
+                    }), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(when (state.keyStorage) {
+                        AssistantKeyStorage.None -> R.string.assistant_key_none
+                        AssistantKeyStorage.Loading -> R.string.assistant_key_loading
+                        is AssistantKeyStorage.Saved -> R.string.assistant_key_saved
+                        is AssistantKeyStorage.Failed -> R.string.assistant_key_unknown
+                    }), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else if (state.operation == null) {
+                PawEmptyState(stringResource(R.string.assistant_empty_title), stringResource(R.string.assistant_empty),
+                    Icons.Rounded.SmartToy)
+            }
         }
-        if (state.isTesting) TextButton(onClick = onCancelTest) { Text(stringResource(R.string.assistant_cancel_test)) }
-        TextButton(onClick = onRefresh, enabled = state.operation == null) { Text(stringResource(R.string.assistant_refresh)) }
+    }
+}
+
+@Composable
+private fun AssistantSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+        PawSectionHeading(title)
+        Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow,
+            modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(PawSpacing.large), verticalArrangement = Arrangement.spacedBy(PawSpacing.medium),
+                content = content)
+        }
+    }
+}
+
+@Composable
+private fun AssistantSettingsDock(state: AssistantSettingsUiState, onSave: () -> Unit, onTest: () -> Unit,
+    onCancelTest: () -> Unit) {
+    Column {
         val progress = state.operation?.let {
             when (it) {
                 AssistantSettingsOperation.LOADING -> R.string.assistant_loading
@@ -142,15 +227,43 @@ internal fun AssistantSettingsScreen(
                 AssistantSettingsOperation.DELETING -> R.string.assistant_deleting
             }
         } ?: R.string.assistant_testing.takeIf { state.isTesting }
-        if (progress != null) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-            Text(stringResource(progress))
-        }
         val failures = listOfNotNull(state.readOnlyError, state.error,
             (state.keyStorage as? AssistantKeyStorage.Failed)?.error).distinct()
-        for (failure in failures) Text(stringResource(settingsErrorResource(failure)), color = MaterialTheme.colorScheme.error)
-        state.testResult?.let { Text(testResultMessage(it)) }
+        if (progress != null || failures.isNotEmpty() || state.testResult != null) {
+            Column(Modifier.fillMaxWidth().heightIn(max = 200.dp).verticalScroll(rememberScrollState())
+                .padding(horizontal = PawSpacing.large, vertical = PawSpacing.small),
+                verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                if (progress != null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(progress), style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f))
+                        if (state.isTesting) {
+                            TextButton(onClick = onCancelTest) { Text(stringResource(R.string.assistant_cancel_test)) }
+                        }
+                    }
+                }
+                for (failure in failures) {
+                    PawMessage(stringResource(settingsErrorResource(failure)), tone = PawMessageTone.ERROR)
+                }
+                state.testResult?.let { PawMessage(testResultMessage(it), tone = testResultTone(it)) }
+            }
+        }
+        PawActionBar {
+            OutlinedButton(onClick = onTest, enabled = state.canTest, modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.assistant_test))
+            }
+            Button(onClick = onSave, enabled = state.canSave, modifier = Modifier.weight(1f)) {
+                Text(stringResource(R.string.assistant_save))
+            }
+        }
     }
+}
+
+private fun testResultTone(result: ConnectionTestResult): PawMessageTone = when (result) {
+    is ConnectionTestResult.Ok -> PawMessageTone.SUCCESS
+    ConnectionTestResult.Cancelled -> PawMessageTone.INFO
+    else -> PawMessageTone.ERROR
 }
 
 @Composable

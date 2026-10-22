@@ -7,8 +7,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -45,6 +46,7 @@ import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupError
 import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupScreen
 import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupViewModel
 import ch.lkmc.monkeyspaw.ui.setup.SettingsScreen
+import ch.lkmc.monkeyspaw.ui.theme.MonkeysPawTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -123,7 +125,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MaterialTheme {
+            MonkeysPawTheme {
                 val startup = seedOffer.state.collectAsStateWithLifecycle().value
                 val setupState = setup.state.collectAsStateWithLifecycle().value
                 val editing = editor.state.collectAsStateWithLifecycle().value
@@ -147,16 +149,18 @@ class MainActivity : ComponentActivity() {
                 Scaffold(bottomBar = {
                     if (sync != null && destination == MainDestination.LIBRARY && !editing.isOpen &&
                         !assistant.isOpen && !writing.isOpen && !reviewing.isOpen && !improving.isOpen)
-                        SyncFooter(sync.sync, onDetails = { navigate(MainDestination.SYNC_DETAILS) })
+                        SyncFooter(sync.sync, onDetails = { navigate(MainDestination.SYNC_DETAILS) }, modifier = Modifier.navigationBarsPadding())
                 }) { padding ->
                     if (setupState.loading || setupState.visible || setupState.error == KeyboardTileSetupError.LOAD) {
                         KeyboardTileSetupScreen(state = setupState, onEnable = setup::enableKeyboard,
                             onSelect = setup::selectKeyboard, onAddTile = setup::addTile,
                             onCheckStatus = setup::checkStatus, onContinue = setup::continueStep,
-                            onSkip = setup::skip, onRetry = setup::retry, modifier = Modifier.padding(padding))
+                            onSkip = setup::skip, onRetry = setup::retry, modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                     } else if (setupState.settingsOpen) {
                         SettingsScreen(onKeyboardTileSetup = setup::reopen, onBack = setup::closeSettings,
-                            modifier = Modifier.padding(padding))
+                            onAccount = { setup.closeSettings(); openAccount() },
+                            onAssistantSettings = { setup.closeSettings(); assistantSettings.open() },
+                            modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                     } else if (destination == MainDestination.RESOLVE) {
                         ResolveScreen(state = checkNotNull(resolving),
                             onKeepServer = { resolving.previewID?.let { resolver.choose(SyncResolutionAction.KEEP_SERVER, it) } },
@@ -166,7 +170,7 @@ class MainActivity : ComponentActivity() {
                             onBack = { navigate(MainDestination.LIBRARY) },
                             onConfirmClose = resolver::confirmClose, onDismissClose = resolver::dismissClose,
                             onAccount = ::openAccount, onSyncDetails = { navigate(MainDestination.SYNC_DETAILS) },
-                            modifier = Modifier.padding(padding))
+                            modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                     } else if (destination == MainDestination.ACCOUNT) {
                         AccountScreen(state = checkNotNull(sync), onServer = account::setServer, onUsername = account::setUsername,
                             onPassword = account::setPassword, onDeviceName = account::setDeviceName,
@@ -177,14 +181,14 @@ class MainActivity : ComponentActivity() {
                             onSelectHold = account::selectHold, onRequestInclude = account::requestInclude,
                             onInclude = account::includeSelected, onDismissConfirmation = account::dismissConfirmation,
                             onSyncNow = account::syncNow, onSyncDetails = { navigate(MainDestination.SYNC_DETAILS) },
-                            onRecover = account::recover, modifier = Modifier.padding(padding),
+                            onRecover = account::recover, modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                             onInviteDraft = account::setInviteDraft, onStageInvite = { account.stageInvite() },
                             onInviteMode = account::setInviteMode, onAcceptInvite = account::acceptInvite,
                             onDismissInvite = account::dismissInvite)
                     } else if (destination == MainDestination.SYNC_DETAILS) {
                         SyncStatusScreen(state = checkNotNull(sync), onSyncNow = account::syncNow, onAccount = ::openAccount,
                             onBack = { navigate(MainDestination.LIBRARY) }, onRecover = account::recover,
-                            modifier = Modifier.padding(padding))
+                            modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                     } else if (startup == SeedOfferUiState.Ready) {
                         if (improving.isOpen) {
                             ImproveScreen(state = improving, onInstruction = assistantImprove::editInstruction,
@@ -194,7 +198,7 @@ class MainActivity : ComponentActivity() {
                                 onReject = assistantImprove::reject, onCancel = assistantImprove::cancel,
                                 onBack = assistantImprove::close, onReload = assistantImprove::reload,
                                 onSettings = { assistantImprove.close(); assistantSettings.open() },
-                                modifier = Modifier.padding(padding))
+                                modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                             EditorDecisionDialogs(editing, editor::resolveDecision, editor::resolveConflict)
                         } else if (reviewing.isOpen && reviewing.destination == ReviewDestination.FINDINGS) {
                             ReviewScreen(state = reviewing, onReview = assistantReview::review,
@@ -204,7 +208,7 @@ class MainActivity : ComponentActivity() {
                                 onRetry = assistantReview::retryWithFeedback, onCancel = assistantReview::cancel,
                                 onBack = assistantReview::close, onReload = assistantReview::reload,
                                 onSettings = { assistantReview.close(); assistantSettings.open() },
-                                modifier = Modifier.padding(padding))
+                                modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                             EditorDecisionDialogs(editing, editor::resolveDecision, editor::resolveConflict)
                         } else if (writing.isOpen) {
                             WriteScreen(state = writing, onBrief = assistantWrite::editBrief,
@@ -214,7 +218,7 @@ class MainActivity : ComponentActivity() {
                                 onReject = assistantWrite::reject, onCancel = assistantWrite::cancel,
                                 onBack = assistantWrite::close, onReload = assistantWrite::reload,
                                 onSettings = { assistantWrite.close(); assistantSettings.open() },
-                                modifier = Modifier.padding(padding))
+                                modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                             EditorDecisionDialogs(editing, editor::resolveDecision, editor::resolveConflict)
                         } else if (assistant.isOpen) AssistantSettingsScreen(
                             state = assistant, onBack = assistantSettings::close, onAdd = { assistantSettings.addProfile() },
@@ -225,7 +229,7 @@ class MainActivity : ComponentActivity() {
                             onClearKey = assistantSettings::clearKey, onKeyInputDiscarded = assistantSettings::discardTypedKey,
                             onSave = assistantSettings::save, onRefresh = assistantSettings::refresh,
                             onTest = assistantSettings::testConnection, onCancelTest = assistantSettings::cancelTest,
-                            modifier = Modifier.padding(padding),
+                            modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                         ) else if (editing.isOpen) EditorScreen(
                             state = editing, onEdit = editor::edit, onNewPath = editor::setNewPath,
                             onTab = editor::setTab, onSave = editor::save,
@@ -237,13 +241,13 @@ class MainActivity : ComponentActivity() {
                             onDecision = editor::resolveDecision, onConflict = editor::resolveConflict,
                             onReview = assistantReview::open, onClearQuote = editor::clearReviewQuote,
                             onImprove = { if (reviewing.isOpen) assistantReview.openImprove(assistantImprove) else assistantImprove.open() },
-                            modifier = Modifier.padding(padding),
+                            modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                         ) else LibraryScreen(
                             state = library.state.collectAsStateWithLifecycle().value,
                             onQuery = library::setQuery, onFilter = library::setFilter,
                             onSelect = library::select,
                             onToggleFavorite = library::toggleFavorite, onClearFilters = library::clearFilters,
-                            onRefresh = library::refresh, modifier = Modifier.padding(padding),
+                            onRefresh = library::refresh, modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                             // A row tap delivers (Fill); editing is an explicit action on the selection.
                             onOpen = ::openFill,
                             onEdit = { assistantImprove.close(); assistantReview.close(); editor.open(it) },
@@ -256,7 +260,7 @@ class MainActivity : ComponentActivity() {
                         )
                     } else {
                         SeedOfferScreen(state = startup, onAccept = seedOffer::accept, onDecline = seedOffer::decline,
-                            onRefresh = seedOffer::refresh, modifier = Modifier.padding(padding), onSettings = ::openAccount)
+                            onRefresh = seedOffer::refresh, modifier = Modifier.padding(padding).consumeWindowInsets(padding), onSettings = ::openAccount)
                     }
                 }
             }

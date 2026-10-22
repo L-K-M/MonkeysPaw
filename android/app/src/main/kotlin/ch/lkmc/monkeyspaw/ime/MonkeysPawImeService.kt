@@ -4,7 +4,7 @@ import android.inputmethodservice.InputMethodService
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
-import androidx.compose.material3.MaterialTheme
+import ch.lkmc.monkeyspaw.ui.theme.MonkeysPawTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.ComposeView
@@ -61,7 +61,7 @@ class MonkeysPawImeService : InputMethodService() {
             val library = models?.library?.state?.collectAsStateWithLifecycle()?.value
             val fill = models?.fill?.state?.collectAsStateWithLifecycle()?.value
             val epoch = state.generation
-            MaterialTheme {
+            MonkeysPawTheme {
                 ImeScreen(state, library, fill,
                     onSwitch = { sessions.switch(epoch) },
                     onOpen = { sessions.open(epoch, it) },

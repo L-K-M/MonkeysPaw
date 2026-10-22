@@ -459,6 +459,24 @@ internal class ImeBoundaryTest {
         assertFailsWith<AssertionError> { assertPasswordBranch(screen.replace("if (state.password)", "if (false)")) }
     }
 
+    @Test fun `inline choice popups do not compose activity Back dispatcher controls`() {
+        val source = app.resolve("ui/fill/FillScreen.kt").readText()
+        val choice = source.substringAfter("if (field.kind == FieldKind.CHOICE)")
+        val inline = choice.indexOf("if (input == FillInput.INLINE)")
+        val inlineReturn = choice.indexOf("return", inline)
+        val exposed = choice.indexOf("ExposedDropdownMenuBox(")
+        assertTrue(inline >= 0 && inlineReturn > inline && exposed > inlineReturn,
+            "The IME choice path must return before composing an activity-owned exposed menu")
+        assertTrue(choice.substring(inline, inlineReturn).contains("InlineChoiceControl("))
+        val popup = source.substringAfter("private fun InlineChoiceControl(").substringBefore("\n@OptIn")
+        assertTrue(popup.contains("DropdownMenu("))
+        assertFalse(popup.contains("ExposedDropdownMenu"))
+        assertTrue(popup.contains("PopupProperties(focusable = false)"),
+            "An IME popup must keep the target window's focus and InputConnection")
+        val library = app.resolve("ui/library/LibraryScreen.kt").readText()
+        assertTrue(library.contains("PopupProperties(focusable = mode == LibraryMode.BROWSER)"))
+    }
+
     private fun assertPasswordBranch(screen: String) {
         val password = screen.indexOf("if (state.password)")
         assertTrue(password >= 0 && password < screen.indexOf("FillScreen(fill,"))

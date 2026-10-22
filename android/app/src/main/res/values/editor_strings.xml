@@ -18,6 +18,7 @@
     <string name="editor_filename">Filename, including .md</string>
     <string name="editor_source">Front matter and body</string>
     <string name="editor_source_unavailable">A text preview is unavailable for these bytes.</string>
+    <string name="editor_loading">Opening prompt…</string>
     <string name="editor_validating">Checking your draft…</string>
     <string name="editor_edit">Edit</string>
     <string name="editor_preview">Preview</string>
@@ -26,6 +27,7 @@
     <string name="editor_preview_help">Preview uses defaults and field markers. Clipboard content is shown as {clipboard}.</string>
     <string name="editor_preview_invalid">Fix the validation errors to preview this draft.</string>
     <string name="editor_no_fields">No fields declared or used.</string>
+    <string name="editor_no_fields_body">Fields are declared in the front matter or used as {{name}} placeholders in the body.</string>
     <string name="editor_implicit">Implicit field</string>
     <string name="editor_field_default">Default: %1$s</string>
     <string name="editor_optional">Optional</string>
@@ -33,8 +35,10 @@
     <string name="editor_remembered">Remember after use</string>
     <string name="editor_not_remembered">Do not remember</string>
     <string name="editor_refresh_history">Refresh history</string>
+    <string name="editor_history_loading">Loading history…</string>
     <string name="editor_history_failed">Could not read history. Try again.</string>
     <string name="editor_no_history">No local revisions.</string>
+    <string name="editor_no_history_body">Revisions are recorded here each time the prompt is saved.</string>
     <string name="editor_revision_size">%1$d bytes</string>
     <string name="editor_revision_valid">Valid revision</string>
     <string name="editor_revision_forensic">This revision is available for inspection and cannot be restored.</string>

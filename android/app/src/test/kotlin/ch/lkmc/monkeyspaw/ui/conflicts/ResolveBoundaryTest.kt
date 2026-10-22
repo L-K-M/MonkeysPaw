@@ -18,6 +18,8 @@ internal class ResolveBoundaryTest {
         val screen = root.resolve("ui/conflicts/ResolveScreen.kt").readText()
         assertFalse(Regex("\\b(?:SyncResolutionService|AndroidSyncRepository|HttpTransport|viewModelScope|LaunchedEffect)\\b").containsMatchIn(screen))
         assertTrue(screen.contains("ImproveDiffView(diff"))
+        assertTrue(screen.contains("key(state.previewID)"))
+        assertTrue(screen.contains("PawScreen("))
         val activity = root.resolve("MainActivity.kt").readText()
         assertTrue(activity.contains("onResolve = ::openResolve"))
         assertTrue(activity.contains("editor.closeThen"))

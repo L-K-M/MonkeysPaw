@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MonkeysPaw.Base" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FBF8FF</item>
+        <item name="android:colorAccent">#4355A1</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <!-- API 26 has only light navigation icons. -->
+        <item name="android:navigationBarColor">#121318</item>
+    </style>
+    <style name="Theme.MonkeysPaw" parent="Theme.MonkeysPaw.Base" />
+</resources>
