@@ -1240,7 +1240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case #selector(checkForUpdates(_:)):
             return currentReleaseVersion.flatMap(ReleaseVersion.init) != nil
                 && settingsWindow?.presentation.updates.state.update?.isChecking != true
-        case #selector(openHelp(_:)):
+        case #selector(openHelp(_:)), #selector(showAboutPanel(_:)):
             return true
         case #selector(openLibraryFromMenu), #selector(showLibrary):
             return libraryStatusModel?.libraryAvailable == true

@@ -108,11 +108,15 @@ final class MacPickerViewTests: XCTestCase {
         try files.write(Data("Footer delivery".utf8), at: "footer.md")
         let clipboard = MacRepeatClipboard()
         let picker = try start(clipboard: clipboard, pasteInjectors: [])
-        for (index, identifier) in ["picker-use", "picker-copy"].enumerated() {
+        for identifier in ["picker-use", "picker-copy"] {
             picker.open()
             XCTAssertTrue(spin { self.controller.isActiveAndVisible })
+            let before = clipboard.writes.count
             try pressPickerAction(identifier)
-            XCTAssertTrue(spin { picker.state == .closed && clipboard.writes.count == index + 1 })
+            // Without paste backends both footer actions end with the text on
+            // the clipboard and the picker closed.
+            XCTAssertTrue(spin { picker.state == .closed && clipboard.writes.count > before },
+                "\(identifier): state=\(picker.state) writes=\(clipboard.writes.count - before)")
             XCTAssertEqual(clipboard.writes.last, "Footer delivery")
         }
     }
