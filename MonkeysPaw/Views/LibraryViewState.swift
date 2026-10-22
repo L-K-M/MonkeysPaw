@@ -15,8 +15,9 @@ final class LibraryViewState: ObservableObject {
     }
 
     enum Direction { case up, down }
-    enum EditorTab: Hashable { case edit, preview, fields, history }
-    private enum OpenContext { case library, picker }
+    enum EditorMode: Hashable { case edit, preview }
+    enum InspectorPane: Hashable { case fields, history, assistant }
+    private enum OpenContext { case library, picker, creation }
     private struct ScopeDrop {
         let selection: LibraryPromptSelection
         let section: LibrarySectionID
@@ -34,13 +35,14 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var editorState: EditorState
     @Published private(set) var sourceRevision: UInt64 = 0
     @Published private(set) var imports: LibraryImportViewState?
-    @Published var editorTab = EditorTab.edit {
-        didSet { if editorTab == .history, oldValue != .history { loadHistory() } }
-    }
+    @Published var editorMode = EditorMode.edit
+    @Published private(set) var inspectorPane = InspectorPane.fields
+    @Published private(set) var isInspectorVisible = false
+    @Published private(set) var editorFocusRevision: UInt64 = 0
     @Published private(set) var fileCommandRequest: LibraryFileCommandRequest?
+    @Published private(set) var newPromptRequest: LibraryNewPromptRequest?
     @Published private(set) var commandMessage: String?
     @Published private(set) var assistant: LibraryAssistantViewState?
-    @Published private(set) var isAssistantVisible = false
     @Published private(set) var assistantSaveMessage: String?
     @Published private(set) var quoteHighlight: LibrarySourceHighlight?
     @Published private(set) var conflict: LibraryConflictViewState?
@@ -49,12 +51,12 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var isScopeDropPending = false
     var onEditorChange: (() -> Void)?
     var onConflictRequested: (() -> Void)?
-    var onAssistantVisibilityChange: (() -> Void)?
-    var onConflictVisibilityChange: (() -> Void)?
     private(set) var model: LibraryBrowserModel
     private(set) var editor: EditorModel
     private let mainThread: MainThread
     private let revealLibrary: () -> Void
+    private let revealPromptAction: (RelativePath) -> Void
+    private let createPrompt: (String, RelativePath) -> LibraryPromptSelection?
     private var makeAssistant: AssistantFactory?
     private var conflictProvider: ConflictProvider?
     private let scheduler: MonkeysPawCore.Scheduler?
@@ -72,12 +74,17 @@ final class LibraryViewState: ObservableObject {
     private var scopeDrop: ScopeDrop?
     private var scopeDropRequest: UUID?
     private var scopeDropLoad: Progress?
+    private var focusAfterCreation: LibraryPromptSelection?
+    private enum RevertToSaved { case none, requested, presented }
+    private var revertToSaved = RevertToSaved.none
 
     init(model: LibraryBrowserModel, editor: EditorModel, libraryPath: String, available: Bool,
          mainThread: MainThread, imports: LibraryImportViewState? = nil,
          makeAssistant: AssistantFactory? = nil, scheduler: MonkeysPawCore.Scheduler? = nil,
          conflictProvider: ConflictProvider? = nil,
          syncStatus: SyncStatusViewState? = nil,
+         revealPrompt: @escaping (RelativePath) -> Void = { _ in },
+         createPrompt: @escaping (String, RelativePath) -> LibraryPromptSelection? = { _, _ in nil },
          revealLibrary: @escaping () -> Void) {
         self.model = model
         self.editor = editor
@@ -89,6 +96,8 @@ final class LibraryViewState: ObservableObject {
         imports?.updateDestinations(model.state.sections)
         self.mainThread = mainThread
         self.revealLibrary = revealLibrary
+        self.revealPromptAction = revealPrompt
+        self.createPrompt = createPrompt
         self.makeAssistant = makeAssistant
         self.conflictProvider = conflictProvider
         self.syncStatus = syncStatus
@@ -122,16 +131,67 @@ final class LibraryViewState: ObservableObject {
                 self.quoteHighlight = range.flatMap { range in
                     self.editor.state.source.map { LibrarySourceHighlight(byteRange: range, sourceBytes: Data($0.utf8)) }
                 }
-                if range != nil { self.editorTab = .edit }
+                if range != nil { self.editorMode = .edit }
             }
             assistantSession = session
             assistantPrompt = editor.state.prompt
             assistant = view
         }
-        if !isAssistantVisible {
-            isAssistantVisible = true
-            onAssistantVisibilityChange?()
+        if inspectorPane != .assistant { inspectorPane = .assistant }
+        if !isInspectorVisible { isInspectorVisible = true }
+    }
+
+    var isAssistantVisible: Bool { isInspectorVisible && inspectorPane == .assistant }
+
+    var openPromptRow: LibraryBrowserRow? {
+        guard let path = editorState.prompt?.relativePath else { return nil }
+        if let row = snapshot.rows.first(where: { $0.relativePath == path }) { return row }
+        if snapshot.selectedPrompt?.relativePath == path { return snapshot.selectedPrompt }
+        return nil
+    }
+
+    var displayTitle: String {
+        openPromptRow?.title ?? editorState.prompt?.relativePath.string.components(separatedBy: "/").last
+            ?? LibraryStrings.title
+    }
+
+    func setInspectorVisible(_ visible: Bool) {
+        guard isActive, isInspectorVisible != visible else { return }
+        if visible, inspectorPane == .assistant {
+            if canShowAssistant { showAssistant(); return }
+            inspectorPane = .fields
         }
+        isInspectorVisible = visible
+        if visible, inspectorPane == .history { loadHistory() }
+        if !visible { assistant?.close(); quoteHighlight = nil }
+    }
+
+    func showInspector(_ pane: InspectorPane) {
+        guard isActive else { return }
+        if pane == .assistant { showAssistant(); return }
+        let load = pane == .history && (!isInspectorVisible || inspectorPane != .history)
+        if isAssistantVisible { assistant?.close(); quoteHighlight = nil }
+        if inspectorPane != pane { inspectorPane = pane }
+        if !isInspectorVisible { isInspectorVisible = true }
+        if load { loadHistory() }
+    }
+
+    func focusEditor() {
+        guard isActive, libraryAvailable, editorState.prompt != nil, editorState.pendingDecision == nil,
+              fileCommandRequest == nil, !isScopeDropPending else { return }
+        editorMode = .edit
+        editorFocusRevision &+= 1
+    }
+
+    func movePrompt(to folder: String) {
+        guard canRunFileCommand, fileCommandRequest == nil else { return }
+        editor.move(to: folder, completion: commandCompletion(success: LibraryCommandStrings.moved))
+    }
+
+    func revealPrompt(at path: RelativePath? = nil) {
+        guard isActive, libraryAvailable, let path = path ?? editorState.prompt?.relativePath,
+              path == editorState.prompt?.relativePath || snapshot.rows.contains(where: { $0.relativePath == path }) else { return }
+        revealPromptAction(path)
     }
 
     func toggleAssistant() {
@@ -140,17 +200,14 @@ final class LibraryViewState: ObservableObject {
     }
 
     func closeAssistant() {
-        isAssistantVisible = false
+        if isAssistantVisible { isInspectorVisible = false }
         assistant?.close()
         quoteHighlight = nil
-        onAssistantVisibilityChange?()
     }
 
     func retireAssistant() {
-        let wasVisible = isAssistantVisible
-        isAssistantVisible = false
+        if isAssistantVisible { isInspectorVisible = false }
         retireAssistantBinding()
-        if wasVisible { onAssistantVisibilityChange?() }
     }
 
     private func retireAssistantBinding() {
@@ -175,8 +232,7 @@ final class LibraryViewState: ObservableObject {
             retireAssistantBinding()
             if visible, canShowAssistant { showAssistant() }
             else if visible {
-                isAssistantVisible = false
-                onAssistantVisibilityChange?()
+                isInspectorVisible = false
             }
             return
         }
@@ -204,8 +260,9 @@ final class LibraryViewState: ObservableObject {
 
     var canRunFileCommand: Bool {
         canRevert && editorState.canEdit && editorState.stamp != nil && !isScopeDropPending
-            && editorState.queuedActions.isEmpty
+            && editorState.queuedActions.isEmpty && newPromptRequest == nil
     }
+    var canCreatePrompt: Bool { scopeDragReady && !isScopeDropPending }
     var canLoadHistory: Bool {
         isActive && libraryAvailable && !isResolvingConflict && editorState.prompt != nil && editorState.status != .commandRunning
     }
@@ -252,9 +309,12 @@ final class LibraryViewState: ObservableObject {
         self.model = model
         self.editor = editor
         editorState = editor.state
-        editorTab = .edit
+        editorMode = .edit
         fileCommandRequest = nil
+        newPromptRequest = nil
         commandMessage = nil
+        revertToSaved = .none
+        focusAfterCreation = nil
         copySelection = nil
         isClosingEditor = false
         lastClosedPromptPath = nil
@@ -274,6 +334,7 @@ final class LibraryViewState: ObservableObject {
         conflictProvider = nil
         syncStatus?.retire()
         imports?.deactivate()
+        revertToSaved = .none
         isActive = false
         bindingRevision &+= 1
         sourceRevision &+= 1
@@ -282,11 +343,10 @@ final class LibraryViewState: ObservableObject {
         libraryAvailable = false
         favoriteOutcome = nil
         fileCommandRequest = nil
+        newPromptRequest = nil
         commandMessage = nil
         onEditorChange = nil
         onConflictRequested = nil
-        onAssistantVisibilityChange = nil
-        onConflictVisibilityChange = nil
     }
 
     func setLibraryAvailable(_ available: Bool) {
@@ -297,8 +357,8 @@ final class LibraryViewState: ObservableObject {
         imports?.setLibraryAvailable(available)
         assistant?.editorChanged(available: available && !isResolvingConflict)
         updateConflict()
-        if !available { fileCommandRequest = nil; retireScopeDrags() }
-        if becameAvailable, editorTab == .history { loadHistory() }
+        if !available { fileCommandRequest = nil; newPromptRequest = nil; retireScopeDrags() }
+        if becameAvailable, isInspectorVisible && inspectorPane == .history { loadHistory() }
         onEditorChange?()
     }
 
@@ -314,6 +374,7 @@ final class LibraryViewState: ObservableObject {
 
     func didHide() {
         isPresented = false
+        newPromptRequest = nil
         syncStatus?.hide()
         retireScopeDrags()
         retireConflict()
@@ -333,8 +394,8 @@ final class LibraryViewState: ObservableObject {
         model.selectSection(section)
     }
 
-    /// SwiftUI List can publish nil when a filter removes its selected row.
-    /// Ignore that reconciliation; Core keeps the selected prompt's preview.
+    /// A filter can hide the selected row. Ignore native deselection during
+    /// reconciliation; Core retains the open prompt and its selection key.
     func selectPath(_ path: RelativePath?) {
         guard isActive, let path,
               let row = snapshot.rows.first(where: { $0.relativePath == path }) else { return }
@@ -346,7 +407,7 @@ final class LibraryViewState: ObservableObject {
     /// Change those only after the draft guard allows the requested open.
     func openPrompt(_ selection: LibraryPromptSelection) {
         guard isActive, libraryAvailable else { return }
-        editorTab = .edit
+        editorMode = .edit
         select(selection, context: .picker)
     }
 
@@ -370,8 +431,10 @@ final class LibraryViewState: ObservableObject {
                 self.model.setFilter("")
                 self.model.selectSection(.all)
             }
-            self.copySelection = nil
+            // Creation can finish before the browser receives its index update.
+            self.copySelection = context == .creation ? selection : nil
             self.model.selectPrompt(self.editor.state.prompt)
+            if self.model.selection == selection { self.copySelection = nil }
         }
     }
 
@@ -387,7 +450,26 @@ final class LibraryViewState: ObservableObject {
         else if canSave { editor.save() }
     }
     func saveAsCopy() { if canSaveAsCopy { editor.saveAsCopy() } }
-    func revert() { if canRevert { editor.revert() } }
+    func revert() {
+        guard canRevert else { return }
+        if editorState.isDirty { revertToSaved = .requested }
+        editor.revert()
+    }
+
+    /// Revert to Saved asks only Revert or Cancel. Other reloads behind the
+    /// same guard (sync conflict resolution, History restore) still offer Save.
+    var isRevertingToSaved: Bool { revertToSaved != .none }
+
+    private func updateRevertToSaved(_ state: EditorState) {
+        switch revertToSaved {
+        case .none: return
+        case .requested:
+            if state.pendingDecision?.action == .revert { revertToSaved = .presented }
+            else if state.pendingDecision != nil || (!state.isDirty && state.queuedActions.isEmpty) { revertToSaved = .none }
+        case .presented:
+            if state.pendingDecision?.action != .revert { revertToSaved = .none }
+        }
+    }
 
     func loadHistory() { if canLoadHistory { editor.loadHistory() } }
 
@@ -411,6 +493,49 @@ final class LibraryViewState: ObservableObject {
         }
         fileCommandRequest = LibraryFileCommandRequest(command: command, prompt: prompt, folders: folders)
         onEditorChange?()
+    }
+
+    func requestNewPrompt() {
+        guard canCreatePrompt, let folder = model.newPromptDestination() else { return }
+        commandMessage = nil
+        newPromptRequest = LibraryNewPromptRequest(folder: folder)
+        onEditorChange?()
+    }
+
+    func resolveNewPrompt(_ response: LibraryEditorResponse, id: UUID) {
+        guard let request = newPromptRequest, request.id == id,
+              LibraryEditorDialog.newPrompt(request).accepts(response) else { return }
+        newPromptRequest = nil
+        onEditorChange?()
+        guard case .createPrompt(let input) = response, canCreatePrompt else { return }
+        let title = input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? LibraryStrings.newPromptDefaultTitle : input
+        let revision = bindingRevision
+        // Ask for the title first; only an approved draft guard may write a file.
+        editor.request(.create) { [weak self] result in
+            // A close, open or hide during the guard's save supersedes creation.
+            guard let self, self.isActive, self.bindingRevision == revision,
+                  result == .allowed, self.canCreatePrompt else { return }
+            guard let selection = self.createPrompt(title, request.folder) else {
+                // Match commandCompletion's ordering after editor publications.
+                self.mainThread.run { [weak self] in
+                    guard let self, self.isActive, self.bindingRevision == revision else { return }
+                    self.commandMessage = Strings.createPromptFailed
+                }
+                return
+            }
+            self.editorMode = .edit
+            self.model.setFilter("")
+            if self.model.selectedSection != .all,
+               self.model.moveDestination(for: self.model.selectedSection) != request.folder {
+                self.model.selectSection(.all)
+            }
+            // Stay in this window and start typing in the new prompt once it
+            // loads, as a new note does in Notes. The picker path shows the
+            // window and focuses search instead.
+            self.focusAfterCreation = selection
+            self.select(selection, context: .creation)
+        }
     }
 
     func resolveFileCommand(_ response: LibraryEditorResponse, id: UUID) {
@@ -484,15 +609,6 @@ final class LibraryViewState: ObservableObject {
         revealLibrary()
     }
 
-    /// Return true when Escape cleared search. The controller closes only on
-    /// the next Escape, independently of which pane currently owns focus.
-    func clearFilterForEscape() -> Bool {
-        guard isActive, !snapshot.filter.isEmpty else { return false }
-        setFilter("")
-        focusRevision &+= 1
-        return true
-    }
-
     private func observeModel() {
         let revision = bindingRevision
         let model = self.model
@@ -541,6 +657,12 @@ final class LibraryViewState: ObservableObject {
                 let adoptedCopy = previousPrompt != nil
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
+                self.updateRevertToSaved(state)
+                if let created = self.focusAfterCreation, state.prompt?.relativePath == created.relativePath,
+                   state.status != .loading, state.source != nil {
+                    self.focusAfterCreation = nil
+                    self.focusEditor()
+                }
                 self.updateConflict()
                 self.updateAssistantSession()
                 if let request = self.fileCommandRequest,
@@ -563,7 +685,7 @@ final class LibraryViewState: ObservableObject {
                 }
                 self.onEditorChange?()
                 // History keys follow identity; moving also retires Core's path-bound load.
-                if self.editorTab == .history, pathChanged || identityChanged || commandFinished || saveCommitted,
+                if self.isInspectorVisible && self.inspectorPane == .history, pathChanged || identityChanged || commandFinished || saveCommitted,
                    state.prompt != nil, !state.history.isLoading, !editor.state.history.isLoading { self.loadHistory() }
                 self.finishScopeDrop()
             }
@@ -573,7 +695,7 @@ final class LibraryViewState: ObservableObject {
     private var scopeDragReady: Bool {
         let state = editor.state
         return isActive && isPresented && libraryAvailable && !isClosingEditor && !isResolvingConflict
-            && fileCommandRequest == nil && imports?.isChoosing != true
+            && fileCommandRequest == nil && newPromptRequest == nil && imports?.isChoosing != true
             && state.pendingDecision == nil && state.conflict == nil && state.queuedActions.isEmpty
             && state.status != .loading && state.status != .saving && state.status != .commandRunning
     }
@@ -599,9 +721,14 @@ final class LibraryViewState: ObservableObject {
         return Data(value.utf8)
     }
 
-    func scopeDragProvider(for selection: LibraryPromptSelection, epoch: UUID) -> NSItemProvider? {
+    /// AppKit and SwiftUI publish identical opaque, epoch-bound row bytes.
+    func scopeDragData(for selection: LibraryPromptSelection, epoch: UUID) -> Data? {
         guard epoch == scopeDragEpoch, canDragScopeRow(selection) else { return nil }
-        let payload = scopePayload(selection, epoch: epoch)
+        return scopePayload(selection, epoch: epoch)
+    }
+
+    func scopeDragProvider(for selection: LibraryPromptSelection, epoch: UUID) -> NSItemProvider? {
+        guard let payload = scopeDragData(for: selection, epoch: epoch) else { return nil }
         let provider = NSItemProvider()
         provider.registerDataRepresentation(forTypeIdentifier: Self.scopeDragTypeIdentifier, visibility: .ownProcess) { done in
             done(payload, nil)
@@ -694,7 +821,6 @@ final class LibraryViewState: ObservableObject {
         let old = conflict
         conflict = nil
         old?.retire()
-        if old != nil { onConflictVisibilityChange?() }
     }
 
     private func updateConflict() {
@@ -710,7 +836,6 @@ final class LibraryViewState: ObservableObject {
                 self.assistant?.editorChanged(available: self.libraryAvailable && !view.isResolving)
             }
             conflict = view
-            onConflictVisibilityChange?()
         }
         let busy = editorState.status == .loading || editorState.status == .saving || editorState.status == .commandRunning
         conflict?.bind(model: conflictProvider?(), selection: row.selection, stamp: stamp,

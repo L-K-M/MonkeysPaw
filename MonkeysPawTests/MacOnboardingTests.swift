@@ -113,6 +113,7 @@ final class MacOnboardingTests: XCTestCase {
         delegate.beginOnboarding()
         let setup = try setupWindow()
         let setupController = try XCTUnwrap(setup.delegate as? SetupWindowController)
+        let hosting = try XCTUnwrap(setup.contentView as? NSHostingView<SetupView>)
         let continuation = try XCTUnwrap(setupController.onClose)
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         XCTAssertNil(setupController.onClose)
@@ -120,12 +121,32 @@ final class MacOnboardingTests: XCTestCase {
         XCTAssertFalse(setup.isVisible)
 
         setup.close()
+        hosting.rootView.presentation.close() // A retained Done action must be inert too.
         continuation() // Even an already-retained continuation must be inert.
         delegate.beginOnboarding()
         delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
         XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
         drainMainQueue()
         XCTAssertNil(try controller().window)
+        XCTAssertEqual(delegate.pickerModel?.state, .closed)
+    }
+
+    func testSetupDoneUsesTheNormalCloseContinuationOnce() throws {
+        start()
+        delegate.beginOnboarding()
+        let setup = try setupWindow()
+        let controller = try XCTUnwrap(setup.delegate as? SetupWindowController)
+        let hosting = try XCTUnwrap(setup.contentView as? NSHostingView<SetupView>)
+        let continuation = try XCTUnwrap(controller.onClose)
+        var closes = 0
+        controller.onClose = { closes += 1; continuation() }
+
+        hosting.rootView.presentation.close()
+        XCTAssertFalse(setup.isVisible)
+        drainMainQueue()
+        XCTAssertEqual(closes, 1)
+        XCTAssertEqual(try model().state.step, .libraryFolder)
+        XCTAssertTrue(try window().isVisible)
         XCTAssertEqual(delegate.pickerModel?.state, .closed)
     }
 

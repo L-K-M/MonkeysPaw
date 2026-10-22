@@ -135,7 +135,8 @@ final class MacRepeatShortcutTests: XCTestCase {
         XCTAssertEqual(presentation.togglePicker.verification, .waiting)
         XCTAssertEqual(presentation.repeatLast.verification, .waiting)
         let repeatMenu = try XCTUnwrap(delegate.makeStatusMenu().items.first { $0.title == Strings.repeatLast })
-        XCTAssertEqual(repeatMenu.keyEquivalent, "", "Repeat has no default menu equivalent")
+        XCTAssertEqual(repeatMenu.keyEquivalent, "r", "The confirmed global binding is displayed")
+        XCTAssertEqual(repeatMenu.keyEquivalentModifierMask, [.control, .option])
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(repeatMenu.action), to: repeatMenu.target, from: repeatMenu))
         work.drain()
         XCTAssertEqual(presentation.repeatLast.verification, .waiting)
@@ -145,6 +146,85 @@ final class MacRepeatShortcutTests: XCTestCase {
         XCTAssertEqual(presentation.togglePicker.verification, .waiting)
         backend.callbacks[.togglePicker]?()
         XCTAssertEqual(presentation.togglePicker.verification, .verified)
+    }
+
+    func testStatusMenuOrderTitlesAndStandardCommands() throws {
+        let menu = delegate.makeStatusMenu()
+        let libraryLabel = try XCTUnwrap(delegate.libraryStatusModel?.menuLabel)
+        XCTAssertEqual(menu.items.map(\.title), [
+            "Show Picker", "Repeat Last Prompt", "", libraryLabel, "", "Settings…", "Setup…", "",
+            "About Monkey's Paw", "Quit Monkey's Paw"
+        ])
+        XCTAssertEqual(menu.items.enumerated().filter { $0.element.isSeparatorItem }.map(\.offset), [2, 4, 7])
+        XCTAssertFalse(menu.autoenablesItems)
+        XCTAssertEqual(menu.items[3].isEnabled, delegate.libraryStatusModel?.libraryAvailable)
+        XCTAssertEqual(menu.items[5].action, #selector(AppDelegate.showSettings))
+        XCTAssertEqual(menu.items[5].keyEquivalent, ",")
+        XCTAssertEqual(menu.items[5].keyEquivalentModifierMask, .command)
+        XCTAssertEqual(menu.items[8].action, #selector(AppDelegate.showAboutPanel(_:)))
+        XCTAssertTrue(menu.items[8].target === delegate)
+        XCTAssertEqual(menu.items[9].action, #selector(NSApplication.terminate(_:)))
+        XCTAssertEqual(menu.items[9].keyEquivalent, "q")
+        XCTAssertEqual(menu.items[9].keyEquivalentModifierMask, .command)
+    }
+
+    func testStatusMenuRefreshesCarbonShortcutDisplayWithoutDispatchingIt() throws {
+        let menu = try XCTUnwrap(delegate.makeStatusMenu() as? StatusMenu)
+        let picker = menu.items[0]
+        let repeatItem = menu.items[1]
+        XCTAssertEqual(picker.keyEquivalent, "p")
+        XCTAssertEqual(picker.keyEquivalentModifierMask, [.control, .option])
+        XCTAssertEqual(repeatItem.keyEquivalent, "")
+        XCTAssertTrue(repeatItem.keyEquivalentModifierMask.isEmpty)
+        let registrations = backend.requested.count
+        menu.menuNeedsUpdate(menu)
+        XCTAssertEqual(backend.requested.count, registrations, "Opening the menu must only read registration facts")
+
+        presentation.setAccelerator("Ctrl+Shift+R", for: .repeatLast)
+        menu.menuNeedsUpdate(menu)
+        XCTAssertEqual(repeatItem.keyEquivalent, "r")
+        XCTAssertEqual(repeatItem.keyEquivalentModifierMask, [.control, .shift])
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
+            modifierFlags: [.control, .shift], timestamp: 0, windowNumber: 0, context: nil,
+            characters: "R", charactersIgnoringModifiers: "R", isARepeat: false, keyCode: 15))
+        XCTAssertFalse(menu.performKeyEquivalent(with: event))
+        XCTAssertNil(delegate.repeatModel?.result)
+        XCTAssertEqual(repeatItem.keyEquivalent, "r", "Dispatch must retain the displayed binding")
+
+        presentation.clearShortcut(.repeatLast)
+        presentation.clearShortcut(.togglePicker)
+        menu.menuNeedsUpdate(menu)
+        XCTAssertEqual(picker.keyEquivalent, "")
+        XCTAssertEqual(repeatItem.keyEquivalent, "")
+        XCTAssertTrue(picker.keyEquivalentModifierMask.isEmpty)
+        XCTAssertTrue(repeatItem.keyEquivalentModifierMask.isEmpty)
+    }
+
+    func testStatusMenuDisplaysCarbonFunctionAndPlusKeys() throws {
+        let menu = try XCTUnwrap(delegate.makeStatusMenu() as? StatusMenu)
+        presentation.setAccelerator("Ctrl+F3", for: .repeatLast)
+        menu.menuNeedsUpdate(menu)
+        XCTAssertEqual(menu.items[1].keyEquivalent, String(try XCTUnwrap(UnicodeScalar(NSF3FunctionKey))))
+        XCTAssertEqual(menu.items[1].keyEquivalentModifierMask, .control)
+        presentation.setAccelerator("Alt+Plus", for: .repeatLast)
+        menu.menuNeedsUpdate(menu)
+        XCTAssertEqual(menu.items[1].keyEquivalent, "=")
+        XCTAssertEqual(menu.items[1].keyEquivalentModifierMask, [.option, .shift])
+    }
+
+    func testAboutOptionsUseBundleVersionAndLinkedCredits() throws {
+        let options = AppDelegate.aboutPanelOptions(bundle: .main)
+        XCTAssertEqual(options[.applicationName] as? String, AppIdentity.displayName)
+        XCTAssertEqual(options[.applicationVersion] as? String,
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+        XCTAssertEqual(options[.version] as? String, Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "")
+        let credits = try XCTUnwrap(options[.credits] as? NSAttributedString)
+        XCTAssertTrue(credits.string.contains(Strings.aboutDescription))
+        let link = (credits.string as NSString).range(of: Strings.projectLink)
+        XCTAssertNotEqual(link.location, NSNotFound)
+        guard link.location != NSNotFound else { return }
+        XCTAssertEqual((credits.attribute(.link, at: link.location, effectiveRange: nil) as? URL)?.absoluteString,
+            "https://github.com/L-K-M/MonkeysPaw")
     }
 
     func testSettingsCloseReopenKeepsLiveRowsAndRetiredCallbacksCannotActivate() throws {

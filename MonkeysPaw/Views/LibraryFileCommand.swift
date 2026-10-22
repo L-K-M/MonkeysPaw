@@ -3,6 +3,12 @@ import MonkeysPawCore
 
 enum LibraryFileCommand: Equatable { case rename, move, delete }
 
+/// Keep the destination shown in the sheet even if the sidebar later changes.
+struct LibraryNewPromptRequest: Equatable {
+    let id = UUID()
+    let folder: RelativePath
+}
+
 /// Binds a native form to the prompt that was open when it was requested.
 struct LibraryFileCommandRequest: Equatable {
     // Callback ownership is separate from the form's value equality.
@@ -34,9 +40,9 @@ struct LibraryFileCommandRequest: Equatable {
 
     var title: String {
         switch command {
-        case .rename: return LibraryCommandStrings.renameTitle
-        case .move: return LibraryCommandStrings.moveTitle
-        case .delete: return LibraryCommandStrings.deleteTitle(prompt.relativePath.string)
+        case .rename: return LibraryCommandStrings.renameTitle(filename)
+        case .move: return LibraryCommandStrings.moveTitle(filename)
+        case .delete: return LibraryCommandStrings.deleteTitle(filename)
         }
     }
 
@@ -44,7 +50,7 @@ struct LibraryFileCommandRequest: Equatable {
         switch command {
         case .rename: return LibraryCommandStrings.renameHint
         case .move: return LibraryCommandStrings.moveHint
-        case .delete: return LibraryCommandStrings.deleteHint(prompt.relativePath.string)
+        case .delete: return LibraryCommandStrings.deleteHint(filename)
         }
     }
 
@@ -52,7 +58,7 @@ struct LibraryFileCommandRequest: Equatable {
         switch command {
         case .rename: return [.rename(filename), .cancelFileCommand]
         case .move: return [.move(folder), .cancelFileCommand]
-        case .delete: return [.cancelFileCommand, .delete]
+        case .delete: return [.delete, .cancelFileCommand]
         }
     }
 }

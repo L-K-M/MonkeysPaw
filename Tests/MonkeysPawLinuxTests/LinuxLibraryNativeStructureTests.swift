@@ -134,7 +134,7 @@ final class LinuxLibraryNativeStructureTests: XCTestCase {
         for name in ["rename", "move", "delete", "duplicate", "favorite", "show-files"] { XCTAssertTrue(enabled(name, in: window), name) }
         activate("rename", in: window)
         let form = try XCTUnwrap(commandDialog)
-        for name in ["rename", "move", "delete", "save", "duplicate", "favorite", "search", "close"] {
+        for name in ["new-prompt", "rename", "move", "delete", "save", "duplicate", "favorite", "search", "close"] {
             XCTAssertFalse(enabled(name, in: window), name)
         }
         activate("delete", in: window)
@@ -170,6 +170,7 @@ final class LinuxLibraryNativeStructureTests: XCTestCase {
         gtk_widget_grab_focus(source)
         mp_test_emit_preedit_changed(source, "かな")
         XCTAssertFalse(enabled("preview", in: window))
+        XCTAssertFalse(enabled("new-prompt", in: window))
         activate("preview", in: window)
         XCTAssertEqual(page(try settingsWidget("library-editor-stack", in: window)), "edit")
         mp_test_emit_preedit_changed(source, "")

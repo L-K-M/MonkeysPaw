@@ -719,7 +719,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         drain()
         XCTAssertEqual(label(try widget("library-editor-status", in: window)), "Updating the file…")
         XCTAssertEqual(gtk_text_view_get_editable(mp_text_view(try widget("library-source", in: window))), 0)
-        for name in ["save", "duplicate", "revert"] {
+        for name in ["save", "duplicate", "revert", "new-prompt"] {
             XCTAssertFalse(actionEnabled(name, in: window), name)
         }
         quit()
@@ -1065,6 +1065,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         mp_test_emit_preedit_changed(source, "かな")
         for (key, flags) in [(UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)),
                              (UInt32(GDK_KEY_Return), GdkModifierType(rawValue: 0)),
+                             (UInt32(GDK_KEY_n), GDK_CONTROL_MASK),
                              (UInt32(GDK_KEY_s), GDK_CONTROL_MASK), (UInt32(GDK_KEY_w), GDK_CONTROL_MASK)] {
             XCTAssertEqual(mp_test_emit_key_pressed(window, key, flags), 0)
         }
@@ -1103,6 +1104,180 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(environment.libraryBrowserModel.filter, "")
         XCTAssertEqual(environment.libraryBrowserModel.selectedSection, .all)
         XCTAssertEqual(environment.libraryBrowserModel.selection?.relativePath.string, "folder/b.md")
+    }
+
+    func testLibraryNewPromptCapturesFolderAndOpensExactTitleInEditWithoutShowingAgain() throws {
+        try files.write(Data("Original".utf8), at: "Work/Drafts/a.md")
+        let window = try open("Work/Drafts/a.md")
+        let browser = environment.libraryBrowserModel
+        browser.selectSection(.folder("Work/Drafts"))
+        browser.setFilter("no such prompt")
+        drain()
+        let stack = try widget("library-editor-stack", in: window)
+        g_action_group_activate_action(mp_window_action_group(window), "preview", nil)
+        try click("library-new-prompt", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+        let alert = try XCTUnwrap(dialog)
+        XCTAssertEqual(label(try widget("library-dialog-message", in: alert)), "Creates the prompt in Work/Drafts.")
+        let input = try widget("library-new-prompt-title", in: alert)
+        XCTAssertEqual(String(cString: mp_entry_text(input)), LinuxStrings.newPromptDefaultTitle)
+        var start: Int32 = 0
+        var end: Int32 = 0
+        XCTAssertNotEqual(gtk_editable_get_selection_bounds(OpaquePointer(input), &start, &end), 0)
+        XCTAssertEqual(start, 0)
+        XCTAssertEqual(end, Int32(LinuxStrings.newPromptDefaultTitle.count))
+        let title = "  Exact/title  "
+        mp_entry_set_text(input, title)
+        // The dialog describes the destination captured at the action.
+        browser.selectSection(.all)
+        browser.selectSection(.folder("Work/Drafts"))
+        try respond(.createPrompt(title))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == "Work/Drafts/Exact title.md"
+            && self.environment.editorModel.state.status != .loading })
+        drain()
+        let path = "Work/Drafts/Exact title.md"
+        let created = PromptCodec.parseFile(try files.read(at: path), filename: "Exact title.md")
+        XCTAssertEqual(created.frontMatter.title, title)
+        XCTAssertEqual(created.body, LinuxStrings.newPromptBody)
+        XCTAssertNotNil(created.frontMatter.id)
+        XCTAssertEqual(browser.filter, "")
+        XCTAssertEqual(browser.selectedSection, .folder("Work/Drafts"))
+        XCTAssertEqual(browser.selection, environment.editorModel.state.prompt)
+        XCTAssertTrue(browser.rows.contains { $0.relativePath.string == path })
+        XCTAssertEqual(page(stack), "edit")
+        XCTAssertEqual(gtk_window_get_focus(mp_window(window)), try widget("library-source", in: window))
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testLibraryNewPromptTitleCancelEscapeAndCloseWriteNothing() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let paths = try files.listFiles().map(\.relativePath).sorted()
+        for dismissal in 0..<3 {
+            try click("library-new-prompt", in: window)
+            XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+            let alert = try XCTUnwrap(dialog)
+            XCTAssertEqual(label(try widget("library-dialog-message", in: alert)), "Creates the prompt in the library root.")
+            switch dismissal {
+            case 0: try respond(.cancelNewPrompt)
+            case 1:
+                XCTAssertNotEqual(mp_test_emit_key_pressed(alert, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+            default: gtk_window_close(mp_window(alert))
+            }
+            XCTAssertTrue(GTKTestSupport.spin { self.dialog == nil })
+            drain()
+            XCTAssertEqual(try files.listFiles().map(\.relativePath).sorted(), paths)
+            XCTAssertEqual(environment.editorModel.state.prompt?.relativePath.string, "a.md")
+            XCTAssertNil(environment.editorModel.state.pendingDecision)
+        }
+    }
+
+    func testLibraryNewPromptAsksTitleBeforeDirtyGuardAndCancelKeepsDraft() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Draft")
+        try click("library-new-prompt", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+        XCTAssertNil(environment.editorModel.state.pendingDecision)
+        mp_entry_set_text(try widget("library-new-prompt-title", in: XCTUnwrap(dialog)), "Cancelled")
+        try respond(.createPrompt("Cancelled"))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision?.action == .create && self.dialog != nil })
+        XCTAssertEqual(gtk_widget_get_sensitive(try widget("library-new-prompt", in: window)), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        XCTAssertNil(try files.stamp(at: "Cancelled.md"))
+        try respond(.decision(.cancel))
+        XCTAssertTrue(environment.editorModel.state.isDirty)
+        XCTAssertEqual(environment.editorModel.state.source, "Draft")
+        XCTAssertEqual(try files.read(at: "a.md"), Data("Original".utf8))
+        XCTAssertNil(try files.stamp(at: "Cancelled.md"))
+    }
+
+    func testLibraryNewPromptSaveAndDiscardProceedAfterGuard() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        for choice in [EditorDecision.save, .discard] {
+            let oldPath = try XCTUnwrap(environment.editorModel.state.prompt?.relativePath.string)
+            let before = try files.read(at: oldPath)
+            replace(try widget("library-source", in: window), with: "Draft")
+            try click("library-new-prompt", in: window)
+            XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+            let title = choice == .save ? "After save" : "After discard"
+            mp_entry_set_text(try widget("library-new-prompt-title", in: XCTUnwrap(dialog)), title)
+            try respond(.createPrompt(title))
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision?.action == .create && self.dialog != nil })
+            try respond(.decision(choice))
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == title + ".md"
+                && self.environment.editorModel.state.status != .loading })
+            if choice == .save {
+                XCTAssertEqual(PromptCodec.parseFile(try files.read(at: oldPath), filename: oldPath).body, "Draft")
+            } else { XCTAssertEqual(try files.read(at: oldPath), before) }
+            XCTAssertFalse(environment.editorModel.state.isDirty)
+        }
+    }
+
+    func testLibraryNewPromptEmptyTitleCollisionAndHiddenSectionReveal() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        for (position, title) in ["", " \t\n"].enumerated() {
+            environment.libraryBrowserModel.selectSection(.favourites)
+            environment.libraryBrowserModel.setFilter("hidden")
+            drain()
+            XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+            XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+            mp_entry_set_text(try widget("library-new-prompt-title", in: XCTUnwrap(dialog)), title)
+            try respond(.createPrompt(title))
+            let path = position == 0 ? "New prompt.md" : "New prompt 2.md"
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == path
+                && self.environment.editorModel.state.status != .loading })
+            let created = PromptCodec.parseFile(try files.read(at: path), filename: path)
+            XCTAssertEqual(created.frontMatter.title, LinuxStrings.newPromptDefaultTitle)
+            XCTAssertEqual(environment.libraryBrowserModel.selectedSection, .all)
+            XCTAssertEqual(environment.libraryBrowserModel.filter, "")
+        }
+    }
+
+    func testLibraryNewPromptDisabledWhileLoadingAndSaving() throws {
+        holdWork()
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let button = try widget("library-new-prompt", in: window)
+        environment.editorModel.edit("Saved")
+        environment.editorModel.save()
+        drain()
+        XCTAssertEqual(environment.editorModel.state.status, .saving)
+        XCTAssertEqual(gtk_widget_get_sensitive(button), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status == .saved })
+        environment.editorModel.revert()
+        drain()
+        XCTAssertEqual(environment.editorModel.state.status, .loading)
+        XCTAssertEqual(gtk_widget_get_sensitive(button), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        heldWork?.runAll()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.status != .loading })
+        drain()
+        XCTAssertNotEqual(gtk_widget_get_sensitive(button), 0)
+    }
+
+    func testLibraryNewPromptFailureAppearsInLibraryAfterEditorPublications() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        let controller = LinuxLibraryWindow(application: application, browser: environment.libraryBrowserModel,
+            editor: environment.editorModel, createPrompt: { _, _ in nil }, openFolder: {})
+        defer { controller.tearDown() }
+        controller.show()
+        let failing = try XCTUnwrap(windows.first { $0 != window && gtk_window_get_title(mp_window($0)).map { String(cString: $0) } == LinuxStrings.library })
+        drain()
+        let status = try widget("library-status", in: failing)
+        try click("library-new-prompt", in: failing)
+        XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
+        try respond(.createPrompt(LinuxStrings.newPromptDefaultTitle))
+        XCTAssertTrue(GTKTestSupport.spin { self.label(status) == LinuxStrings.createPromptFailed })
+        drain()
+        XCTAssertEqual(label(status), LinuxStrings.createPromptFailed)
+        XCTAssertFalse(environment.panel.isVisible)
+        XCTAssertFalse(try files.listFiles().contains { $0.relativePath.hasSuffix("New prompt.md") })
     }
 
     private func compose(watcherFactory: ((URL) throws -> FileStoreWatcher)? = nil) {
@@ -1191,7 +1366,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         "library-save": "save", "library-save-copy": "duplicate", "library-revert": "revert",
         "library-rename": "rename", "library-move": "move", "library-delete": "delete",
         "library-assistant": "assistant", "library-open-folder": "show-files",
-        "library-favorite": "favorite",
+        "library-favorite": "favorite", "library-new-prompt": "new-prompt",
     ]
     private func actionEnabled(_ action: String, in window: GTK.Widget) -> Bool {
         g_action_group_get_action_enabled(mp_window_action_group(window), action) != 0

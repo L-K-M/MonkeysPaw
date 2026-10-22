@@ -104,7 +104,7 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertEqual(policies, [.regular])
         XCTAssertEqual(applicationActivations, 2)
         XCTAssertEqual(NSApp.windows.filter {
-            !originalWindows.contains(ObjectIdentifier($0)) && $0.title == Strings.settingsTitle
+            !originalWindows.contains(ObjectIdentifier($0)) && $0 === window
         }.count, 1)
 
         window.close()
@@ -141,7 +141,9 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertNil(controller.presentation.assistant, "The Assistant model is created only when Settings opens")
 
         delegate.showSettings()
-        let hosting = try XCTUnwrap(controller.window?.contentView as? NSHostingView<SettingsView>)
+        let tabs = try XCTUnwrap(controller.window?.contentViewController as? NSTabViewController)
+        let hosting = try XCTUnwrap(tabs.tabViewItems[SettingsViewState.Tab.assistant.rawValue].viewController
+            as? NSHostingController<SettingsView>)
         XCTAssertTrue(hosting.rootView.presentation === controller.presentation)
         let assistant = try XCTUnwrap(hosting.rootView.presentation.assistant,
             "Production Settings must supply the model that renders its Assistant tab")
@@ -162,6 +164,89 @@ final class MacSettingsWindowTests: XCTestCase {
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         XCTAssertNil(controller.presentation.assistant)
         XCTAssertFalse(assistant.canChangeProfiles)
+    }
+
+    func testSettingsUsesToolbarPanesWithSymbolsAndFixedWindow() throws {
+        try start()
+        delegate.showSettings()
+        let controller = try settings()
+        let window = try XCTUnwrap(controller.window)
+        let tabs = try XCTUnwrap(window.contentViewController as? NSTabViewController)
+        XCTAssertEqual(tabs.tabStyle, .toolbar)
+        XCTAssertTrue(tabs.canPropagateSelectedChildViewControllerTitle)
+        XCTAssertEqual(tabs.tabViewItems.map(\.label), ["General", "Shortcuts", "Delivery", "Assistant", "Account"])
+        let symbols = ["gearshape", "command", "paperplane", "sparkles", "person.crop.circle"]
+        for (index, item) in tabs.tabViewItems.enumerated() {
+            XCTAssertNotNil(item.image)
+            XCTAssertEqual(item.image?.accessibilityDescription, item.label)
+            XCTAssertEqual(item.viewController?.title, item.label)
+            let hosting = try XCTUnwrap(item.viewController as? NSHostingController<SettingsView>)
+            XCTAssertTrue(hosting.rootView.presentation === controller.presentation)
+            XCTAssertEqual(hosting.rootView.pane.rawValue, index)
+            XCTAssertEqual(hosting.rootView.pane.symbol, symbols[index])
+            XCTAssertTrue(hosting.sizingOptions.isEmpty)
+        }
+        XCTAssertTrue(window.styleMask.contains(.titled))
+        XCTAssertTrue(window.styleMask.contains(.closable))
+        XCTAssertFalse(window.styleMask.contains(.miniaturizable))
+        XCTAssertFalse(window.styleMask.contains(.resizable))
+        XCTAssertTrue(window.collectionBehavior.contains(.fullScreenNone))
+        XCTAssertEqual(window.toolbarStyle, .preference)
+        XCTAssertEqual(window.tabbingMode, .disallowed)
+        XCTAssertEqual(window.frameAutosaveName, "Settings")
+        XCTAssertEqual(window.title, Strings.generalTab)
+    }
+
+    func testSettingsSelectionSynchronizesBothWaysAndReopeningKeepsPane() throws {
+        try start()
+        delegate.showSettings()
+        let controller = try settings()
+        let window = try XCTUnwrap(controller.window)
+        let tabs = try XCTUnwrap(window.contentViewController as? NSTabViewController)
+        XCTAssertEqual(controller.presentation.selectedTab, .general)
+        XCTAssertEqual(tabs.selectedTabViewItemIndex, 0)
+
+        controller.presentation.selectedTab = .delivery
+        XCTAssertEqual(tabs.selectedTabViewItemIndex, SettingsViewState.Tab.delivery.rawValue)
+        XCTAssertEqual(window.title, DeliverySettingsStrings.title)
+        tabs.tabView.selectTabViewItem(at: SettingsViewState.Tab.shortcuts.rawValue)
+        XCTAssertEqual(controller.presentation.selectedTab, .shortcuts)
+        XCTAssertEqual(window.title, Strings.shortcutsTab)
+        window.close()
+        delegate.showSettings()
+        XCTAssertTrue(controller.window === window)
+        XCTAssertEqual(controller.presentation.selectedTab, .shortcuts)
+        XCTAssertEqual(tabs.selectedTabViewItemIndex, SettingsViewState.Tab.shortcuts.rawValue)
+
+        controller.showAccount()
+        XCTAssertEqual(controller.presentation.selectedTab, .account)
+        XCTAssertEqual(tabs.selectedTabViewItemIndex, SettingsViewState.Tab.account.rawValue)
+        XCTAssertEqual(window.title, SettingsAccountStrings.tab)
+    }
+
+    func testSettingsPaneResizePreservesTopLeftAndCapsTallPanes() throws {
+        try start()
+        delegate.showSettings()
+        let controller = try settings()
+        let window = try XCTUnwrap(controller.window)
+        // Hidden selection uses the same geometry without depending on the CI
+        // runner's Reduce Motion preference or animation timing.
+        window.close()
+        let frame = window.frame
+        controller.presentation.selectedTab = .delivery
+        let shortFrame = window.frame
+        XCTAssertNotEqual(shortFrame.height, frame.height)
+        XCTAssertEqual(shortFrame.minX, frame.minX, accuracy: 0.5)
+        XCTAssertEqual(shortFrame.maxY, frame.maxY, accuracy: 0.5)
+        XCTAssertEqual(shortFrame.width, frame.width, accuracy: 0.5)
+        XCTAssertEqual(window.contentRect(forFrameRect: shortFrame).height,
+            SettingsViewState.Tab.delivery.contentSize.height, accuracy: 0.5)
+
+        controller.presentation.selectedTab = .assistant
+        XCTAssertGreaterThan(window.frame.height, shortFrame.height)
+        XCTAssertEqual(window.frame.minX, frame.minX, accuracy: 0.5)
+        XCTAssertEqual(window.frame.maxY, frame.maxY, accuracy: 0.5)
+        XCTAssertEqual(window.contentRect(forFrameRect: window.frame).height, 640, accuracy: 0.5)
     }
 
     func testHostedCompositionReadsSavedTierOnlyThroughInjectedSecrets() throws {
@@ -408,13 +493,17 @@ final class MacSettingsWindowTests: XCTestCase {
 
     func testBothMenusRouteCommandCommaForSettingsAndSetupWindows() throws {
         try start()
+        let originalDelegate = NSApp.delegate
+        NSApp.delegate = delegate
+        defer { NSApp.delegate = originalDelegate }
         delegate.installMainMenu()
         let main = try XCTUnwrap(NSApp.mainMenu)
         let status = delegate.makeStatusMenu()
         let item = try XCTUnwrap(status.items.first { $0.title == Strings.settings })
         let appItem = try XCTUnwrap(main.items.first?.submenu?.items.first { $0.title == Strings.settings })
         for settingsItem in [item, appItem] {
-            XCTAssertTrue(settingsItem.target === delegate)
+            if settingsItem === appItem { XCTAssertNil(settingsItem.target) }
+            else { XCTAssertTrue(settingsItem.target === delegate) }
             XCTAssertEqual(settingsItem.action, #selector(AppDelegate.showSettings))
             XCTAssertEqual(settingsItem.keyEquivalent, ",")
             XCTAssertEqual(settingsItem.keyEquivalentModifierMask, .command)

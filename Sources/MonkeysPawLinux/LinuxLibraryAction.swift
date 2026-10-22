@@ -1,5 +1,6 @@
 #if os(Linux)
 enum LinuxLibraryAction: String, CaseIterable {
+    case newPrompt = "new-prompt"
     case save, duplicate, revert, rename, move, delete, favorite, edit, preview, search
     case sidebar, inspector, fields, history, assistant, review, improve
     case importFiles = "import-files", importFolder = "import-folder", showFiles = "show-files"
@@ -7,6 +8,7 @@ enum LinuxLibraryAction: String, CaseIterable {
 
     var accelerator: String? {
         switch self {
+        case .newPrompt: return "<Control>n"
         case .save: return "<Control>s"
         case .duplicate: return "<Control><Shift>s"
         case .favorite: return "<Control>d"

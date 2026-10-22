@@ -1,114 +1,61 @@
+import Foundation
 import MonkeysPawCore
 import SwiftUI
 
-struct LibraryView: View {
-    private enum Pane: Hashable { case filter, sidebar, prompts, preview }
+/// Source list for the split-view window: Library sections, groups, a
+/// collapsible folder tree and tags, with sync state pinned at its foot.
+struct LibrarySidebarView: View {
     @ObservedObject var presentation: LibraryViewState
-    @FocusState private var focusedPane: Pane?
+    @State private var dropTarget: LibrarySectionID?
 
     var body: some View {
+        // A plain stack keeps the footer below the list; an inset let rows
+        // scroll underneath the sync line.
         VStack(spacing: 0) {
-            toolbar
-            if let imports = presentation.imports { LibraryImportControls(presentation: imports) }
-            Divider()
-            HSplitView {
-                sidebar.frame(minWidth: 140, idealWidth: 180, maxWidth: 260)
-                importablePrompts.frame(minWidth: 180, idealWidth: 240)
-                editor.frame(minWidth: 240, maxWidth: .infinity)
-                if let conflict = presentation.conflict {
-                    LibraryConflictView(presentation: conflict).frame(minWidth: 520, idealWidth: 560)
-                }
-                if presentation.isAssistantVisible, let assistant = presentation.assistant {
-                    LibraryAssistantView(presentation: assistant, close: presentation.closeAssistant)
-                        .frame(minWidth: 320, idealWidth: 420)
-                }
-            }
-            if let message = presentation.assistantSaveMessage {
-                Text(message).font(.caption)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                    .accessibilityIdentifier("library-assistant-save-outcome")
-            }
-            if let imports = presentation.imports { LibraryImportReportView(presentation: imports) }
-            if !presentation.libraryAvailable {
-                Text(Strings.libraryUnavailable).font(.caption)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                    .accessibilityIdentifier("library-unavailable")
-            }
-            if let message = presentation.favoriteMessage {
-                Text(message).foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                    .accessibilityIdentifier("library-favorite-message")
-            }
-            Divider()
-            if let syncStatus = presentation.syncStatus {
-                SyncStatusView(presentation: syncStatus)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-            }
-            Text(LibraryStrings.keyboardHint).font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            sectionList
+            footer
         }
-        .onAppear { focusedPane = .filter }
-        .onChange(of: presentation.focusRevision) { _ in focusedPane = .filter }
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 12) {
-            TextField(LibraryStrings.filter, text: Binding(get: { presentation.snapshot.filter },
-                set: presentation.setFilter))
-                .textFieldStyle(.roundedBorder)
-                .focused($focusedPane, equals: .filter)
-                .accessibilityLabel(LibraryStrings.filter)
-                .accessibilityIdentifier("library-filter")
-            Button(presentation.snapshot.selectedPrompt?.favorite == true
-                ? LibraryStrings.removeFavorite : LibraryStrings.addFavorite,
-                systemImage: presentation.snapshot.selectedPrompt?.favorite == true ? "star.fill" : "star",
-                action: presentation.toggleFavorite)
-                .labelStyle(.iconOnly)
-                .accessibilityLabel(presentation.snapshot.selectedPrompt?.favorite == true
-                    ? LibraryStrings.removeFavorite : LibraryStrings.addFavorite)
-                .disabled(!presentation.canToggleFavorite)
-                .keyboardShortcut("f", modifiers: [.command, .shift])
-                .accessibilityIdentifier("library-favorite")
-            Button(Strings.showInFinder, action: presentation.revealFolder)
-                .disabled(!presentation.libraryAvailable)
-                .help(presentation.activeLibraryPath)
-                .accessibilityIdentifier("library-reveal")
-            Button(LibraryAssistantStrings.title, action: presentation.toggleAssistant)
-                .disabled(!presentation.isAssistantVisible && !presentation.canShowAssistant)
-                .keyboardShortcut("a", modifiers: [.command, .shift])
-                .help(LibraryAssistantStrings.shortcutHint)
-                .accessibilityIdentifier("library-open-assistant")
-        }
-        .padding(12)
-    }
-
-    private var sidebar: some View {
+    private var sectionList: some View {
         List(selection: Binding<LibrarySectionID?>(get: { presentation.snapshot.selectedSection },
             set: { if let section = $0 { presentation.selectSection(section) } })) {
-            ForEach(standardSections, id: \.id, content: sectionRow)
+            Section {
+                ForEach(librarySections, id: \.id, content: sectionRow)
+            } header: {
+                Text(LibraryStrings.library)
+            }
             if !groupSections.isEmpty {
-                Section(LibraryStrings.groups) {
+                Section {
                     ForEach(groupSections, id: \.id, content: sectionRow)
+                } header: {
+                    Text(LibraryStrings.groups)
                 }
             }
-            if !folderSections.isEmpty {
-                Section(LibraryStrings.folders) {
-                    ForEach(folderSections, id: \.id, content: sectionRow)
+            if !folderTree.isEmpty {
+                Section {
+                    OutlineGroup(folderTree, children: \.children) { node in
+                        sectionRow(node.section)
+                    }
+                } header: {
+                    Text(LibraryStrings.folders)
                 }
             }
             if !tagSections.isEmpty {
-                Section(LibraryStrings.tags) {
+                Section {
                     ForEach(tagSections, id: \.id, content: sectionRow)
+                } header: {
+                    Text(LibraryStrings.tags)
                 }
             }
         }
         .listStyle(.sidebar)
-        .focused($focusedPane, equals: .sidebar)
         .accessibilityLabel(LibraryStrings.sidebar)
         .accessibilityIdentifier("library-sidebar")
+        .onChange(of: presentation.scopeDragEpoch) { _ in dropTarget = nil }
     }
 
-    private var standardSections: [LibraryBrowserSection] {
+    private var librarySections: [LibraryBrowserSection] {
         presentation.snapshot.sections.filter { section in
             switch section.id { case .all, .favourites, .recent, .conflicts: return true; default: return false }
         }
@@ -126,200 +73,514 @@ struct LibraryView: View {
         presentation.snapshot.sections.filter { if case .tag = $0.id { return true }; return false }
     }
 
+    /// Parents precede children in the flat section order; a missing parent
+    /// roots its folder rather than dropping it from the tree.
+    private var folderTree: [LibraryFolderNode] {
+        var children: [LibrarySectionID: [LibraryFolderNode]] = [:]
+        var roots: [LibraryFolderNode] = []
+        var known: Set<LibrarySectionID> = []
+        for section in folderSections {
+            let node = LibraryFolderNode(section: section)
+            if let parent = section.parent, known.contains(parent) {
+                children[parent, default: []].append(node)
+            } else {
+                roots.append(node)
+            }
+            known.insert(section.id)
+        }
+        return roots.map { node in attach(node, children: children) }
+    }
+
+    private func attach(_ node: LibraryFolderNode,
+                        children: [LibrarySectionID: [LibraryFolderNode]]) -> LibraryFolderNode {
+        var node = node
+        node.children = children[node.id]?.map { attach($0, children: children) }
+        return node
+    }
+
+    private func symbol(for id: LibrarySectionID) -> String {
+        switch id {
+        case .all: return "tray.full"
+        case .favourites: return "star"
+        case .recent: return "clock"
+        case .conflicts: return "exclamationmark.triangle"
+        case .folder: return "folder"
+        case .tag: return "tag"
+        case .group: return "person.2"
+        }
+    }
+
     @ViewBuilder
     private func sectionRow(_ section: LibraryBrowserSection) -> some View {
-        let epoch = presentation.scopeDragEpoch
         if presentation.canDropScopeRow(onto: section.id) {
-            sectionLabel(section).onDrop(of: [LibraryViewState.scopeDragTypeIdentifier],
-                delegate: LibraryScopeDropTarget(presentation: presentation, section: section.id, epoch: epoch))
-        } else { sectionLabel(section) }
+            sectionLabel(section)
+                .onDrop(of: [LibraryViewState.scopeDragTypeIdentifier],
+                    delegate: LibraryScopeDropTarget(presentation: presentation, section: section.id,
+                        epoch: presentation.scopeDragEpoch, targeted: $dropTarget))
+        } else {
+            sectionLabel(section)
+        }
     }
 
     private func sectionLabel(_ section: LibraryBrowserSection) -> some View {
-        HStack {
-            Text(section.title).padding(.leading, CGFloat(section.depth) * 12)
-            if let role = section.role {
-                Text(LibraryStrings.role(role)).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(String(section.count)).foregroundStyle(.secondary)
-        }
-        .contentShape(Rectangle())
-        .tag(section.id)
-        .accessibilityLabel(LibraryStrings.sectionLabel(title: section.title, role: section.role, count: section.count))
-    }
-
-    @ViewBuilder
-    private var importablePrompts: some View {
-        if let imports = presentation.imports {
-            prompts.modifier(LibraryImportDropTarget(presentation: imports))
-        } else { prompts }
-    }
-
-    private var prompts: some View {
-        VStack(spacing: 0) {
-            // List selection arrives on mouse-down. Activate on click release
-            // so a row drag reaches its drop guard before any draft sheet opens.
-            List(selection: Binding<RelativePath?>(get: { presentation.snapshot.selection?.relativePath },
-                set: { _ in })) {
-                ForEach(presentation.snapshot.rows, id: \.relativePath) { row in
-                    promptRow(row).tag(row.relativePath)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .onTapGesture { presentation.selectPath(row.relativePath) }
-                        .accessibilityAction { presentation.selectPath(row.relativePath) }
+        Label {
+            HStack(spacing: 6) {
+                Text(displayTitle(section))
+                if let role = section.role {
+                    Text(LibraryStrings.role(role)).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .focused($focusedPane, equals: .prompts)
-            .onKeyPress(.upArrow) { presentation.moveSelection(.up); return .handled }
-            .onKeyPress(.downArrow) { presentation.moveSelection(.down); return .handled }
-            .onKeyPress(.return) { .handled }
-            .accessibilityLabel(LibraryStrings.prompts)
-            .accessibilityIdentifier("library-prompts")
-            if presentation.snapshot.rows.isEmpty {
-                Text(LibraryStrings.noRows).foregroundStyle(.secondary).padding(12)
-            }
+        } icon: {
+            Image(systemName: symbol(for: section.id))
+        }
+        .badge(section.count)
+        .listRowBackground(Rectangle().fill(dropTarget == section.id ? Color.accentColor.opacity(0.25) : Color.clear))
+        .tag(section.id)
+        .accessibilityLabel(LibraryStrings.sectionLabel(title: section.id == .all ? LibraryStrings.allPrompts : section.title, role: section.role, count: section.count))
+    }
+
+    /// The tag symbol already marks tags, so their "#" prefix is dropped.
+    private func displayTitle(_ section: LibraryBrowserSection) -> String {
+        switch section.id {
+        case .all: return LibraryStrings.allPrompts
+        case .tag:
+            return section.title.hasPrefix("#") ? String(section.title.dropFirst()) : section.title
+        default: return section.title
         }
     }
 
     @ViewBuilder
-    private func promptRow(_ row: LibraryBrowserRow) -> some View {
-        let epoch = presentation.scopeDragEpoch
-        let content = LibraryRowView(row: row, showsLastUse: presentation.snapshot.selectedSection == .recent)
-        if presentation.canStartScopeDrag && !row.isReadOnly {
-            content.onDrag { presentation.scopeDragProvider(for: row.selection, epoch: epoch) ?? NSItemProvider() }
-        } else { content }
+    private var footer: some View {
+        if let syncStatus = presentation.syncStatus { LibrarySidebarSyncFooter(status: syncStatus) }
+        if !presentation.libraryAvailable {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider()
+                if !presentation.libraryAvailable {
+                    Text(Strings.libraryUnavailable)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("library-unavailable")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 2)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
+}
 
-    private var editor: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let prompt = presentation.editorState.prompt {
-                Text(presentation.snapshot.selectedPrompt?.title ?? LibraryStrings.prompts).font(.headline)
-                Text(prompt.relativePath.string).font(.caption).foregroundStyle(.secondary)
+/// Sync state at the sidebar's foot. With sync off there is nothing to
+/// report, so the line disappears; Settings ▸ Account sets sync up.
+private struct LibrarySidebarSyncFooter: View {
+    @ObservedObject var status: SyncStatusViewState
+
+    var body: some View {
+        if status.state?.footer != .disabled {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider()
+                SyncStatusView(presentation: status)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 2)
+            .padding(.bottom, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// The open prompt's editor: read-only and sync-conflict bars above the
+/// borderless source or preview, validation and save state in the status bar.
+struct LibraryEditorView: View {
+    @ObservedObject var presentation: LibraryViewState
+    @State private var showsIssues = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            importArea
+            if presentation.editorState.prompt == nil {
+                ContentUnavailableView(LibraryNativeStrings.noPromptSelected,
+                    systemImage: "doc.text",
+                    description: Text(LibraryStrings.noSelection))
+                    .accessibilityIdentifier("library-editor-empty")
+            } else {
                 if let reason = presentation.editorState.readOnlyReason {
-                    Text(EditorStrings.readOnly(reason)).font(.caption)
+                    Label(EditorStrings.readOnly(reason), systemImage: "lock.fill")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
                         .accessibilityIdentifier("library-read-only")
                 }
-                HStack {
-                    Button(EditorStrings.save, action: presentation.save)
-                        .disabled(!presentation.canSave && !presentation.canShowConflict)
-                        .keyboardShortcut("s", modifiers: .command).accessibilityIdentifier("library-save")
-                    Button(EditorStrings.revert, action: presentation.revert).disabled(!presentation.canRevert)
-                        .accessibilityIdentifier("library-revert")
-                    Button(EditorStrings.saveAsCopy, action: presentation.saveAsCopy).disabled(!presentation.canSaveAsCopy)
-                        .accessibilityIdentifier("library-save-copy")
+                if let conflict = presentation.conflict {
+                    LibraryConflictView(presentation: conflict)
+                    Divider()
                 }
-                HStack {
-                    Button(LibraryCommandStrings.rename) { presentation.requestFileCommand(.rename) }
-                        .accessibilityIdentifier("library-rename")
-                    Button(LibraryCommandStrings.move) { presentation.requestFileCommand(.move) }
-                        .accessibilityIdentifier("library-move")
-                    Button(LibraryCommandStrings.delete) { presentation.requestFileCommand(.delete) }
-                        .accessibilityIdentifier("library-delete")
+                content
+                if showsIssues, !presentation.editorState.issues.isEmpty {
+                    Divider()
+                    issueList
                 }
-                .disabled(!presentation.canRunFileCommand || presentation.fileCommandRequest != nil)
-                TabView(selection: $presentation.editorTab) {
-                    source.tabItem { Text(EditorStrings.editTab) }.tag(LibraryViewState.EditorTab.edit)
-                    preview.tabItem { Text(EditorStrings.previewTab) }.tag(LibraryViewState.EditorTab.preview)
-                    fields.tabItem { Text(EditorStrings.fieldsTab) }.tag(LibraryViewState.EditorTab.fields)
-                    LibraryHistoryView(presentation: presentation)
-                        .tabItem { Text(LibraryCommandStrings.historyTab) }.tag(LibraryViewState.EditorTab.history)
-                }
-            } else {
-                Text(LibraryStrings.noSelection).foregroundStyle(.secondary)
-                Spacer()
+                Divider()
+                statusBar
             }
-            Text(presentation.commandMessage ?? EditorStrings.status(presentation.editorState)).font(.caption)
-                .accessibilityIdentifier("library-editor-status")
         }
-        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("library-editor")
+        .onChange(of: presentation.editorState.prompt) { _ in showsIssues = false }
+    }
+
+    @ViewBuilder
+    private var importArea: some View {
+        if let imports = presentation.imports,
+           imports.isBusy || imports.isChoosing || imports.hasReport || imports.selectionMessage != nil {
+            VStack(spacing: 0) {
+                if imports.isBusy {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(ImportStrings.progress(imports.progress,
+                            selection: imports.requestNumber, total: imports.requestCount))
+                            .font(.caption)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(8)
+                    .accessibilityIdentifier("library-import-progress")
+                }
+                if imports.hasReport || imports.selectionMessage != nil {
+                    LibraryImportReportView(presentation: imports)
+                }
+                Divider()
+            }
+        }
+    }
+
+    private var content: some View {
+        // Keep the native text view mounted across modes so its undo stack,
+        // marked-text ownership and selection belong to the editing session.
+        ZStack(alignment: .topLeading) {
+            source
+                .accessibilityHidden(presentation.editorMode != .edit)
+            if presentation.editorMode == .preview { preview }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var source: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Core's canEdit excludes nil source, including an in-flight load.
-            LibrarySourceEditor(source: presentation.editorState.source ?? "",
-                path: presentation.editorState.prompt?.relativePath,
-                revision: presentation.sourceRevision,
-                isEditable: presentation.canEditSource,
-                onEdit: presentation.edit, highlight: presentation.quoteHighlight)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(presentation.editorState.issues.enumerated()), id: \.offset) { issue in
-                        Text(EditorStrings.issue(issue.element))
-                            .foregroundStyle(issue.element.severity == .error ? Color.red : Color.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-            .frame(maxHeight: presentation.editorState.issues.isEmpty ? 0 : 120)
-            .accessibilityIdentifier("library-validation")
-        }
-        .padding(8)
-    }
-
-    private var fields: some View {
-        ScrollView([.horizontal, .vertical]) {
-            if presentation.editorState.fields.isEmpty {
-                Text(EditorStrings.noFields).foregroundStyle(.secondary)
-            } else {
-                Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 12) {
-                    GridRow {
-                        Text(EditorStrings.fieldName); Text(EditorStrings.fieldType)
-                        Text(EditorStrings.fieldDefault); Text(EditorStrings.fieldOptions); Text(EditorStrings.fieldBehaviorHeader)
-                    }.font(.headline)
-                    ForEach(Array(presentation.editorState.fields.enumerated()), id: \.offset) { item in
-                        GridRow {
-                            VStack(alignment: .leading) {
-                                Text(verbatim: item.element.name).font(.system(.body, design: .monospaced))
-                                Text(verbatim: item.element.label)
-                                if let description = item.element.description { Text(verbatim: description).font(.caption) }
-                            }
-                            Text(EditorStrings.fieldKind(item.element.kind))
-                            Text(verbatim: item.element.defaultValue)
-                            Text(verbatim: item.element.options.map { $0.label + " = " + $0.value }.joined(separator: "\n"))
-                            Text(EditorStrings.fieldBehavior(item.element))
-                        }
-                    }
-                }
-                .textSelection(.enabled)
-            }
-        }
-        .padding(12)
-        .accessibilityLabel(EditorStrings.parsedFields)
-        .accessibilityIdentifier("library-fields")
+        LibrarySourceEditor(source: presentation.editorState.source ?? "",
+            path: presentation.editorState.prompt?.relativePath,
+            revision: presentation.sourceRevision,
+            isEditable: presentation.canEditSource,
+            onEdit: presentation.edit,
+            highlight: presentation.quoteHighlight,
+            focusRevision: presentation.editorMode == .edit ? presentation.editorFocusRevision : 0,
+            isVisible: presentation.editorMode == .edit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var preview: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if let row = presentation.snapshot.selectedPrompt {
-                    if let description = row.previewLine { Text(description).foregroundStyle(.secondary) }
-                }
-                switch presentation.preview {
-                case .none: Text(LibraryStrings.noSelection).foregroundStyle(.secondary)
-                case .rendered(let text): Text(verbatim: text).textSelection(.enabled)
-                case .issues(let issues):
-                    ForEach(Array(issues.enumerated()), id: \.offset) { issue in
-                        Text(issue.element.message).foregroundStyle(.red)
-                    }
-                }
-                Spacer()
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                previewColumn
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(16)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
         }
-        .focusable()
-        .focused($focusedPane, equals: .preview)
         .accessibilityLabel(LibraryStrings.preview)
         .accessibilityIdentifier("library-preview")
     }
+
+    private var previewColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let description = presentation.openPromptRow?.previewLine, !description.isEmpty {
+                Text(description).foregroundStyle(.secondary)
+            }
+            previewBody
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: 680, alignment: .leading)
+        .padding(.vertical, 24)
+        .textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private var previewBody: some View {
+        switch presentation.preview {
+        case .none:
+            Text(LibraryStrings.noSelection).foregroundStyle(.secondary)
+        case .rendered(let text):
+            Text(verbatim: text)
+        case .issues(let issues):
+            ForEach(Array(issues.enumerated()), id: \.offset) { issue in
+                Label(EditorStrings.issue(issue.element), systemImage: "xmark.octagon.fill")
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var issueList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(presentation.editorState.issues.enumerated()), id: \.offset) { issue in
+                    issueRow(issue.element)
+                }
+            }
+            .padding(8)
+        }
+        .frame(maxHeight: 140)
+        .accessibilityIdentifier("library-validation")
+    }
+
+    private func issueRow(_ issue: PromptIssue) -> some View {
+        Label(EditorStrings.issue(issue),
+            systemImage: issue.severity == .error ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(issue.severity == .error ? Color.red : Color.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var statusBar: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            validationButton
+            statusText
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private var validationButton: some View {
+        let issues = presentation.editorState.issues
+        let errors = issues.filter { $0.severity == .error }.count
+        let summary: String
+        let symbol: String
+        let tint: Color
+        if errors > 0 {
+            summary = LibraryNativeStrings.errorCount(errors)
+            symbol = "xmark.octagon.fill"
+            tint = .red
+        } else if !issues.isEmpty {
+            summary = LibraryNativeStrings.issueCount(issues.count)
+            symbol = "exclamationmark.triangle.fill"
+            tint = .secondary
+        } else {
+            summary = LibraryCommandStrings.valid
+            symbol = "checkmark.circle"
+            tint = .secondary
+        }
+        return Button { showsIssues.toggle() } label: {
+            Label(summary, systemImage: symbol)
+        }
+        .font(.caption)
+        .foregroundStyle(tint)
+        .buttonStyle(.borderless)
+        .disabled(issues.isEmpty)
+        .accessibilityIdentifier("library-validation-summary")
+    }
+
+    /// Command results outrank Assistant and favourite outcomes, which in
+    /// turn outrank the editor's own status line.
+    private var statusText: some View {
+        let message = presentation.commandMessage ?? presentation.assistantSaveMessage
+            ?? presentation.favoriteMessage ?? EditorStrings.status(presentation.editorState)
+        return Group {
+            if statusIsError {
+                Label(message, systemImage: "xmark.octagon.fill").foregroundStyle(.red)
+                    .accessibilityIdentifier(statusMessageIdentifier)
+            } else {
+                Text(message).accessibilityIdentifier(statusMessageIdentifier)
+            }
+        }
+        .font(.caption)
+        .lineLimit(2)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("library-editor-status")
+    }
+
+    private var statusMessageIdentifier: String {
+        if presentation.commandMessage != nil { return "library-command-message" }
+        if presentation.assistantSaveMessage != nil { return "library-assistant-save-outcome" }
+        if presentation.favoriteMessage != nil { return "library-favorite-message" }
+        return "library-editor-message"
+    }
+
+    private var statusIsError: Bool {
+        if presentation.commandMessage != nil {
+            if case .failed = presentation.editorState.status { return true }
+            return presentation.editorState.conflict != nil
+        }
+        if presentation.assistantSaveMessage != nil, let outcome = presentation.assistant?.state.acceptanceOutcome {
+            switch outcome {
+            case .conflict: return true
+            case .failed(.cancelled): return false
+            case .failed: return true
+            case .saved, .committedWithProvenanceWarning: return false
+            }
+        }
+        if presentation.favoriteMessage != nil { return true }
+        if case .failed = presentation.editorState.status { return true }
+        return false
+    }
 }
 
+/// Inspector column: Fields, History and Assistant under one segmented picker.
+struct LibraryInspectorView: View {
+    @ObservedObject var presentation: LibraryViewState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            panePicker
+            Divider()
+            paneContent
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("library-inspector")
+    }
+
+    private var panePicker: some View {
+        Picker(selection: Binding<LibraryViewState.InspectorPane>(
+            get: { presentation.inspectorPane },
+            set: { presentation.showInspector($0) })) {
+            Image(systemName: "list.bullet.rectangle")
+                .tag(LibraryViewState.InspectorPane.fields)
+                .accessibilityLabel(EditorStrings.fieldsTab)
+            Image(systemName: "clock.arrow.circlepath")
+                .tag(LibraryViewState.InspectorPane.history)
+                .accessibilityLabel(LibraryCommandStrings.historyTab)
+            Image(systemName: "sparkles")
+                .tag(LibraryViewState.InspectorPane.assistant)
+                .accessibilityLabel(LibraryAssistantStrings.title)
+        } label: {
+            Text(verbatim: LibraryStrings.showInspector)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("library-inspector-picker")
+    }
+
+    @ViewBuilder
+    private var paneContent: some View {
+        switch presentation.inspectorPane {
+        case .fields: fields
+        case .history: LibraryHistoryView(presentation: presentation)
+        case .assistant: assistantPane
+        }
+    }
+
+    private var fields: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                promptInfo
+                fieldCards
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityLabel(EditorStrings.parsedFields)
+        .accessibilityIdentifier("library-fields")
+    }
+
+    private var promptInfo: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(LibraryNativeStrings.promptInfo).font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            infoRow(LibraryNativeStrings.titleLabel, presentation.displayTitle)
+            infoRow(LibraryNativeStrings.fileLabel, promptFile)
+            infoRow(LibraryNativeStrings.tagsLabel, promptTags)
+            infoRow(LibraryNativeStrings.statusLabel, promptStatus)
+        }
+        .font(.callout)
+        .textSelection(.enabled)
+    }
+
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        LabeledContent {
+            Text(value)
+        } label: {
+            Text(label).foregroundStyle(.secondary)
+        }
+    }
+
+    private var promptFile: String {
+        presentation.editorState.prompt?.relativePath.string ?? LibraryNativeStrings.none
+    }
+
+    private var promptTags: String {
+        let tags = presentation.openPromptRow?.tags ?? []
+        return tags.isEmpty ? LibraryNativeStrings.none : tags.joined(separator: ", ")
+    }
+
+    private var promptStatus: String {
+        let status = EditorStrings.status(presentation.editorState)
+        return status.isEmpty ? LibraryNativeStrings.ready : status
+    }
+
+    @ViewBuilder
+    private var fieldCards: some View {
+        if presentation.editorState.fields.isEmpty {
+            Text(LibraryNativeStrings.noFields).foregroundStyle(.secondary)
+        } else {
+            ForEach(Array(presentation.editorState.fields.enumerated()), id: \.offset) { item in
+                fieldCard(item.element)
+            }
+        }
+    }
+
+    private func fieldCard(_ field: PromptField) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 4) {
+                infoRow(LibraryNativeStrings.labelLabel, field.label)
+                infoRow(LibraryNativeStrings.kindLabel, EditorStrings.fieldKind(field.kind))
+                infoRow(EditorStrings.fieldDefault, field.defaultValue)
+                if !field.options.isEmpty {
+                    infoRow(EditorStrings.fieldOptions, optionsText(field))
+                }
+                infoRow(EditorStrings.fieldBehaviorHeader, EditorStrings.fieldBehavior(field))
+                if let description = field.description, !description.isEmpty {
+                    infoRow(LibraryNativeStrings.descriptionLabel, description)
+                }
+            }
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(verbatim: field.name).font(.system(.callout, design: .monospaced))
+        }
+        .textSelection(.enabled)
+    }
+
+    private func optionsText(_ field: PromptField) -> String {
+        field.options.map { $0.label + " = " + $0.value }.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private var assistantPane: some View {
+        if let assistant = presentation.assistant {
+            LibraryAssistantView(presentation: assistant)
+        } else {
+            Text(LibraryNativeStrings.assistantUnavailable)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(12)
+        }
+    }
+}
+
+private struct LibraryFolderNode: Identifiable {
+    let section: LibraryBrowserSection
+    var children: [LibraryFolderNode]?
+    var id: LibrarySectionID { section.id }
+}
+
+/// One sidebar section's drop gate plus its accent highlight while targeted.
 private struct LibraryScopeDropTarget: DropDelegate {
     let presentation: LibraryViewState
     let section: LibrarySectionID
     let epoch: UUID
+    let targeted: Binding<LibrarySectionID?>
 
     func validateDrop(info: DropInfo) -> Bool {
         presentation.scopeDragEpoch == epoch && presentation.canDropScopeRow(onto: section)
@@ -328,46 +589,17 @@ private struct LibraryScopeDropTarget: DropDelegate {
 
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
 
+    func dropEntered(info: DropInfo) { targeted.wrappedValue = section }
+
+    func dropExited(info: DropInfo) { clearTarget() }
+
     func performDrop(info: DropInfo) -> Bool {
-        presentation.acceptScopeDrop(info.itemProviders(for: [LibraryViewState.scopeDragTypeIdentifier]),
+        clearTarget()
+        return presentation.acceptScopeDrop(info.itemProviders(for: [LibraryViewState.scopeDragTypeIdentifier]),
             onto: section, epoch: epoch)
     }
-}
 
-private struct LibraryRowView: View {
-    let row: LibraryBrowserRow
-    let showsLastUse: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text((row.favorite ? "★ " : "") + row.title)
-            Text(row.relativePath.string).font(.caption).foregroundStyle(.secondary)
-            if row.isReadOnly || !row.canRender {
-                HStack(spacing: 8) {
-                    if row.isReadOnly { Text(LibraryStrings.readOnly) }
-                    if !row.canRender { Text(LibraryStrings.invalid) }
-                }
-                .font(.caption).foregroundStyle(.secondary)
-            }
-            if showsLastUse, let date = row.lastUsedAt {
-                Text(lastUseLabel(date))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel)
-    }
-
-    private var accessibilityLabel: String {
-        var parts = [row.title, row.relativePath.string]
-        if row.favorite { parts.append(Strings.favorite) }
-        if row.isReadOnly { parts.append(LibraryStrings.readOnly) }
-        if !row.canRender { parts.append(LibraryStrings.invalid) }
-        if showsLastUse, let date = row.lastUsedAt { parts.append(lastUseLabel(date)) }
-        return parts.joined(separator: ", ")
-    }
-
-    private func lastUseLabel(_ date: Date) -> String {
-        "Last used " + date.formatted(date: .abbreviated, time: .shortened)
+    private func clearTarget() {
+        if targeted.wrappedValue == section { targeted.wrappedValue = nil }
     }
 }

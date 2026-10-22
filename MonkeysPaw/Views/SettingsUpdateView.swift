@@ -58,18 +58,20 @@ struct SettingsUpdateView: View {
     @ObservedObject var presentation: UpdateSettingsViewState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(SettingsUpdateStrings.title).font(.headline)
+        Section {
             Toggle(SettingsUpdateStrings.automatic, isOn: Binding(
                 get: { presentation.state.automaticUpdateChecks == .enabled },
                 set: presentation.setAutomatic))
                 .disabled(!presentation.canEdit)
                 .accessibilityLabel(SettingsUpdateStrings.automatic)
                 .accessibilityIdentifier("settings-automatic-updates")
-            Text(SettingsUpdateStrings.disclosure).font(.caption)
-            Text(SettingsUpdateStrings.version(presentation.state.update?.currentVersion))
+            LabeledContent(SettingsUpdateStrings.currentVersion) {
+                Text(presentation.state.update?.currentVersion?.description ?? SettingsUpdateStrings.unavailableVersion)
+            }
                 .accessibilityIdentifier("settings-update-version")
-            Text(SettingsUpdateStrings.lastChecked(presentation.state.update?.lastSuccessfulCheck))
+            LabeledContent(SettingsUpdateStrings.lastCheck) {
+                Text(SettingsUpdateStrings.checkDate(presentation.state.update?.lastSuccessfulCheck))
+            }
             Text(SettingsUpdateStrings.result(presentation.state.update))
                 .accessibilityIdentifier("settings-update-result")
             errors
@@ -83,21 +85,28 @@ struct SettingsUpdateView: View {
                     .accessibilityLabel(SettingsUpdateStrings.viewRelease)
                     .accessibilityIdentifier("settings-view-release")
             }
+        } header: {
+            Text(SettingsUpdateStrings.title)
+        } footer: {
+            Text(SettingsUpdateStrings.disclosure)
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var errors: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let error = presentation.state.settingsError {
-                Text(GeneralSettingsStrings.settingsError(error)).foregroundStyle(.red)
-            }
-            if let error = presentation.state.update?.stateError {
-                Text(SettingsUpdateStrings.stateError(error)).foregroundStyle(.red)
-            }
-            if presentation.state.update?.releasePageOpeningFailed == true {
-                Text(SettingsUpdateStrings.openingFailed).foregroundStyle(.red)
-            }
+    /// One form row per error; no empty row when everything is fine.
+    @ViewBuilder private var errors: some View {
+        if let error = presentation.state.settingsError {
+            errorRow(GeneralSettingsStrings.settingsError(error))
         }
+        if let error = presentation.state.update?.stateError {
+            errorRow(SettingsUpdateStrings.stateError(error))
+        }
+        if presentation.state.update?.releasePageOpeningFailed == true {
+            errorRow(SettingsUpdateStrings.openingFailed)
+        }
+    }
+
+    private func errorRow(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

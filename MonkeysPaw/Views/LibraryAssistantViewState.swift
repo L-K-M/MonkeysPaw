@@ -12,6 +12,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     @Published var flow = Flow.write
     @Published var brief = ""
     @Published var feedback = ""
+    @Published private(set) var instructionFocusRevision: UInt64 = 0
     var onHighlight: ((Range<Int>?) -> Void)?
     var onRequest: (() -> Void)?
     private var model: AssistantModel?
@@ -111,6 +112,9 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     func write() { if canWrite { requestUsesSource = false; onRequest?(); onHighlight?(nil); model?.write(brief: brief) } }
     func review() { if canReview { requestUsesSource = true; onRequest?(); onHighlight?(nil); model?.review() } }
     func editInstruction(_ value: String) { model?.editInstruction(value) }
+    /// "Improve with Assistant" focuses the instruction field once the pane
+    /// has settled; each request bumps the revision the view observes.
+    func focusInstruction() { instructionFocusRevision &+= 1 }
     func improve() { if canImprove { requestUsesSource = true; onRequest?(); onHighlight?(nil); model?.improve() } }
     func toggleFinding(_ index: Int) { if canSelectFindings { model?.toggleFinding(at: index) } }
     func highlightFinding(_ index: Int) {

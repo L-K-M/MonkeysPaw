@@ -869,6 +869,9 @@ final class LinuxEnvironment {
                     guard let self, !self.isShutDown, self.libraryStatusModel.libraryAvailable,
                           (try? FileStorePath.validate(path.string)) != nil else { return }
                     self.launchURI(self.libraryGraph.directory.appendingPathComponent(path.string).deletingLastPathComponent())
+                }, createPrompt: { [weak self, weak graph] title, folder in
+                    guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return nil }
+                    return self.createPrompt(titled: title, in: folder, graph: graph)
                 }, openFolder: { [weak self] in
                     guard let self, !self.isShutDown else { return }
                     self.libraryLocation.revealLibrary()
@@ -1361,6 +1364,9 @@ final class LinuxEnvironment {
             syncStatus: graph.sync?.status, syncNavigation: { [weak self, weak graph] action in
                 guard let graph else { return }
                 self?.navigateSyncStatus(action, in: graph)
+            }, createPrompt: { [weak self, weak graph] title, folder in
+                guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return nil }
+                return self.createPrompt(titled: title, in: folder, graph: graph)
             })
         currentLibraryWindow?.setLibraryAvailable(graph.picker.libraryAvailable)
         // Never create the status here: its first read starts the current
@@ -1626,15 +1632,24 @@ final class LinuxEnvironment {
 
     private func createPrompt(titled title: String, in graph: LibraryGraph) {
         guard graph.picker.libraryAvailable else { return }
+        guard let selection = createPrompt(titled: title, in: RelativePath(""), graph: graph) else {
+            panel.showStatus(LinuxStrings.createPromptFailed)
+            return
+        }
+        handle(.edit(identity: selection.identity, relativePath: selection.relativePath.string), in: graph)
+    }
+
+    private func createPrompt(titled title: String, in folder: RelativePath, graph: LibraryGraph) -> LibraryPromptSelection? {
+        guard graph.picker.libraryAvailable else { return nil }
         do {
-            let entry = try graph.library.createPrompt(titled: title, body: LinuxStrings.newPromptBody)
+            let entry = try graph.library.createPrompt(titled: title, body: LinuxStrings.newPromptBody, in: folder)
             let path = entry.relativePath
             do { try graph.index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
             catch { log.write(.warning, "Prompt saved; immediate index refresh failed") }
-            handle(.edit(identity: entry.identity, relativePath: path), in: graph)
+            return LibraryPromptSelection(identity: entry.identity, relativePath: RelativePath(path))
         } catch {
-            panel.showStatus(LinuxStrings.createPromptFailed)
             log.write(.warning, "Could not create a prompt; check library and app-data permissions")
+            return nil
         }
     }
 

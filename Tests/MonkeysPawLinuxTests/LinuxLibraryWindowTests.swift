@@ -172,6 +172,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
         let text = try XCTUnwrap(mp_entry_text_delegate(filter))
         mp_test_emit_preedit_changed(text, "かな")
         XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
         XCTAssertEqual(environment.libraryBrowserModel.filter, "Alpha")
         mp_test_emit_preedit_changed(text, "")
         // Escape inside the filter clears it and dismisses the search bar; the window stays open.
@@ -293,6 +294,49 @@ final class LinuxLibraryWindowTests: XCTestCase {
         drain()
         XCTAssertFalse(view.isVisible)
         XCTAssertTrue(libraryWindows.isEmpty)
+    }
+
+    func testNewPromptHeaderMenuAndShortcutUseDialogAndAvailabilityGate() throws {
+        let window = try openLibrary()
+        let button = try settingsWidget("library-new-prompt", in: window)
+        let sidebar = try settingsWidget("library-sidebar-toggle", in: window)
+        XCTAssertEqual(gtk_widget_get_next_sibling(sidebar), button)
+        XCTAssertNotNil(gtk_widget_get_ancestor(button, gtk_header_bar_get_type()))
+        XCTAssertEqual(String(cString: gtk_button_get_icon_name(mp_button(button))), "document-new-symbolic")
+        XCTAssertEqual(String(cString: gtk_widget_get_tooltip_text(button)), LinuxStrings.newPrompt)
+        XCTAssertEqual(String(cString: gtk_actionable_get_action_name(mp_actionable(button))), "win.new-prompt")
+        let menu = try settingsWidget("library-menu", in: window)
+        let model = try XCTUnwrap(gtk_menu_button_get_menu_model(mp_menu_button(menu)))
+        let section = try XCTUnwrap(g_menu_model_get_item_link(model, 0, "section"))
+        defer { g_object_unref(UnsafeMutableRawPointer(section)) }
+        for (attribute, expected) in [("label", LinuxStrings.newPrompt), ("action", "win.new-prompt")] {
+            let value = try XCTUnwrap(g_menu_model_get_item_attribute_value(section, 0, attribute, nil))
+            defer { g_variant_unref(value) }
+            XCTAssertEqual(String(cString: g_variant_get_string(value, nil)), expected)
+        }
+        let accelerators = try XCTUnwrap(gtk_application_get_accels_for_action(application, "win.new-prompt"))
+        defer { g_strfreev(accelerators) }
+        XCTAssertEqual(String(cString: try XCTUnwrap(accelerators[0])), "<Control>n")
+        XCTAssertNotEqual(gtk_widget_get_sensitive(button), 0)
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        drain()
+        XCTAssertEqual(gtk_widget_get_sensitive(button), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0,
+            "A second shortcut must not open another title dialog")
+        gtk_window_close(mp_window(window))
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        XCTAssertEqual(try openLibrary(), window)
+
+        // Exercise the same window gate directly without relying on permission bits.
+        let isolated = LinuxLibraryWindow(application: application, browser: environment.libraryBrowserModel,
+            editor: environment.editorModel, openFolder: {})
+        defer { isolated.tearDown() }
+        isolated.show()
+        let unavailable = try XCTUnwrap(libraryWindows.first { $0 != window })
+        isolated.setLibraryAvailable(false)
+        XCTAssertEqual(gtk_widget_get_sensitive(try settingsWidget("library-new-prompt", in: unavailable)), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(unavailable, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
     }
 
     private func openLibrary() throws -> GTK.Widget {

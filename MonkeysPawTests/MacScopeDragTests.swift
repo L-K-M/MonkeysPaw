@@ -36,7 +36,7 @@ final class MacScopeDragTests: XCTestCase {
         let identity = h.view.editorState.prompt?.identity
         let history = try h.historyFiles()
         XCTAssertFalse(history.isEmpty)
-        let host = NSHostingView(rootView: LibraryView(presentation: h.view))
+        let host = NSHostingView(rootView: LibrarySidebarView(presentation: h.view))
         host.frame = NSRect(x: 0, y: 0, width: 1100, height: 640)
         host.layoutSubtreeIfNeeded()
         for (section, path) in [(LibrarySectionID.group(h.team), "Groups/Team/a.md"),
@@ -54,6 +54,24 @@ final class MacScopeDragTests: XCTestCase {
             XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.moved)
         }
         XCTAssertEqual(h.view.model.moveDestination(for: .group(h.team)), "Groups/Team")
+    }
+
+    func testNativeTablePasteboardPayloadIsAcceptedByTheScopeDropGuard() throws {
+        let h = try MacScopeDragHarness()
+        defer { h.close() }
+        let controller = try XCTUnwrap(h.delegate.libraryWindow?.promptList)
+        let index = try XCTUnwrap(h.view.snapshot.rows.firstIndex { $0.relativePath == h.view.editorState.prompt?.relativePath })
+        let epoch = h.view.scopeDragEpoch
+        let item = try XCTUnwrap(controller.tableView(controller.tableView, pasteboardWriterForRow: index) as? NSPasteboardItem)
+        let bytes = try XCTUnwrap(item.data(forType: .init(LibraryViewState.scopeDragTypeIdentifier)))
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: LibraryViewState.scopeDragTypeIdentifier, visibility: .ownProcess) { done in
+            done(bytes, nil)
+            return nil
+        }
+        XCTAssertTrue(h.view.acceptScopeDrop([provider], onto: .folder("Folder"), epoch: epoch))
+        try h.waitForPath("Folder/a.md")
+        XCTAssertEqual(h.view.commandMessage, LibraryCommandStrings.moved)
     }
 
     func testDirtyMoveCancelDiscardAndSaveUseTheExistingGuard() throws {
@@ -262,7 +280,7 @@ final class MacScopeDragTests: XCTestCase {
         let held = MacScopeHeldProvider(bytes: try h.bytes(from: h.provider()))
         XCTAssertTrue(h.drop(held.provider, onto: .group(h.team)))
         XCTAssertTrue(h.spin { held.isRequested })
-        let item = NSMenuItem(title: "Move", action: #selector(AppDelegate.moveLibraryPrompt), keyEquivalent: "")
+        let item = NSMenuItem(title: "Move", action: #selector(LibraryWindowController.moveDocument(_:)), keyEquivalent: "")
         XCTAssertFalse(h.delegate.validateLibraryFileMenuItem(item, in: h.delegate.libraryWindow?.window))
         h.view.selectPath("a.md")
         held.release()

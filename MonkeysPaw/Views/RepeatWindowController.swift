@@ -78,19 +78,29 @@ private struct RepeatNotice: View {
     @ObservedObject var presentation: RepeatWindowController.Presentation
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(presentation.message)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("repeat-message")
-            HStack {
-                if presentation.reference != nil {
-                    Button(Strings.openRepeatPrompt) { presentation.reopen() }
-                        .accessibilityIdentifier("repeat-open-prompt")
-                }
-                Button(Strings.done) { presentation.dismiss?() }
+        WelcomeWindowView(title: Strings.repeatLast, explanation: WelcomeStrings.repeatExplanation) {
+            WelcomeStatusRow(symbol: .needsAttention) {
+                Text(presentation.message)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("repeat-message")
             }
+        } secondaryActions: {
+            openPromptButton
+        } defaultAction: {
+            doneButton
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder private var openPromptButton: some View {
+        if presentation.reference != nil {
+            Button(Strings.openRepeatPrompt) { presentation.reopen() }
+                .accessibilityIdentifier("repeat-open-prompt")
+        }
+    }
+
+    private var doneButton: some View {
+        Button(Strings.done) { presentation.dismiss?() }
+            .keyboardShortcut(.defaultAction)
+            .accessibilityIdentifier("repeat-done")
     }
 }

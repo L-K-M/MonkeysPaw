@@ -12,11 +12,15 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
     init(model: SetupModel) {
         presentation = SetupViewState(model: model)
         super.init()
+        // The Done control performs the same close as the title-bar button so
+        // windowWillClose drives the existing onClose callback.
+        presentation.requestClose = { [weak self] in self?.window?.performClose(nil) }
     }
 
     func tearDown() {
         // Closing for teardown must not advance the first-run flow.
         onClose = nil
+        presentation.requestClose = nil
         window?.delegate = nil
         window?.close()
         window = nil

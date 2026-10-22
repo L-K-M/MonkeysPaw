@@ -129,45 +129,92 @@ struct SyncStatusView: View {
 
     private var prefix: String { presentation.surface == .picker ? "picker-sync" : "library-sync" }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(presentation.summary).lineLimit(1).truncationMode(.tail)
-                    .help(presentation.summary)
-                    .accessibilityIdentifier(prefix + "-summary")
-                Spacer()
-                actions
-            }
-            Text(presentation.lastSuccess).foregroundStyle(.secondary)
-                .accessibilityIdentifier(prefix + "-last-success")
+    @ViewBuilder var body: some View {
+        if presentation.surface == .library { libraryBody }
+        // With sync off the picker has nothing to report, so its footer stays quiet.
+        else if presentation.state?.footer != .disabled { compactPicker }
+    }
+
+    /// The picker footer shows one summary line; its menu holds the details and actions.
+    private var compactPicker: some View {
+        Menu {
+            Text(presentation.lastSuccess).accessibilityIdentifier(prefix + "-last-success")
             if let message = presentation.state?.errorMessage {
-                Text(message).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier(prefix + "-message")
+                Text(message).accessibilityIdentifier(prefix + "-message")
             }
-            if presentation.surface == .library, presentation.state?.showsErrorDetails == true {
+            if presentation.primaryAction != .none {
+                Button(SyncStatusStrings.action(presentation.primaryAction), action: presentation.performPrimaryAction)
+                    .accessibilityIdentifier(prefix + "-action")
+            }
+        } label: {
+            Text(presentation.summary).lineLimit(1).truncationMode(.tail)
+                .accessibilityIdentifier(prefix + "-summary")
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .controlSize(.small)
+        .font(.caption).foregroundStyle(.secondary)
+        .help(([presentation.summary, presentation.lastSuccess] + [presentation.state?.errorMessage].compactMap { $0 })
+            .joined(separator: "\n"))
+    }
+
+    /// Library footers get one summary/action line; the last-success and
+    /// error text stay reachable in the tooltip and the details expansion.
+    private var libraryBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(presentation.summary).lineLimit(1).truncationMode(.tail)
+                    .help(libraryHelp)
+                    .accessibilityIdentifier(prefix + "-summary")
+                Spacer(minLength: 4)
+                libraryActions
+            }
+            if presentation.state?.showsErrorDetails == true {
                 errorDetails
             }
         }
         .font(.caption)
     }
 
-    private var actions: some View {
-        HStack(spacing: 8) {
+    private var libraryActions: some View {
+        HStack(spacing: 6) {
             if presentation.primaryAction != .none {
                 Button(SyncStatusStrings.action(presentation.primaryAction), action: presentation.performPrimaryAction)
                     .accessibilityIdentifier(prefix + "-action")
             }
-            ForEach(Array(presentation.additionalActions.enumerated()), id: \.offset) { item in
-                Button(SyncStatusStrings.action(item.element)) { presentation.perform(item.element) }
-                    .accessibilityIdentifier(prefix + "-" + actionID(item.element))
+            if !presentation.additionalActions.isEmpty {
+                Menu {
+                    ForEach(Array(presentation.additionalActions.enumerated()), id: \.offset) { item in
+                        Button(SyncStatusStrings.action(item.element)) { presentation.perform(item.element) }
+                            .accessibilityIdentifier(prefix + "-" + actionID(item.element))
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel(SyncStatusStrings.moreActions)
+                .accessibilityIdentifier(prefix + "-more-actions")
             }
         }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .lineLimit(1)
+    }
+
+    private var libraryHelp: String {
+        var parts = [presentation.summary, presentation.lastSuccess]
+        if let message = presentation.state?.errorMessage { parts.append(message) }
+        return parts.joined(separator: "\n")
     }
 
     private var errorDetails: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button(SyncStatusStrings.hideErrors, action: presentation.dismissErrors)
                 .accessibilityIdentifier(prefix + "-hide-errors")
+            if let message = presentation.state?.errorMessage {
+                Text(message).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(prefix + "-message")
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     if presentation.state?.fileErrors.isEmpty != false {

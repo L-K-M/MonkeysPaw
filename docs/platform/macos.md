@@ -139,8 +139,10 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 | Safari | NOT RUN | NOT RUN | |
 | Terminal | NOT RUN | NOT RUN | |
 
-- [ ] NOT RUN: the remembered target's app name appears in the footer.
-- [ ] NOT RUN: search, favourites, folder/tags, arrow selection and preview work.
+- [ ] NOT RUN: the rounded translucent panel keeps its shadow and appears over the current Space; the large borderless native search field accepts typing immediately.
+- [ ] NOT RUN: the remembered target's app name and compact sync status appear at the leading edge of the footer; sync details and actions open from its menu.
+- [ ] NOT RUN: result symbols, favourite stars, folder/tags/group, arrow selection and the preview on its secondary background work.
+- [ ] NOT RUN: footer Paste ↩, Copy ⌥↩, Edit ⌘↩ and Library ⌘L perform the same actions as their keys; More actions offers Forget values, Setup… and Settings….
 - [ ] NOT RUN: selecting a result or tabbing into the list, then typing, continues search.
 - [ ] NOT RUN: repeated summon cycles focus search and accept typing immediately.
 - [ ] NOT RUN: the key panel toggles off; a visible non-key panel raises on toggle.
@@ -151,9 +153,9 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 - [ ] NOT RUN: picker Option+Return carries copy-only into fill's Return/Deliver action.
 - [ ] NOT RUN: required/invalid choice values block delivery with an actionable message.
 - [ ] NOT RUN: Escape from fill keeps the draft and returns to picker; another Escape closes.
-- [ ] NOT RUN: Cmd+W/Cancel/toggle-off close fill and keep its draft for reopening.
+- [ ] NOT RUN: fill footer Deliver ↩ is the default action, Copy ⌥↩ copies, and Back ⎋ retains the draft; Cmd+W/toggle-off close fill and keep its draft for reopening.
 - [ ] NOT RUN: clicking another app hides after about 300 ms, keeps its focus and retains the draft.
-- [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in Library's Edit tab; Cmd+L opens Library.
+- [ ] NOT RUN: Cmd+Return in picker opens the selected prompt in Library's Edit mode; Cmd+L opens Library.
 - [ ] NOT RUN: a no-match title creates a safe free filename while retaining the exact title; the new file opens for editing.
 - [ ] NOT RUN: the disabled assistant action displays its Settings hint.
 - [ ] NOT RUN: an external editor save reaches the picker within one second; record elapsed time.
@@ -227,11 +229,14 @@ previous shortcut and reports Failed, so record a working shortcut again.
 | Show in Finder reveals the active folder after choosing it and after Use Default | NOT RUN | |
 | Open Setup from Shortcuts; the existing Setup window and live registration are reused | NOT RUN | |
 | Record a modified physical key under a non-US layout; Escape cancels capture without closing Settings | NOT RUN | |
-| Rebind Toggle picker, press Press your shortcut now and release the shortcut; verification changes only after it fires | NOT RUN | |
+| Rebind Show Picker, press Test Shortcut and release the shortcut; verification changes only after it fires | NOT RUN | |
 | Try a conflicting shortcut; Failed and the backend detail appear; record a working key to recover | NOT RUN | |
 | Close Settings while Setup is key; activation policy returns to accessory and Setup remains usable | NOT RUN | |
 | Open Settings with the picker armed, then close; no old paste target is reactivated and a fresh summon still works | NOT RUN | |
-| VoiceOver identifies both tabs, folder path, recorder and actions; keyboard focus stays visible | NOT RUN | |
+| Settings toolbar tabs appear in order General, Shortcuts, Delivery, Assistant, Account with their symbols; VoiceOver reads their labels, grouped rows, footers and actions, and keyboard focus stays visible | NOT RUN | |
+| Settings cannot resize or enter full screen; selection changes the title and pane height while keeping the top-left fixed, tall forms scroll, Reduce Motion disables resizing animation, and reopening remembers the pane and window position for the session | NOT RUN | |
+| The status menu lists Show Picker, Repeat Last Prompt, Library, Settings…, Setup…, About and Quit with separators; confirmed global shortcuts update on opening and do not dispatch twice, while unbound actions show none | NOT RUN | |
+| About shows the bundle version and linked project credits; Setup, onboarding and Repeat share the icon/title/status layout, and Setup Done follows the title-bar close path | NOT RUN | |
 
 ## M2 Forget values controls: NOT RUN
 
@@ -246,8 +251,8 @@ fields. Forgetting must leave the clipboard and usage history unchanged.
 
 | Check | Result | Details |
 |---|---|---|
-| Picker action row: Forget values clears only the selected prompt's remembered fields and draft; another prompt keeps both | NOT RUN | |
-| Fill action row: Forget values keeps the form open and resets all native fields and preview to defaults without delivery | NOT RUN | |
+| Picker footer More actions → Forget values clears only the selected prompt's remembered fields and draft; another prompt keeps both | NOT RUN | |
+| Fill footer More actions → Forget values keeps the form open and resets all native fields and preview to defaults without delivery | NOT RUN | |
 | Search with no selection hides Forget values; delivery disables it and an attempted forget reports the wait message | NOT RUN | |
 | A corrupt or unreadable values.json gives a path-free failure for Forget values and retains the fields and draft; retry after repair succeeds | NOT RUN | |
 | Settings → General: Forget all values… opens a native confirmation sheet; Cancel and Escape keep values and drafts | NOT RUN | |
@@ -290,7 +295,7 @@ fresh-install checks do not overwrite your normal settings or prompts.
 | Close recovery while it is pending and reopen the app; the folder step returns without clearing the saved completion flag | NOT RUN | |
 | Close onboarding while a chooser is pending, then reopen on next launch; no late callback switches the library or completes a newer request | NOT RUN | |
 | With future-version or corrupt settings, onboarding stays closed and Settings shows its read-only error | NOT RUN | |
-| The status menu says Open Library and opens the browser window; Show in Finder inside Library reveals the current folder; runtime root loss changes the menu row to disabled Library unavailable without a notification or reopened onboarding | NOT RUN | |
+| The status menu says Open Library and opens the browser window; Show in Finder inside Library reveals the open prompt file; runtime root loss changes the menu row to disabled Library unavailable without a notification or reopened onboarding | NOT RUN | |
 | After runtime loss, choose a healthy folder in Settings; Open Library is enabled again and the browser follows the replacement folder; restoring the old folder alone still requires restart | NOT RUN | |
 | Keyboard and VoiceOver identify the folder paths, chooser/default actions, seed actions, summary/failure and Done; Settings remains reachable and picker dismissal never restores an old target | NOT RUN | |
 
@@ -305,10 +310,10 @@ fresh-install checks do not overwrite your normal settings or prompts.
    a required empty field. Summon the panel over an editable target.
 2. Navigate search, results and preview with the keyboard and VoiceOver.
    Open fill, visit all field kinds, change a choice and read the live
-   preview and validation. Inspect Deliver, Copy, Cancel and Forget values,
-   including disabled states. Escape returns without delivery.
+   preview and validation. Inspect Deliver, Copy, Back and More actions →
+   Forget values, including disabled states. Escape returns without delivery.
 3. Open Settings from the status-menu Settings… item and inspect
-   General/Shortcuts tabs, the folder path,
+   the five toolbar panes, grouped rows and footers, the folder path,
    shortcut recorder/status and actions. Open Forget all confirmation, read
    its destructive action and Cancel, then cancel without clearing values.
 4. In the isolated account/directories described above, follow onboarding
@@ -381,11 +386,11 @@ while the form stays open; switching focus would hide it and require reopening.
 
 The Linux implementation host cannot compile or run AppKit. Record the exact
 commit and `MacLibraryWindowTests` hosted results from `macos-app` CI before
-these owner checks. CI exercises presentation state, explicit key routing,
-window reuse and composition; real keyboard traversal, VoiceOver, clipboard
-privacy, activation and Spaces behavior still require a Mac. M1 supplied
-the read-only preview; M2 adds the editor tabs below. Return on a browser row
-does not launch another editor.
+these owner checks. CI exercises presentation state, responder actions,
+native split/table structure, window reuse and composition; real keyboard
+traversal, VoiceOver, clipboard privacy, activation and Spaces behavior still
+require a Mac. Edit/Preview share the editor; Fields, History and Assistant
+share the inspector (§24.3). Return on a browser row focuses its editor.
 
 - Commit / `macos-app` CI run and hosted-test result:
 - macOS / hardware / signing identity / keyboard navigation setting:
@@ -403,21 +408,25 @@ clipboard contents; leave read-count checks NOT RUN if tracing is unavailable.
 |---|---|---|
 | Picker Library control and ⌘L, status Open Library and the main-menu ⌘L item open the same reusable window; closing and reopening preserves the window | NOT RUN | |
 | Opening Library with an armed picker, pending blur or queued summon hides the picker and closing Library never restores an old paste target | NOT RUN | |
-| All, Favourites, Recent, nested folder rows and tag rows show correct counts; counts stay unchanged by the text filter | NOT RUN | |
-| Rows show title, exact relative path, favourite star, read-only/invalid badges and a last-use date in Recent; new deliveries and copies refresh Recent | NOT RUN | |
+| Library, Groups, collapsible Folders and Tags sections use symbols and count badges; All Prompts, Favourites and Recent counts remain correct; counts stay unchanged by the text filter | NOT RUN | |
+| The native prompt table shows a title, description or folder/tags, favourite/read-only/invalid symbols and a last-use date in Recent; new deliveries and copies refresh Recent | NOT RUN | |
 | Filtering or changing section keeps a selected prompt's preview when its row disappears; selecting another row updates the preview | NOT RUN | |
 | Preview uses field defaults or {field} names, actual date/time, escaped openers and a literal {clipboard}; opening, filtering and selection make zero clipboard reads | NOT RUN | |
 | Invalid, future-format, non-UTF-8 and oversized rows show their issues, never rendered bodies, and disable the favourite button | NOT RUN | |
-| Favourite button and ⌘⇧F save the selected prompt and update picker/sidebar state; an external edit before toggling shows a conflict without overwriting it | NOT RUN | |
-| Show in Finder reveals the active folder; after a Settings folder switch the same Library window shows only the new graph and reveals its folder | NOT RUN | |
-| Runtime folder loss disables Open Library in both menus and disables favourite/reveal actions in an already-open window; switching to a healthy folder restores them | NOT RUN | |
-| Settings and Library can stay open together; the Dock icon appears while either is open and disappears only after both close, including close/reopen and minimization | NOT RUN | |
-| Arrow keys navigate sidebar and prompt rows; Tab/Shift+Tab reach filter, actions, sidebar, list and preview with visible focus; Return on a prompt opens nothing | NOT RUN | |
-| Escape from each pane clears the filter first, then closes; a real IME consumes Return/Escape during marked-text composition without Library actions | NOT RUN | |
+| Favourite toolbar item and ⌘D save the selected prompt and update picker/sidebar state; an external edit before toggling shows a conflict without overwriting it | NOT RUN | |
+| Show in Finder reveals the open prompt file; after a Settings folder switch the same Library window shows only the new graph and reveals files inside its new root | NOT RUN | |
+| Runtime folder loss disables Window → Library and status Open Library and disables favourite/reveal actions in an already-open window; switching to a healthy folder restores them | NOT RUN | |
+| Settings and Library can stay open together; the Dock icon remains while either is open or minimized and disappears after both close | NOT RUN | |
+| Arrow keys navigate sidebar and prompt rows; Tab/Shift+Tab reach filter, actions, sidebar, list and preview with visible focus; Return or double-click focuses its source editor; mouse selection opens on release, while a drag does not open its row before the drop | NOT RUN | |
+| Escape clears/ends focused Search or dismisses a sheet and never closes Library; a real IME consumes Return/Escape during marked text, with Library commands disabled | NOT RUN | |
 | VoiceOver identifies sidebar sections/counts, prompt rows/badges/last use, filter, preview, favourite/reveal actions and failure messages | NOT RUN | |
 | Repeated picker-to-Library openings work from a full-screen Space; window resize and Reduce Motion retain usable controls and visible focus | NOT RUN | |
+| The unified customizable toolbar and four native split items retain frame, dividers and toolbar configuration; showing Fields, History, Assistant or a conflict never widens the window | NOT RUN | |
+| Opening a prompt shows its display title, relative-path subtitle, edited dot and Finder proxy icon; without a prompt the title names the selected section and subtitle pluralizes the visible prompt count | NOT RUN | |
+| Edit/Preview use ⌘1/⌘2; Fields, History and Assistant share the inspector. Showing History loads revisions, and the native inspector toggle and pane selection stay synchronized | NOT RUN | |
+| Find… focuses source and opens its native find bar for an open prompt, otherwise Search; Search Library (⌥⌘F) expands and focuses toolbar Search. YAML/placeholder temporary colouring preserves undo, selection, marked text and Assistant quote highlighting | NOT RUN | |
 
-## M3 M2 Library editor tabs: NOT RUN
+## M3 M2 Library editor and inspector: NOT RUN
 
 The Linux implementation host can parse Swift syntax and check the Xcode
 project, but cannot compile AppKit/SwiftUI or run hosted macOS tests. Run
@@ -454,24 +463,25 @@ not record prompt text, field values or clipboard contents in this checklist.
 | Check | Result | Details |
 |---|---|---|
 | Selection opens Edit with exact raw source, monospace text, native undo/redo, cut/copy/paste/select-all and multiline scrolling; a save that adds an id header preserves the body caret and both normalization and prior typing remain undoable; undo/redo immediately update Preview and the unsaved indicator, and redo back to saved text clears it | NOT RUN | |
-| Edit, Preview and Fields tabs remain usable on resize; diagnostics below Edit update during typing and identify severity/location; Fields shows parsed declarations and implicit fields read-only | NOT RUN | |
-| Preview uses defaults or field names, real date/time and a literal {clipboard}; opening, typing and all tab changes make zero clipboard reads or writes | NOT RUN | |
+| Edit/Preview modes and the Fields inspector remain usable on resize; the validation summary opens an issue list with severity/location; Fields shows compact read-only cards for declarations and implicit fields | NOT RUN | |
+| Preview uses defaults or field names, real date/time and a literal {clipboard}; opening, typing and editor mode and inspector pane changes make zero clipboard reads or writes | NOT RUN | |
 | Source stays non-editable while its initial load is pending; non-UTF-8, oversized and future-format prompts show distinct read-only reasons and disable source edits, Save and Save as Copy | NOT RUN | |
-| Save button and ⌘S write the file, update picker/favourites, clear dirty state and show Saving/Saved or typed failure; typing during a save retains the newer draft | NOT RUN | |
+| File → Save and ⌘S write the file, update picker/favourites, clear dirty state and show Saving/Saved or typed failure; typing during a save retains the newer draft | NOT RUN | |
 | Favourite on the open dirty prompt updates its source without writing; a clean favourite saves through the editor and causes no false conflict | NOT RUN | |
-| Revert asks Save/Discard/Cancel while dirty and reloads the current disk source after approval; Save as Copy creates a distinct identity/path and selects the copy when the watcher publishes it | NOT RUN | |
+| Revert asks Revert/Cancel while dirty and reloads the current disk source after approval; File → Duplicate (⇧⌘S) creates a distinct identity/path and selects the copy when the watcher publishes it | NOT RUN | |
 | An external write while dirty opens a native sheet; independently exercise Keep Mine, Take Theirs and Save Mine as Copy, confirming original/copy bytes and retained newer edits; Cancel keeps the draft and conflict available, including after an invalid save, so Edit can repair it before Save reopens the choices without writing; Save as Copy and Revert stay disabled until the conflict is resolved | NOT RUN | |
 | An external deletion while dirty leaves its draft visible and offers Keep Mine (recreate), Save Mine as Copy and Discard; exercise all choices; a copy gets a fresh identity and an alternate filename | NOT RUN | |
 | After cancelling a deletion conflict, externally recreate then delete the file again; the new deletion reopens the conflict sheet, while ordinary typing after Cancel does not | NOT RUN | |
-| Selection change, red close button, ⌘W and Escape after clearing the filter ask Save/Discard/Cancel; Cancel keeps the current row/draft and Save completes before navigation/close | NOT RUN | |
+| Selection change, red close button and ⌘W ask Save/Cancel/Don't Save using the prompt title; Cancel keeps the current row/draft and Save completes before navigation/close | NOT RUN | |
 | Return activates Save in an unsaved-edit decision; Return never activates Keep Mine in a conflict sheet; Escape and a programmatic non-button sheet dismissal retain the draft and cancel the pending action | NOT RUN | |
 | With Settings, onboarding or the picker panel focused, ⌘S and ⌘W leave the Library draft and window alone | NOT RUN | |
 | A close requested during Save waits for completion; failed saves preserve the decision and draft with retryable typed feedback | NOT RUN | |
 | Settings Choose Folder/Use Default refuse a dirty draft or a pending save with the editor-specific message and keep the existing library; saving/discarding clears that message in an already-open Settings window; a later switch retires old worker replies, native input and sheet callbacks | NOT RUN | |
-| Menu Quit and ⌘Q defer termination while dirty/saving; Cancel stays resident, Discard quits without writing and Save quits only after a successful save; failed saves keep Library open | NOT RUN | |
-| Picker Edit/⌘Return and no-match create open the selected/new prompt in Library's Edit tab, including with a prior hidden row/filter; Show in Finder still reveals the current library folder | NOT RUN | |
+| Menu Quit and ⌘Q defer termination while dirty/saving; Cancel stays resident, Don't Save quits without writing and Save quits only after a successful save; failed saves keep Library open | NOT RUN | |
+| Picker Edit/⌘Return and no-match create open the selected/new prompt in Library's Edit mode, including with a prior hidden row/filter; Show in Finder reveals the prompt file | NOT RUN | |
+| Library New Prompt (toolbar item, File ▸ New Prompt… and ⌘N) shares enablement; the selected default title and destination message precede Save/Don't Save/Cancel; both cancellations write nothing; folder/editable-group placement, viewer/root fallback, collision names, Edit selection, filter reveal, editor focus and the Library failure message work; dialogs, busy work and IME composition disable ⌘N | NOT RUN | |
 | With a real Japanese/Chinese IME, Return/Escape during marked text go to the input method; typing/state refresh preserves composition, and document/library replacement never commits the old composition into the new draft | NOT RUN | |
-| VoiceOver identifies source, editor tabs, field headings, save/revert/copy controls, validation/status messages and all sheet choices; Tab/Shift+Tab show visible focus | NOT RUN | |
+| VoiceOver identifies source, Edit/Preview modes, inspector panes, field headings, Save/Revert/Duplicate menu commands, validation/status messages and all sheet choices; Tab/Shift+Tab show visible focus | NOT RUN | |
 | A conflict or decision published while Library is minimized or the app hidden appears on restore/unhide; minimized Library is restored for a quit decision; full-screen Spaces, repeated openings and simultaneous Settings/Library windows preserve activation and Dock policy | NOT RUN | |
 
 ## M3 macOS History and file commands: NOT RUN
@@ -494,18 +504,18 @@ Record outcomes without recording prompt content.
 
 | Check | Result | Details |
 |---|---|---|
-| History opens as the fourth tab and refreshes when opened or when selecting another prompt; revisions appear newest first with local timestamp, locale-formatted file size and Valid/Forensic only status | NOT RUN | |
+| History opens in the inspector and refreshes when shown, reopened or when selecting another prompt; revisions appear newest first with local timestamp, locale-formatted file size and Valid/Forensic only status | NOT RUN | |
 | Select History while a Rename or Move is running, including an occupied/invalid destination; history loads after the command settles, an empty history stays settled, and the typed command outcome remains visible | NOT RUN | |
 | Keep History open during a plain file's first save and a same-path external identity assignment; revisions follow the assigned identity, first save preserves source undo/caret, and rename/move refresh history at the new path | NOT RUN | |
 | Selecting a revision shows its exact source in a selectable, read-only monospace preview without changing the draft; non-UTF-8 and oversized revisions show distinct preview reasons | NOT RUN | |
 | Restore updates the editor and reloads history, preserves the prompt identity and revision body, and shows Restored or a committed history-maintenance warning | NOT RUN | |
 | Restore of malformed, non-UTF-8, oversized or future-format revisions displays the typed refusal and leaves current file bytes unchanged | NOT RUN | |
-| Restore while dirty asks Save/Discard/Cancel; Cancel keeps draft, selection and history; a stale restore opens the same conflict sheet as Save and never silently overwrites external changes | NOT RUN | |
-| The menu bar shows File between the application and Edit menus; the editor header and File menu offer Rename…, Move… and Delete… for the open prompt; File → Save uses ⌘S, and native text editing keeps its existing Cut/Copy/Paste equivalents | NOT RUN | |
-| Rename starts with the current .md filename and changes only the filename; Move offers known folders and accepts a new nested relative folder or empty text for root; selection follows assigned and unassigned prompts | NOT RUN | |
+| Restore while dirty asks Revert/Cancel; Cancel keeps draft, selection and history; a stale restore opens the same conflict sheet as Save and never silently overwrites external changes | NOT RUN | |
+| The menu bar shows File between the application and Edit menus; File and prompt-table context menus offer Rename…, Move To… and Delete… for the open prompt; File → Save uses ⌘S, and native text editing keeps its existing Cut/Copy/Paste equivalents | NOT RUN | |
+| Rename starts with the current .md filename, selects its basename and disables Rename for an empty or unchanged name; Move offers known folders and accepts a new nested relative folder or empty text for root; selection follows assigned and unassigned prompts | NOT RUN | |
 | An occupied destination or invalid name/folder produces typed status copy, preserves the source and never replaces the destination | NOT RUN | |
-| Delete confirmation names the exact relative file path; Cancel/Escape/non-button dismissal preserves it, and an explicit Delete closes the editor, clears the selection and keeps history | NOT RUN | |
-| Rename, Move and Delete each use Save/Discard/Cancel for dirty edits; Save finishes before the command, Discard drops only the draft, and Cancel keeps everything | NOT RUN | |
+| Delete confirmation names the filename and says that history is kept; Cancel/Escape/non-button dismissal preserves it, and an explicit Delete closes the editor, clears the selection and keeps history | NOT RUN | |
+| Rename, Move and Delete each use Save/Cancel/Don't Save for dirty edits; Save finishes before the command, Don't Save drops only the draft, and Cancel keeps everything | NOT RUN | |
 | Stale Rename/Move/Delete open conflict choices; a missing file keeps the loaded draft with a deletion conflict and a typed missing-file message | NOT RUN | |
 | After cancelling a command, an external edit and dismissal of its conflict shows conflict guidance instead of the old Cancelled status; cancelling a guard Save conflict also keeps that guidance and draft | NOT RUN | |
 | Commands and Restore disable while loading, saving, updating a file, awaiting a guard/conflict, without a prompt, for read-only prompts or after library loss; File menu commands affect only the focused Library window | NOT RUN | |
@@ -612,12 +622,12 @@ destination bytes for comparison, without recording prompt content here.
 
 | Check | Result | Details |
 |---|---|---|
-| Library Import… and app-menu Import… (⌘⇧I) open a sheet accepting multiple `.md`, `.prompt`, `.prompty` files and folders together; Cancel leaves the library untouched and the next chooser works | NOT RUN | |
-| Finder drops onto the prompt list work with one file, multiple files, folders and a mixed selection, including spaces and non-ASCII names; folder-relative structure is preserved | NOT RUN | |
-| Destination defaults to Imported/; selecting an existing nested folder writes there, and the destination and both Import actions stay disabled throughout enumeration and every selection in the batch | NOT RUN | |
+| Toolbar Import… and File → Import… (⇧⌘I) open a sheet accepting multiple `.md`, `.prompt`, `.prompty` files and folders together; Cancel leaves the library untouched and the next chooser works | NOT RUN | |
+| Finder drops onto the prompt list show a highlight and work with one file, multiple files, folders and a mixed selection, including spaces and non-ASCII names; cancelling a drag clears the highlight and folder-relative structure is preserved | NOT RUN | |
+| Destination defaults to Imported/; the native chooser offers the destination before the first import and selecting an existing nested folder writes there, and the destination and both Import actions stay disabled throughout enumeration and every selection in the batch | NOT RUN | |
 | Progress shows enumeration and processed-file counts; completion lists every created library path, each typed skip, mapped fields, preserved metadata keys, header-formatting loss and warnings; partial success remains available | NOT RUN | |
 | Existing destination bytes and all sources stay unchanged; occupied names use alternates and duplicate ids receive fresh identities; symlinked sources and nested symlinks never import their targets | NOT RUN | |
-| Imported rows appear through the watcher; opening a report path reveals it even with a filter or another sidebar section, and an unsaved editor draft still requires Save/Discard/Cancel | NOT RUN | |
+| Imported rows appear through the watcher; opening a report path reveals it even with a filter or another sidebar section, and an unsaved editor draft still requires Save/Cancel/Don't Save | NOT RUN | |
 | Dismiss report clears its contents; closing during a mixed batch lets it finish and reopening shows every completed result; switching libraries during and after imports retires old work and resets destination/report while the new graph can import | NOT RUN | |
 | Runtime library loss retires queued imports and disables Import/report opening while preserving completed reports; native chooser dismissal, minimized windows and simultaneous editor sheets never leave Import stuck or revive a closed chooser | NOT RUN | |
 | A source deleted during enumeration is a typed skip while readable prompts still import; inaccessible subdirectories appear as container skips; exceeding the path or enumeration budget fails the folder before writes | NOT RUN | |
@@ -689,16 +699,16 @@ templates or field values. No request starts when you merely open the panel.
 
 | Check | Anthropic | Local Ollama | Notes |
 |---|---|---|---|
-| Library toolbar and File → Assistant open the embedded panel; Cmd+Shift+A works from the editor and leaves Settings text editing alone. The window expands to fit, and Tab/Shift+Tab and VoiceOver reach every control | NOT RUN | NOT RUN | |
+| Library toolbar and View → Assistant open the inspector Assistant pane; Cmd+Shift+A works from the editor and leaves Settings text editing alone. The window keeps its frame and minimum size, and Tab/Shift+Tab and VoiceOver reach every control | NOT RUN | NOT RUN | |
 | Write: enter a brief, explicitly Write, inspect title/body/fields, notes and issues, then the final front-matter/body diff. No file appears until Accept; the saved file matches the candidate, has a fresh identity and excludes draft notes | NOT RUN | NOT RUN | |
 | Review: send the current unsaved validated template, inspect severity/criterion/problem/suggestion, select findings, and Show quote in editor. An exact Unicode quote selects the right text without changing the file or undo history; unmatched quotes show an explanation and never highlight other text | NOT RUN | NOT RUN | |
 | Improve: apply selected findings, an instruction, and then an instruction without reviewing first. Inspect both sides of the merged diff, preserved personal/unknown metadata, placeholder add/remove/rename warnings and newline markers. Accept creates an ordinary revision; Reject leaves the editor and file unchanged | NOT RUN | NOT RUN | |
 | Invalid draft stays unaccepted with validation issues. Retry with feedback sends only on that explicit action, retains prior turns, and uses the current template. Authentication, missing-model, timeout and invalid-output failures show fixed actionable messages without provider error bodies | NOT RUN | NOT RUN | |
-| Before calling, the footer shows host and model. While working, elapsed seconds tick; after completion, usage appears when supplied. Cancel, Close Assistant, Escape, editor navigation and Library close stop the timer and request. Late replies do not revive the panel, and reopening gives a fresh session | NOT RUN | NOT RUN | |
+| Before calling, the footer shows host and model. While working, elapsed seconds tick; after completion, usage appears when supplied. Cancel, hiding the inspector, editor navigation and Library close stop the timer and request. Escape leaves the inspector and window open. Late replies do not revive the panel, and reopening gives a fresh session | NOT RUN | NOT RUN | |
 | No profile disables requests with Settings guidance. Private/read-only/invalid templates disable Review and Improve; Write remains independent of the open source. Busy editor operations, discard decisions and disk conflicts disable new calls with an explanation | NOT RUN | NOT RUN | |
 | Change the buffer, including changing away and back, after preview or during a call. Acceptance stays disabled until an explicit fresh Show diff; no late reply applies old bytes. Change the file on disk and exercise the existing conflict choices while retaining your draft | NOT RUN | NOT RUN | |
-| Write Accept with dirty editor invokes Save / Discard / Cancel. Save/Discard changes the snapshot and requires a fresh diff; Cancel preserves edits and creates no file. Cancel a pending acceptance without dismissing an earlier editor decision | NOT RUN | NOT RUN | |
-| Save a changed model/profile or replacement key in Settings, including a credential-only save. The old preview is revoked and the Library footer follows the shared saved profile. Switch libraries during a request; the retired graph cannot publish into the new editor | NOT RUN | NOT RUN | |
+| Write Accept with dirty editor invokes Save / Cancel / Don't Save. Save/Don't Save changes the snapshot and requires a fresh diff; Cancel preserves edits and creates no file. Cancel a pending acceptance without dismissing an earlier editor decision | NOT RUN | NOT RUN | |
+| Save a changed model/profile or replacement key in Settings, including a credential-only save. The old preview is revoked and the Assistant status follows the shared saved profile. Switch libraries during a request; the retired graph cannot publish into the new editor | NOT RUN | NOT RUN | |
 | Observe saved, changed-buffer/disk conflict and failed acceptance messages. With disposable app-data permissions or a provenance-write failure fixture, a committed provenance/history warning explicitly says the file was saved and must not be saved again; the message remains visible after closing Assistant | NOT RUN | NOT RUN | |
 | Confirm requests contain template source rather than rendered preview or remembered/fill/clipboard values. Inspect diagnostics using test sentinels: no keys, prompt content, feedback, field values, transcript or provider error bodies are logged | NOT RUN | NOT RUN | |
 
@@ -726,7 +736,7 @@ only in a versioned runtime outside XCTest.
 
 | Check | Result | Details |
 |---|---|---|
-| Settings opens from the menu and Cmd+,; General, Shortcuts, Delivery and Assistant remain usable after repeated close/reopen, folder changes and Library window activation | NOT RUN | |
+| Settings opens from the menu and Cmd+,; General, Shortcuts, Delivery, Assistant and Account remain usable after repeated close/reopen, pane-height changes, folder changes and Library window activation | NOT RUN | |
 | Delivery shows fixed Cmd+V, current Accessibility and AppleScript fallback facts, cached failures and readback results. Test paste runs once; Open Setup reuses the existing window. Deny/revoke/grant Accessibility and Automation in a disposable session and check refresh without duplicate prompts or hotkey registration | NOT RUN | |
 | Restore starts off, persists when enabled, and states previous text only, 750 ms timing and the simultaneous-copy limitation. Try slow browser/chat/terminal paste: record actual readback and whether 750 ms is sufficient. Newer copies, including identical text, Copy, failed paste, Test paste, disabling restore and shutdown preserve the expected clipboard | NOT RUN | |
 | General displays the full installed beta version and numeric marketing version remains valid in both signed dmg/zip copies. Automatic off survives restart and prevents traffic; enabled checks remain at most daily across restart/offline failure. Inspect metadata only, never prompt/field/account content | NOT RUN | |
@@ -780,3 +790,29 @@ in this checklist, screenshots or logs.
 | Paste a link or enter a bare token with an explicit server; verify the HTTP warning, current-account join and new-account registration, wrong-server/account refusal, one-use failure and visible partial cleanup | NOT RUN | |
 | Close, minimize, hide the app or leave Account; secure inputs and staged links clear, late replies stay hidden, and reopening requires a fresh invite | NOT RUN | |
 | Onboarding's Join with an invite opens the same Account window; VoiceOver and Tab/Shift+Tab reach destination, secure inputs and both explicit accept actions | NOT RUN | |
+
+## Sync sign-in crash: 2026-10-21
+
+Owner reproduced on macOS 26.7.1, Apple Silicon, with a universal Release
+app built by Xcode 27. Launching the installed executable from Terminal and
+signing into the sync server produced:
+
+```text
+MonkeysPawCore/SecretTypes.swift:34: Fatal error: 'try!' expression unexpectedly raised an error: MonkeysPawCore.SecretStoreError.invalidAccount
+```
+
+The owner's standalone `swift -O` probe accepted `device` and a generated
+UUID with both bound-method and explicit-closure CharacterSet checks.
+That probe does not reproduce the compiled app's failure.
+
+The fix removes forced validation from the typed UUID factories. Why the
+original validator rejected the UUID in the installed app remains unconfirmed;
+passing automated tests alone does not establish owner acceptance.
+
+- [x] Before the fix (`5b1eee0f`), the Core Release tests passed on Linux
+      Swift 6.4 and Xcode 26 CI (run `39667130574`, job `119455091349`).
+      Neither reproduced the owner's Xcode 27 app failure.
+- [ ] Rebuild and install from the fixed main commit, retry Sign In, then
+      quit/reopen and confirm the saved connection resumes without a crash.
+- [ ] Confirm a failed sign-in remains an error in Account, without exposing
+      credentials in logs or this record.

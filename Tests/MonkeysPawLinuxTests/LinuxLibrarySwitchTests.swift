@@ -462,6 +462,54 @@ final class LinuxLibrarySwitchTests: XCTestCase {
         XCTAssertEqual(environment.pickerModel.results.map(\.relativePath), ["New prompt.md"])
     }
 
+    func testLibraryNewPromptDropsQueuedGuardApprovalAfterLibrarySwitch() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let second = try library("B")
+        environment.showLibrary()
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let active = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(active) else { return false }
+            return String(cString: title) == LinuxStrings.library
+        })
+        let native = try XCTUnwrap(gtk_application_get_active_window(application))
+        let window = mp_window_widget(native)!
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.rows.count == 1 })
+        let row = try XCTUnwrap(environment.libraryBrowserModel.rows.first)
+        environment.editorModel.open(row.selection)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == "Original" })
+        environment.editorModel.edit("Draft")
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.libraryEditorDialog != nil })
+        let titleDialog = try XCTUnwrap(libraryEditorDialog)
+        let input = try settingsWidget("library-new-prompt-title", in: titleDialog)
+        mp_entry_set_text(input, "Stale approval")
+        XCTAssertNotEqual(gtk_widget_activate(try settingsWidget("library-dialog-response-0", in: titleDialog)), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision?.action == .create })
+        let retired = environment.editorModel
+        let decision = try XCTUnwrap(retired.state.pendingDecision)
+        // Discard publishes a clean state, but approval still awaits the UI hop.
+        retired.resolveDecision(.discard, id: decision.id)
+        XCTAssertEqual(environment.switchLibrary(to: second), .switched)
+        drainUI()
+        drainNativeEvents()
+        XCTAssertNil(try files.stamp(at: "Stale approval.md"))
+        XCTAssertNil(try RootedFileStore(root: second).stamp(at: "Stale approval.md"))
+        XCTAssertNil(libraryEditorDialog)
+        XCTAssertFalse(environment.editorModel === retired)
+    }
+
+    private var libraryEditorDialog: GTK.Widget? {
+        let windows = gtk_window_get_toplevels()!
+        for position in 0..<g_list_model_get_n_items(windows) {
+            guard let object = g_list_model_get_item(windows, position) else { continue }
+            let window = object.assumingMemoryBound(to: GtkWidget.self)
+            let matches = String(cString: gtk_widget_get_name(window)) == "library-editor-dialog"
+            g_object_unref(object)
+            if matches { return window }
+        }
+        return nil
+    }
+
     func testPersistedChoiceIsUsedOnNextLaunchAndDefaultKeepsProgress() throws {
         try files.write(Data("Alpha".utf8), at: "a.md")
         let second = try library("B", prompts: ["b.md": "Beta"])

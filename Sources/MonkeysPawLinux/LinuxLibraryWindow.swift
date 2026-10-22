@@ -6,6 +6,7 @@ import MonkeysPawCore
 /// GTK owns this reusable window. Model subscriptions and borrowed widget
 /// pointers are retired before a graph replacement or native destruction.
 final class LinuxLibraryWindow {
+    private enum OpenContext { case library, creation }
     struct ImportBinding {
         let state: LinuxLibraryImportState
         let chooser: LinuxImportChoosing
@@ -16,6 +17,7 @@ final class LinuxLibraryWindow {
     private let showSettings: () -> Void
     private let showAbout: (GTK.Widget) -> Void
     private let showFiles: ((RelativePath) -> Void)?
+    private var createPrompt: (String, RelativePath) -> LibraryPromptSelection?
     private weak var browser: LibraryBrowserModel?
     private weak var editor: EditorModel?
     private var assistantProvider: () -> AssistantModel? = { nil }
@@ -38,6 +40,8 @@ final class LinuxLibraryWindow {
     private var closeRequested = false
     private var available = true
     private var activeDialog: LinuxEditorDialogState?
+    private var newPromptRequest: LinuxNewPromptRequest?
+    private weak var imports: LinuxLibraryImportState?
     private var dialog: LinuxEditorDialog?
     private var dialogRevision: UInt64 = 0
     private var dismissedConflict: EditorConflict?
@@ -52,6 +56,7 @@ final class LinuxLibraryWindow {
     private var message: String?
 
     private let filter: GTK.Widget
+    private let newPrompt = gtk_button_new()!
     private let sidebar: GTK.Widget
     private let list: GTK.Widget
     private let preview: GTK.Widget
@@ -108,11 +113,13 @@ final class LinuxLibraryWindow {
          syncNavigation: @escaping (SyncStatusAction) -> Void = { _ in },
          showSettings: @escaping () -> Void = {}, showAbout: @escaping (GTK.Widget) -> Void = { _ in },
          showFiles: ((RelativePath) -> Void)? = nil,
+         createPrompt: @escaping (String, RelativePath) -> LibraryPromptSelection? = { _, _ in nil },
          openFolder: @escaping () -> Void) {
         self.openFolder = openFolder
         self.showSettings = showSettings
         self.showAbout = showAbout
         self.showFiles = showFiles
+        self.createPrompt = createPrompt
         window = gtk_application_window_new(application)!
         LinuxStyle.install(on: window)
         commands = LinuxLibraryCommands(parent: window)
@@ -141,6 +148,8 @@ final class LinuxLibraryWindow {
             guard let self, !self.isDestroyed else { return }
             if self.isVisible { self.syncStatusView.show(); self.render() }
             else {
+                self.newPromptRequest = nil
+                if case .newPrompt = self.activeDialog { self.endDialog() }
                 self.syncStatusView.suspend()
                 self.commands.cancelDialog(); self.assistantPanel.close(); self.conflictView.close()
             }
@@ -233,7 +242,7 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(content), status)
         gtk_window_set_child(mp_window(window), content)
         rebind(browser: browser, editor: editor, imports: imports?.state, assistant: assistant, conflict: conflict,
-               syncStatus: syncStatus, syncNavigation: syncNavigation)
+               syncStatus: syncStatus, syncNavigation: syncNavigation, createPrompt: createPrompt)
     }
 
     private func configureHeader() {
@@ -257,6 +266,9 @@ final class LinuxLibraryWindow {
         configureIcon(sidebarButton, icon: "sidebar-show-symbolic", label: LinuxLibraryStrings.sidebar,
                       name: "library-sidebar-toggle", action: .sidebar)
         gtk_header_bar_pack_start(mp_header_bar(header), sidebarButton)
+        configureIcon(newPrompt, icon: "document-new-symbolic", label: LinuxStrings.newPrompt,
+                      name: "library-new-prompt", action: .newPrompt)
+        gtk_header_bar_pack_start(mp_header_bar(header), newPrompt)
         let menu = gtk_menu_button_new()!
         gtk_widget_set_name(menu, "library-menu")
         gtk_menu_button_set_icon_name(mp_menu_button(menu), "open-menu-symbolic")
@@ -304,7 +316,7 @@ final class LinuxLibraryWindow {
     private func primaryMenu() -> OpaquePointer {
         let menu = g_menu_new()!
         let sections: [[(String, LinuxLibraryAction)]] = [
-            [(LinuxLibraryStrings.importFiles, .importFiles), (LinuxLibraryStrings.importFolder, .importFolder)],
+            [(LinuxStrings.newPrompt, .newPrompt), (LinuxLibraryStrings.importFiles, .importFiles), (LinuxLibraryStrings.importFolder, .importFolder)],
             [(LinuxEditorStrings.save, .save), (LinuxLibraryStrings.duplicate, .duplicate), (LinuxLibraryStrings.revert, .revert)],
             [(LinuxEditorStrings.rename, .rename), (LinuxEditorStrings.move, .move),
              (LinuxLibraryStrings.showFiles, .showFiles), (LinuxEditorStrings.delete, .delete)],
@@ -469,6 +481,7 @@ final class LinuxLibraryWindow {
         if [.edit, .favorite, .rename, .move, .duplicate, .showFiles, .delete].contains(command),
            let contextSelection, contextSelection != state.prompt { return false }
         switch command {
+        case .newPrompt: return canCreatePrompt
         case .save: return editorAvailable && state.canSave
         case .duplicate: return editorAvailable && state.canSaveAsCopy
         case .revert: return editorAvailable && state.prompt != nil && state.status != .loading
@@ -501,6 +514,7 @@ final class LinuxLibraryWindow {
     private func activate(_ command: LinuxLibraryAction) -> Bool {
         guard isEnabled(command) else { return false }
         switch command {
+        case .newPrompt: return requestNewPrompt()
         case .save: return savePrompt()
         case .duplicate: editor?.saveAsCopy()
         case .revert: editor?.revert()
@@ -543,13 +557,16 @@ final class LinuxLibraryWindow {
                 assistant: @escaping () -> AssistantModel? = { nil },
                 conflict: @escaping () -> ConflictModel? = { nil },
                 syncStatus: SyncStatusModel? = nil,
-                syncNavigation: @escaping (SyncStatusAction) -> Void = { _ in }) {
+                syncNavigation: @escaping (SyncStatusAction) -> Void = { _ in },
+                createPrompt: @escaping (String, RelativePath) -> LibraryPromptSelection? = { _, _ in nil }) {
         guard !isDestroyed else { return }
         precondition((importView == nil) == (imports == nil),
                      "Import-enabled windows require the current graph's import state")
         unbind()
         self.browser = browser
         self.editor = editor
+        self.imports = imports
+        self.createPrompt = createPrompt
         syncStatusView.bind(syncStatus, navigate: { [weak self] action in
             guard let self, self.isVisible else { return }
             if action == .conflicts { self.showSyncConflicts() }
@@ -649,6 +666,9 @@ final class LinuxLibraryWindow {
         conflictProvider = { nil }
         conflictModel = nil
         assistantProvider = { nil }
+        createPrompt = { _, _ in nil }
+        newPromptRequest = nil
+        imports = nil
         endDialog()
         commands.unbind()
         importView?.unbind()
@@ -692,11 +712,63 @@ final class LinuxLibraryWindow {
     func setLibraryAvailable(_ available: Bool) {
         let becameAvailable = available && !self.available
         self.available = available
+        if !available { newPromptRequest = nil }
         if becameAvailable, !isDestroyed, isHistorySelected { loadHistory() }
         render()
     }
 
-    private func selectPrompt(_ selection: LibraryPromptSelection) {
+    private var canCreatePrompt: Bool {
+        guard commandsAvailable, available, !closeRequested, !conflictView.isResolving,
+              newPromptRequest == nil, activeDialog == nil, !commands.hasDialog,
+              !commands.isScopeDropPending, imports?.isChoosing != true,
+              let state = editor?.state else { return false }
+        return state.pendingDecision == nil && state.conflict == nil && state.queuedActions.isEmpty
+            && state.status != .loading && state.status != .saving && state.status != .commandRunning
+    }
+
+    @discardableResult
+    private func requestNewPrompt() -> Bool {
+        guard canCreatePrompt, let folder = browser?.newPromptDestination() else { return false }
+        message = nil
+        newPromptRequest = LinuxNewPromptRequest(folder: folder)
+        render()
+        return true
+    }
+
+    private func resolveNewPrompt(_ response: LinuxEditorResponse, request: LinuxNewPromptRequest) {
+        guard newPromptRequest == request else { return }
+        newPromptRequest = nil
+        render()
+        guard case .createPrompt(let input) = response, canCreatePrompt, let editor else { return }
+        let title = input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? LinuxStrings.newPromptDefaultTitle : input
+        let revision = bindingRevision
+        editor.request(.create) { [weak self] result in
+            // A close, open or hide during the guard's save supersedes creation.
+            guard let self, self.bindingRevision == revision, result == .allowed,
+                  self.canCreatePrompt else { return }
+            guard let selection = self.createPrompt(title, request.folder) else {
+                // Publish after queued editor state, like a command completion.
+                GTK.onMainLoop { [weak self] in
+                    guard let self, !self.isDestroyed, self.bindingRevision == revision else { return }
+                    self.message = LinuxStrings.createPromptFailed
+                    self.messageSelection = self.browser?.selection
+                    self.render()
+                }
+                return
+            }
+            self.setMode("edit")
+            self.browser?.setFilter("")
+            if self.browser?.selectedSection != .all,
+               self.browser.flatMap({ $0.moveDestination(for: $0.selectedSection) }) != request.folder {
+                self.browser?.selectSection(.all)
+            }
+            self.selectPrompt(selection, context: .creation)
+            gtk_widget_grab_focus(self.source.widget)
+        }
+    }
+
+    private func selectPrompt(_ selection: LibraryPromptSelection, context: OpenContext = .library) {
         guard !isDestroyed, let editor else { return }
         guard !conflictView.isResolving else { render(); return }
         let action = EditorDiscardAction.open(selection)
@@ -708,8 +780,10 @@ final class LinuxLibraryWindow {
             self.revealAfterOpen.removeAll { $0 == selection }
             if result == .allowed {
                 if reveal { self.browser?.setFilter(""); self.browser?.selectSection(.all) }
-                self.copySelection = nil
+                // The index may not have published this newly committed row yet.
+                self.copySelection = context == .creation ? selection : nil
                 self.browser?.selectPrompt(self.editor?.state.prompt)
+                self.selectAdoptedCopy()
                 if reveal { gtk_widget_grab_focus(self.source.widget) }
             }
             self.render() // Cancel restores the native row to Core's selection.
@@ -1021,6 +1095,7 @@ final class LinuxLibraryWindow {
         if awaitingReply { desired = nil }
         else if let conflict = state.conflict, conflict != dismissedConflict { desired = .conflict(conflict, status: state.status) }
         else if let decision = state.pendingDecision { desired = .decision(decision, status: state.status) }
+        else if let request = newPromptRequest { desired = .newPrompt(request) }
         else { desired = nil }
         guard desired != activeDialog else { return }
         endDialog()
@@ -1043,6 +1118,7 @@ final class LinuxLibraryWindow {
                 if let decision = self.editor?.state.pendingDecision {
                     self.editor?.resolveDecision(.cancel, id: decision.id)
                 }
+            case (.newPrompt(let request), _): self.resolveNewPrompt(response, request: request)
             default: break
             }
         }
@@ -1182,6 +1258,7 @@ final class LinuxLibraryWindow {
         if modifiers == GDK_CONTROL_MASK.rawValue {
             let action: LinuxLibraryAction?
             switch key {
+            case UInt32(GDK_KEY_n), UInt32(GDK_KEY_N): action = .newPrompt
             case UInt32(GDK_KEY_s), UInt32(GDK_KEY_S): action = .save
             case UInt32(GDK_KEY_d), UInt32(GDK_KEY_D): action = .favorite
             case UInt32(GDK_KEY_f), UInt32(GDK_KEY_F):

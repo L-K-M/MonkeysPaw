@@ -7,9 +7,8 @@ import XCTest
 ///
 /// CI sets `TEST_RUNNER_MONKEYSPAW_UI_TOUR_DIR`; xcodebuild strips the prefix
 /// and the tour writes PNGs plus `menus.txt` and `windows.txt` there. Ordinary
-/// test runs skip it. Each state is rendered twice: AppKit's own cached
-/// display of the window frame, and `screencapture -l` of the on-screen
-/// window when the runner grants capture.
+/// test runs skip it. Each state is the window server's composited image of
+/// the window, or AppKit's cached display when that is unavailable.
 final class MacUITourTests: XCTestCase {
     private static let directoryKey = "MONKEYSPAW_UI_TOUR_DIR"
     private static let settleTime: TimeInterval = 0.8
@@ -115,25 +114,28 @@ final class MacUITourTests: XCTestCase {
         let presentation = controller.presentation
         window.setContentSize(NSSize(width: 1180, height: 720))
         capture(window, as: "library-\(appearance)-initial")
+        capture(window, as: "library-\(appearance)-toolbar")
 
         if let row = presentation.snapshot.rows.first(where: { $0.title.hasPrefix("Review") })
             ?? presentation.snapshot.rows.first {
             presentation.selectPath(row.relativePath)
         }
         settle()
-        presentation.editorTab = .edit
+        presentation.editorMode = .edit
         settle()
         capture(window, as: "library-\(appearance)-edit")
-        presentation.editorTab = .preview
+        presentation.setInspectorVisible(false)
+        presentation.editorMode = .preview
         settle()
         capture(window, as: "library-\(appearance)-preview")
-        presentation.editorTab = .fields
+        presentation.showInspector(.fields)
         settle()
         capture(window, as: "library-\(appearance)-fields")
-        presentation.editorTab = .history
+        presentation.showInspector(.history)
         settle()
         capture(window, as: "library-\(appearance)-history")
-        presentation.editorTab = .edit
+        presentation.editorMode = .edit
+        presentation.setInspectorVisible(false)
         settle()
 
         if let section = presentation.snapshot.sections.first(where: {
@@ -154,7 +156,7 @@ final class MacUITourTests: XCTestCase {
         settle()
 
         if presentation.canShowAssistant {
-            presentation.toggleAssistant()
+            presentation.showInspector(.assistant)
             settle()
             capture(window, as: "library-\(appearance)-assistant")
             presentation.closeAssistant()
@@ -183,8 +185,42 @@ final class MacUITourTests: XCTestCase {
         settle()
         captureSheet(of: window, as: "library-\(appearance)-move-sheet")
         endSheet(of: window)
+        presentation.requestFileCommand(.delete)
+        settle()
+        captureSheet(of: window, as: "library-\(appearance)-delete-sheet")
+        endSheet(of: window)
+        tourDiskConflicts(controller, window: window, appearance: appearance)
         settle()
         describe(window, as: "library")
+    }
+
+    private func tourDiskConflicts(_ controller: LibraryWindowController, window: NSWindow, appearance: String) {
+        let presentation = controller.presentation
+        guard let prompt = presentation.editorState.prompt, let source = presentation.editorState.source else { return }
+        let file = URL(fileURLWithPath: presentation.activeLibraryPath, isDirectory: true)
+            .appendingPathComponent(prompt.relativePath.string)
+        // These are copied tour seeds in a temporary library, never owner files.
+        do {
+            presentation.edit(source + "\nA local draft.\n")
+            try Data((source + "\nAn external change.\n").utf8).write(to: file)
+            presentation.save()
+            settle()
+            captureSheet(of: window, as: "library-\(appearance)-modified-on-disk-sheet")
+            endSheet(of: window)
+            presentation.editor.resolveConflict(.takeTheirs)
+            settle()
+            guard let latest = presentation.editorState.source else { return }
+            presentation.edit(latest + "\nA draft after deletion.\n")
+            try FileManager.default.removeItem(at: file)
+            presentation.save()
+            settle()
+            captureSheet(of: window, as: "library-\(appearance)-deleted-on-disk-sheet")
+            endSheet(of: window)
+            presentation.editor.resolveConflict(.keepMine)
+            settle()
+        } catch {
+            windowNotes.append("library-\(appearance): disk-conflict tour setup failed")
+        }
     }
 
     private func tourSettings(appearance: String) {
@@ -267,28 +303,37 @@ final class MacUITourTests: XCTestCase {
 
     private func capture(_ window: NSWindow, as name: String) {
         window.displayIfNeeded()
+        // The window server's composited image shows materials (sidebars,
+        // inspectors, glass) that the view-hierarchy fallback cannot draw.
+        if let image = Self.compositedImage(of: window) {
+            write(NSBitmapImageRep(cgImage: image), as: name)
+            return
+        }
+        windowNotes.append("\(name): composited capture unavailable; cached display used")
         // The theme frame includes the title bar and toolbar, not just content.
         let view = window.contentView?.superview ?? window.contentView
         if let view, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: rep)
-            if let png = rep.representation(using: .png, properties: [:]) {
-                try? png.write(to: output.appendingPathComponent(name + ".png"))
-            }
+            write(rep, as: name)
         }
-        screenCapture(window, as: name + "-screen")
     }
 
-    private func screenCapture(_ window: NSWindow, as name: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", "-o", "-l", String(window.windowNumber),
-                             output.appendingPathComponent(name + ".png").path]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch { windowNotes.append("\(name): screencapture unavailable") }
+    private func write(_ rep: NSBitmapImageRep, as name: String) {
+        guard let png = rep.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: output.appendingPathComponent(name + ".png"))
+    }
+
+    private typealias WindowImageFunction = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+
+    /// Swift marks CGWindowListCreateImage obsoleted, but the window server
+    /// still renders an app's own windows without a capture grant.
+    private static func compositedImage(of window: NSWindow) -> CGImage? {
+        guard let library = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW),
+              let symbol = dlsym(library, "CGWindowListCreateImage") else { return nil }
+        let function = unsafeBitCast(symbol, to: WindowImageFunction.self)
+        let options = CGWindowImageOption.boundsIgnoreFraming.rawValue | CGWindowImageOption.bestResolution.rawValue
+        return function(.null, CGWindowListOption.optionIncludingWindow.rawValue,
+                        CGWindowID(window.windowNumber), options)?.takeRetainedValue()
     }
 
     // MARK: - Text descriptions
