@@ -360,7 +360,7 @@ final class MacLibraryWindowTests: XCTestCase {
         window.cancelOperation(nil)
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(presentation.snapshot.filter, "one", "Escape outside Search does not navigate")
-        let search = try XCTUnwrap(controller().searchItem?.searchField)
+        let search = try LibrarySearchTestSupport.begin(controller()).field
         let cancel = try XCTUnwrap((search.cell as? NSSearchFieldCell)?.cancelButtonCell)
         cancel.performClick(search)
         XCTAssertEqual(presentation.snapshot.filter, "")
@@ -680,11 +680,11 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(input.editor.string, "")
         XCTAssertTrue(try window().makeFirstResponder(try XCTUnwrap(controller.promptList?.tableView)))
         controller.searchItem?.endSearchInteraction()
-        controller.searchLibrary(nil)
+        let restarted = try LibrarySearchTestSupport.begin(controller)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         XCTAssertEqual(controller.presentation.snapshot.filter, "", "Lifecycle callbacks cannot restore an old query")
         XCTAssertEqual(input.field.stringValue, "")
-        XCTAssertEqual((input.field.currentEditor() as? NSTextView)?.string, "")
+        XCTAssertEqual(restarted.editor.string, "")
     }
 
     func testNativeSearchCancelButtonClearsTheQuery() throws {
