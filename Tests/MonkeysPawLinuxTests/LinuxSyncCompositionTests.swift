@@ -1234,6 +1234,27 @@ private final class LinuxSyncTestTimer: Scheduler {
     }
 }
 
+final class LinuxSyncTransportContractTests: XCTestCase {
+    func testReleasingUnenteredPullDisarmsItsOneShotHold() {
+        let transport = LinuxSyncTestTransport()
+        transport.holdPull = true
+        transport.releaseHeld()
+        XCTAssertFalse(transport.holdPull, "Revocation can prevent an armed request from entering the fake")
+    }
+
+    func testInterruptedPushCanProbeTheCurrentRemotePrompt() async throws {
+        let transport = LinuxSyncTestTransport()
+        let url = try XCTUnwrap(URL(string: "https://sync.example.test/api/v1/prompts/" + LinuxSyncTestTransport.personalPrompt))
+        let request = try HTTPRequest(url: url, method: .get, deadline: .now.advanced(by: .seconds(3)))
+        let response = try await transport.send(request)
+        let prompt = try JSONDecoder().decode(SyncAPI.Prompt.self, from: response.body)
+        XCTAssertEqual(prompt.id, LinuxSyncTestTransport.personalPrompt)
+        XCTAssertEqual(prompt.path, "a.md")
+        XCTAssertEqual(prompt.rev, 1)
+        XCTAssertEqual(prompt.scope, .user)
+    }
+}
+
 private final class LinuxSyncTestTransport: HTTPTransporting, @unchecked Sendable {
     static let user = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
     static let device = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
@@ -1273,6 +1294,15 @@ private final class LinuxSyncTestTransport: HTTPTransporting, @unchecked Sendabl
             }
             return try pull()
         }
+        if request.method == .get, request.url.path.contains("/prompts/") {
+            guard request.url.lastPathComponent == Self.personalPrompt else {
+                let error = SyncAPI.ErrorResponse.failure(.notFound)
+                return HTTPResponse(statusCode: error.httpStatus, body: try JSONEncoder().encode(error))
+            }
+            let (content, revision) = locked { (privateContent, privateRevision) }
+            return try response(SyncAPI.Prompt(id: Self.personalPrompt, rev: revision, scope: .user,
+                path: "a.md", content: content))
+        }
         if request.method == .put {
             let put = try JSONDecoder().decode(SyncAPI.PutPromptRequest.self, from: request.body ?? Data())
             let revision = locked { privateContent = put.content; privateRevision += 1; return privateRevision }
@@ -1282,7 +1312,13 @@ private final class LinuxSyncTestTransport: HTTPTransporting, @unchecked Sendabl
     }
 
     func releaseHeld() {
-        let continuation = locked { let value = held; held = nil; return value }
+        let continuation = locked {
+            // Revocation may stop the request before it enters this fake.
+            shouldHold = false
+            let value = held
+            held = nil
+            return value
+        }
         guard let continuation else { return }
         do { continuation.resume(returning: try pull(path: "late.md")) }
         catch { continuation.resume(throwing: HTTPTransportError.invalidResponse) }
