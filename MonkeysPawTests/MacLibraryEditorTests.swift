@@ -516,10 +516,20 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(presentation.snapshot.selection, copy)
         presentation.selectSection(.favourites)
         presentation.setFilter("Kept")
+        var phase = "close"
+        let filterObserver = presentation.model.addObserver { state in
+            XCTAssertEqual(state.filter, "Kept", "Filter changed during " + phase + "\n"
+                + Thread.callStackSymbols.prefix(16).joined(separator: "\n"))
+        }
+        defer { presentation.model.removeObserver(filterObserver) }
         try window().close()
+        XCTAssertEqual(presentation.snapshot.filter, "Kept", "Closing retains the browser query")
         XCTAssertNil(presentation.editorState.prompt)
         XCTAssertNil(presentation.editorState.lastCopy, "Core currently clears lastCopy on close")
+        phase = "show"
         delegate.showLibrary()
+        XCTAssertEqual(presentation.snapshot.filter, "Kept", "Showing retains the browser query")
+        phase = "load"
         work.drain()
         XCTAssertEqual(presentation.editorState.prompt, copy)
         XCTAssertEqual(presentation.snapshot.filter, "Kept")

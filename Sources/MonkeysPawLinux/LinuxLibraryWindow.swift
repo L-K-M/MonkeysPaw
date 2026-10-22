@@ -108,6 +108,7 @@ final class LinuxLibraryWindow {
     private var formPreedit = false
     private var renderedTags: [String] = []
     private var renderedTagsRevision: UInt64?
+    private var renderedFormRevision: UInt64?
     private let readOnly = GTK.label("")
     private let readOnlyBar = gtk_info_bar_new()!
     private let validation = GTK.label("")
@@ -1052,6 +1053,16 @@ final class LinuxLibraryWindow {
         let sensitive = editable && form != nil
         isUpdatingForm = true
         defer { isUpdatingForm = false }
+        if renderedFormRevision != sourceRevision {
+            // Retire composition before these persistent controls adopt another
+            // prompt. Reset callbacks cannot become edits to the new session.
+            for entry in [titleEntry, descriptionEntry, tagEntry] {
+                gtk_entry_reset_im_context(mp_entry(entry))
+            }
+            formPreedit = false
+            mp_entry_set_text(tagEntry, "")
+            renderedFormRevision = sourceRevision
+        }
         // An entry with an active composition owns its text until commit.
         if !(formPreedit && containsFocus(titleEntry)) { setFormEntry(titleEntry, form?.title ?? "") }
         if !(formPreedit && containsFocus(descriptionEntry)) { setFormEntry(descriptionEntry, form?.description ?? "") }
@@ -1080,7 +1091,12 @@ final class LinuxLibraryWindow {
         configureForm()
         let editPage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
         let overlay = gtk_overlay_new()!
-        gtk_overlay_set_child(mp_overlay(overlay), formBox)
+        // A scroll boundary contains height-for-width metadata such as tag
+        // chips, keeping GtkPaned measurements stable and short windows usable.
+        let formScroll = scrolled(formBox, width: 200)
+        gtk_widget_set_name(formScroll, "library-form-scroll")
+        gtk_scrolled_window_set_policy(mp_scrolled_window(formScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
+        gtk_overlay_set_child(mp_overlay(overlay), formScroll)
         gtk_widget_set_halign(editorEmpty, GTK_ALIGN_CENTER)
         gtk_widget_set_valign(editorEmpty, GTK_ALIGN_CENTER)
         gtk_widget_add_css_class(editorEmpty, "dim-label")

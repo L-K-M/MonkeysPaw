@@ -162,6 +162,47 @@ final class LinuxLibraryFormTests: XCTestCase {
         XCTAssertEqual(entryText(try widget("library-form-description", in: window)), "Other field")
     }
 
+    func testProgrammaticOpenReloadsMetadataWithoutEditingTheNewPrompt() throws {
+        try files.write(Data("---\ntitle: First\n---\nA".utf8), at: "a.md")
+        try files.write(Data("---\ntitle: Second\n---\nB".utf8), at: "b.md")
+        let window = try open("a.md")
+        let title = try widget("library-form-title", in: window)
+        try select("b.md", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath == "b.md"
+            && self.environment.editorModel.state.status != .loading })
+        drain()
+        XCTAssertEqual(entryText(title), "Second")
+        XCTAssertTrue(actionEnabled("save", in: window))
+        XCTAssertFalse(environment.editorModel.state.isDirty)
+        XCTAssertEqual(environment.editorModel.state.form?.title, "Second")
+    }
+
+    func testPendingTagBelongsToItsPrompt() throws {
+        try files.write(Data("A".utf8), at: "a.md")
+        try files.write(Data("B".utf8), at: "b.md")
+        let window = try open("a.md")
+        let entry = try widget("library-form-tag-entry", in: window)
+        mp_entry_set_text(entry, "Unadded tag")
+        try select("b.md", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath == "b.md"
+            && self.environment.editorModel.state.status != .loading })
+        drain()
+        XCTAssertEqual(entryText(entry), "")
+        XCTAssertTrue(environment.editorModel.state.form?.tags.isEmpty == true)
+        XCTAssertFalse(environment.editorModel.state.isDirty)
+    }
+
+    func testFormFitsAShortWindowWithManyTags() throws {
+        let tags = (0..<64).map { "tag-\($0)" }.joined(separator: ", ")
+        try files.write(Data(("---\ntags: [" + tags + "]\n---\nBody").utf8), at: "a.md")
+        let window = try open("a.md")
+        let requestedHeight: Int32 = 360
+        gtk_window_set_default_size(mp_window(window), 1180, requestedHeight)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_height(window) <= requestedHeight },
+            "Metadata must scroll rather than force the Library beyond the requested height")
+        XCTAssertEqual(contents(try widget("library-body", in: window)), "Body")
+    }
+
     func testMalformedHeaderFallsBackToEditableSourceAndRecoversToForm() throws {
         try files.write(Data("---\n[broken\n---\nBody".utf8), at: "a.md")
         let window = try open("a.md")
