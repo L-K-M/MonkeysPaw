@@ -184,13 +184,11 @@ extension LibraryWindowController: NSMenuItemValidation {
         synchronizeSearch {
             if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
             toolbar.isVisible = true
-            if let field = searchItem?.searchField { field.stringValue = presentation.snapshot.filter }
+            renderSearchQuery(presentation.snapshot.filter)
             searchItem?.beginSearchInteraction()
-            // Beginning interaction can recreate the native field editor.
-            if let field = searchItem?.searchField {
-                field.stringValue = presentation.snapshot.filter
-                window?.makeFirstResponder(field)
-            }
+            if let field = searchItem?.searchField { window?.makeFirstResponder(field) }
+            // Reacquire the editor after AppKit establishes the interaction.
+            renderSearchQuery(presentation.snapshot.filter)
         }
     }
 

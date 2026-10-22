@@ -361,8 +361,8 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(presentation.snapshot.filter, "one", "Escape outside Search does not navigate")
         let search = try XCTUnwrap(controller().searchItem?.searchField)
-        search.stringValue = ""
-        try controller().filterSearch(search)
+        let cancel = try XCTUnwrap((search.cell as? NSSearchFieldCell)?.cancelButtonCell)
+        cancel.performClick(search)
         XCTAssertEqual(presentation.snapshot.filter, "")
         window.cancelOperation(nil)
         XCTAssertTrue(window.isVisible)
@@ -645,36 +645,26 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
     }
 
-    func testSearchFieldActionsKeepTheBrowserFilterInSync() throws {
+    func testOwnedNativeSearchEditsKeepTheBrowserFilterInSync() throws {
         try put("Alpha", at: "alpha.md")
         try start()
         delegate.showLibrary()
         let controller = try controller()
-        let search = try XCTUnwrap(controller.searchItem?.searchField)
-        XCTAssertTrue(search.target === controller)
-        XCTAssertEqual(search.action, #selector(LibraryWindowController.filterSearch(_:)))
-        search.stringValue = "Alpha"
-        controller.filterSearch(search)
+        let input = try LibrarySearchTestSupport.type("Alpha", in: controller)
+        XCTAssertNil(input.field.target)
+        XCTAssertNil(input.field.action)
         XCTAssertEqual(controller.presentation.snapshot.filter, "Alpha")
-        let editor = NSTextView()
-        editor.string = "Alpha"
-        let cancel = #selector(NSResponder.cancelOperation(_:))
-        XCTAssertTrue(controller.control(search, textView: editor, doCommandBy: cancel))
-        XCTAssertEqual(editor.string, "")
-        search.sendAction(search.action, to: search.target)
-        XCTAssertEqual(controller.presentation.snapshot.filter, "")
-        XCTAssertFalse(controller.control(search, textView: editor, doCommandBy: cancel), "Empty Search ends natively")
-        search.stringValue = "Alpha"
-        controller.filterSearch(search)
-        editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0))
-        XCTAssertTrue(editor.hasMarkedText())
-        XCTAssertFalse(controller.control(search, textView: editor, doCommandBy: cancel))
-        XCTAssertEqual(controller.presentation.snapshot.filter, "Alpha")
-        editor.unmarkText()
+        input.editor.insertText("", replacementRange: NSRange(location: 4, length: 1))
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Alph")
+        let foreign = NSTextView()
+        foreign.string = "Foreign input"
+        controller.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification,
+            object: input.field, userInfo: ["NSFieldEditor": foreign]))
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Alph", "Foreign editors cannot publish")
         controller.presentation.setFilter("Other")
         controller.refreshWindowPresentation()
-        XCTAssertEqual(search.stringValue, "Other")
+        XCTAssertEqual(input.field.stringValue, "Other")
+        XCTAssertEqual(input.editor.string, "Other")
     }
 
     func testEndingToolbarSearchDoesNotPublishStaleNativeText() throws {
@@ -682,22 +672,19 @@ final class MacLibraryWindowTests: XCTestCase {
         try start()
         delegate.showLibrary()
         let controller = try controller()
-        let search = try XCTUnwrap(controller.searchItem?.searchField)
-        controller.presentation.setFilter("Kept")
-        // A model publication can precede the toolbar's queued render. Ending
-        // or collapsing search is a lifecycle event, not a new query edit.
-        search.stringValue = ""
-        search.delegate?.searchFieldDidEndSearching?(search)
+        let input = try LibrarySearchTestSupport.type("Kept", in: controller)
         XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
-        controller.synchronizeSearch {
-            search.sendAction(search.action, to: search.target)
-        }
-        XCTAssertEqual(controller.presentation.snapshot.filter, "Kept", "Presentation actions are not query edits")
+        controller.presentation.setFilter("")
         controller.refreshWindowPresentation()
-        XCTAssertEqual(search.stringValue, "Kept")
-        search.stringValue = ""
-        search.sendAction(search.action, to: search.target)
-        XCTAssertEqual(controller.presentation.snapshot.filter, "", "The cancel action still clears the query")
+        XCTAssertEqual(input.field.stringValue, "")
+        XCTAssertEqual(input.editor.string, "")
+        XCTAssertTrue(try window().makeFirstResponder(try XCTUnwrap(controller.promptList?.tableView)))
+        controller.searchItem?.endSearchInteraction()
+        controller.searchLibrary(nil)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        XCTAssertEqual(controller.presentation.snapshot.filter, "", "Lifecycle callbacks cannot restore an old query")
+        XCTAssertEqual(input.field.stringValue, "")
+        XCTAssertEqual((input.field.currentEditor() as? NSTextView)?.string, "")
     }
 
     func testNativeSearchCancelButtonClearsTheQuery() throws {
@@ -705,33 +692,76 @@ final class MacLibraryWindowTests: XCTestCase {
         try start()
         delegate.showLibrary()
         let controller = try controller()
-        controller.searchLibrary(nil)
-        let search = try XCTUnwrap(controller.searchItem?.searchField)
-        search.stringValue = "Kept"
-        search.sendAction(search.action, to: search.target)
+        let input = try LibrarySearchTestSupport.type("Kept", in: controller)
         XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
-        let cell = try XCTUnwrap(search.cell as? NSSearchFieldCell)
+        let cell = try XCTUnwrap(input.field.cell as? NSSearchFieldCell)
         let cancel = try XCTUnwrap(cell.cancelButtonCell)
-        cancel.performClick(search)
+        let foreign = NSSearchField()
+        controller.clearLibrarySearch(foreign)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
+        cancel.performClick(input.field)
         XCTAssertEqual(controller.presentation.snapshot.filter, "")
-        XCTAssertEqual(search.stringValue, "")
+        XCTAssertEqual(input.field.stringValue, "")
+        XCTAssertEqual(input.editor.string, "")
+        XCTAssertEqual(input.editor.selectedRange(), NSRange(location: 0, length: 0))
     }
 
-    func testModelFilterReachesSearchBeforeAppKitCanEchoIt() throws {
+    func testSearchRenderingPreservesCaretAndClampsShorterReplacement() throws {
         try put("Kept", at: "kept.md")
         try start()
         delegate.showLibrary()
         let controller = try controller()
-        let search = try XCTUnwrap(controller.searchItem?.searchField)
-        for query in ["Kept", ""] {
-            controller.presentation.setFilter(query)
-            XCTAssertEqual(search.stringValue, query, "No run-loop turn is needed to bind the query")
-            search.sendAction(search.action, to: search.target)
-            XCTAssertEqual(controller.presentation.snapshot.filter, query, "Native feedback retains the new query")
-        }
-        search.stringValue = "Typed"
-        search.sendAction(search.action, to: search.target)
-        XCTAssertEqual(controller.presentation.snapshot.filter, "Typed")
+        let input = try LibrarySearchTestSupport.type("Long 😀 query", in: controller)
+        let selection = NSRange(location: 5, length: 2)
+        input.editor.setSelectedRange(selection)
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(input.editor.selectedRange(), selection, "Equal text does not move the caret")
+        controller.presentation.setFilter("Q")
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(input.field.stringValue, "Q")
+        XCTAssertEqual(input.editor.string, "Q")
+        XCTAssertLessThanOrEqual(NSMaxRange(input.editor.selectedRange()), 1)
+    }
+
+    func testSearchCompositionSurvivesRenderingAndExplicitCancelClearsIt() throws {
+        try put("Kept", at: "kept.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let input = try LibrarySearchTestSupport.type("Kept", in: controller)
+        input.editor.setMarkedText("かな", selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 4, length: 0))
+        XCTAssertTrue(input.editor.hasMarkedText())
+        let composing = input.editor.string
+        controller.presentation.setFilter("Programmatic")
+        controller.refreshWindowPresentation()
+        XCTAssertTrue(input.editor.hasMarkedText())
+        XCTAssertEqual(input.editor.string, composing)
+        XCTAssertFalse(controller.control(input.field, textView: input.editor,
+            doCommandBy: #selector(NSResponder.cancelOperation(_:))), "Composition owns Escape")
+        let cancel = try XCTUnwrap((input.field.cell as? NSSearchFieldCell)?.cancelButtonCell)
+        cancel.performClick(input.field)
+        XCTAssertFalse(input.editor.hasMarkedText())
+        XCTAssertEqual(input.editor.string, "")
+        XCTAssertEqual(controller.presentation.snapshot.filter, "")
+    }
+
+    func testNativeSearchEscapeClearsThenEndsInteractionWithoutClosingLibrary() throws {
+        try put("Kept", at: "kept.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let input = try LibrarySearchTestSupport.type("Kept", in: controller)
+        let native = try window()
+        native.sendEvent(try key(kVK_Escape, characters: "\u{1b}", in: native))
+        XCTAssertEqual(controller.presentation.snapshot.filter, "")
+        XCTAssertEqual(input.field.stringValue, "")
+        XCTAssertTrue(native.isVisible)
+        XCTAssertTrue(native.firstResponder === input.editor, "The first Escape retains search focus")
+        native.sendEvent(try key(kVK_Escape, characters: "\u{1b}", in: native))
+        XCTAssertEqual(controller.presentation.snapshot.filter, "")
+        XCTAssertTrue(native.isVisible)
+        XCTAssertFalse(native.firstResponder === input.editor, "The second Escape ends search interaction")
     }
 
     func testFindWithoutAnOpenEditorFocusesLibrarySearch() throws {

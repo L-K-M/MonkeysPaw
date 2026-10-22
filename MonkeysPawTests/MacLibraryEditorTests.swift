@@ -515,7 +515,7 @@ final class MacLibraryEditorTests: XCTestCase {
         work.drain()
         XCTAssertEqual(presentation.snapshot.selection, copy)
         presentation.selectSection(.favourites)
-        presentation.setFilter("Kept")
+        let search = try LibrarySearchTestSupport.type("Kept", in: XCTUnwrap(delegate.libraryWindow))
         try window().close()
         XCTAssertEqual(presentation.snapshot.filter, "Kept", "Closing retains the browser query")
         XCTAssertNil(presentation.editorState.prompt)
@@ -526,6 +526,7 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(presentation.editorState.prompt, copy)
         XCTAssertEqual(presentation.snapshot.filter, "Kept")
         XCTAssertEqual(presentation.snapshot.selectedSection, .favourites)
+        XCTAssertEqual(search.field.stringValue, "Kept")
     }
 
     func testDeletionConflictKeepMineRecreates() throws {
@@ -954,13 +955,14 @@ final class MacLibraryEditorTests: XCTestCase {
 
     func testPickerEditAndNoMatchCreateRevealEditorEvenWithAHiddenRow() throws {
         let presentation = try open()
-        presentation.setFilter("no such row")
+        let search = try LibrarySearchTestSupport.type("no such row", in: XCTUnwrap(delegate.libraryWindow))
         presentation.selectSection(.favourites)
         let picker = try XCTUnwrap(delegate.pickerModel)
         picker.open()
         picker.editSelected()
         work.drain()
         XCTAssertEqual(presentation.snapshot.filter, "")
+        XCTAssertEqual(search.field.stringValue, "")
         XCTAssertEqual(presentation.snapshot.selectedSection, .all)
         XCTAssertEqual(presentation.editorState.prompt?.relativePath, "one.md")
         XCTAssertEqual(picker.state, .closed)
@@ -984,7 +986,7 @@ final class MacLibraryEditorTests: XCTestCase {
         presentation.selectPath("Folder/one.md")
         work.drain()
         presentation.selectSection(.folder("Folder"))
-        presentation.setFilter("no matching prompt")
+        let search = try LibrarySearchTestSupport.type("no matching prompt", in: XCTUnwrap(delegate.libraryWindow))
         presentation.editorMode = .preview
         let native = try window()
         let focusRevision = presentation.focusRevision
@@ -1006,6 +1008,7 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertTrue(presentation.snapshot.rows.contains { $0.relativePath == "Folder/Title.md" })
         XCTAssertEqual(presentation.snapshot.selectedSection, .folder("Folder"))
         XCTAssertEqual(presentation.snapshot.filter, "")
+        XCTAssertEqual(search.field.stringValue, "")
         XCTAssertEqual(presentation.editorMode, .edit)
         XCTAssertEqual(presentation.focusRevision, focusRevision, "Creation never moves focus to Search")
         XCTAssertGreaterThan(presentation.editorFocusRevision, editorFocus, "The new prompt's editor takes focus")

@@ -195,7 +195,7 @@ final class MacLibraryImportTests: XCTestCase {
         presentation.selectPath("work/deep/existing.md")
         work.drain()
         presentation.edit("Unsaved draft")
-        presentation.setFilter("Does not match")
+        let search = try LibrarySearchTestSupport.type("Does not match", in: XCTUnwrap(delegate.libraryWindow))
         imports.open("work/deep/flat.md")
         let decision = try XCTUnwrap(presentation.editorState.pendingDecision)
         XCTAssertEqual(presentation.editorState.source, "Unsaved draft")
@@ -205,6 +205,8 @@ final class MacLibraryImportTests: XCTestCase {
         XCTAssertEqual(presentation.editorState.source, "Body")
         XCTAssertEqual(presentation.snapshot.filter, "")
         XCTAssertEqual(presentation.snapshot.selectedSection, .all)
+        XCTAssertEqual(search.field.stringValue, "")
+        XCTAssertEqual(presentation.snapshot.selection, presentation.editorState.prompt)
     }
 
     func testUnchangedBrowserDestinationsDoNotRepublish() throws {

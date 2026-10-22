@@ -69,11 +69,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             .removeDuplicates { $0.utf8.elementsEqual($1.utf8) }
             .sink { [weak self] query in
                 guard let self, !self.isTornDown else { return }
-                self.synchronizeSearch {
-                    guard let field = self.searchItem?.searchField,
-                          (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
-                    if !field.stringValue.utf8.elementsEqual(query.utf8) { field.stringValue = query }
-                }
+                self.renderSearchQuery(query)
             }
     }
 
@@ -270,10 +266,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { item.isCollapsed = collapsed }
             else { item.animator().isCollapsed = collapsed }
         }
-        if let field = searchItem?.searchField, !field.stringValue.utf8.elementsEqual(presentation.snapshot.filter.utf8),
-           (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
-            field.stringValue = presentation.snapshot.filter
-        }
+        renderSearchQuery(presentation.snapshot.filter)
         modeItem?.selectedIndex = presentation.editorMode.rawValue
         updateToolbarItems()
         window.toolbar?.validateVisibleItems()
@@ -291,10 +284,56 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         update()
     }
 
-    func publishSearch(_ field: NSSearchField) {
-        guard searchPresentationDepth == 0, presentation.canFocusFilter,
-              field === searchItem?.searchField else { return }
-        presentation.setFilter(field.stringValue)
+    private func ownedSearchEditor(for field: NSSearchField) -> NSTextView? {
+        guard let window, field.window === window,
+              let editor = field.currentEditor() as? NSTextView,
+              editor.window === window, window.firstResponder === editor else { return nil }
+        return editor
+    }
+
+    func publishSearchEdit(_ field: NSSearchField, editor: NSTextView) {
+        guard !isTornDown, searchPresentationDepth == 0, presentation.canFocusFilter,
+              field === searchItem?.searchField, ownedSearchEditor(for: field) === editor else { return }
+        presentation.setFilter(editor.string)
+    }
+
+    /// A control's cell and its shared field editor can hold different text.
+    /// Reconcile both without disturbing a live conversion or equal-text caret.
+    func renderSearchQuery(_ query: String) {
+        guard !isTornDown, let field = searchItem?.searchField else { return }
+        let editor = ownedSearchEditor(for: field)
+        guard editor?.hasMarkedText() != true else { return }
+        let controlChanged = !field.stringValue.utf8.elementsEqual(query.utf8)
+        let editorChanged = editor.map { !$0.string.utf8.elementsEqual(query.utf8) } ?? false
+        guard controlChanged || editorChanged else { return }
+        let selection = editor?.selectedRange()
+
+        synchronizeSearch {
+            if controlChanged { field.stringValue = query }
+            guard let current = ownedSearchEditor(for: field), !current.hasMarkedText() else { return }
+            if !current.string.utf8.elementsEqual(query.utf8) { current.string = query }
+            guard current === editor, let selection else { return }
+            let length = (query as NSString).length
+            let location = selection.location == NSNotFound ? length : min(selection.location, length)
+            current.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
+        }
+    }
+
+    func clearSearch(_ field: NSSearchField) {
+        guard !isTornDown, presentation.canFocusFilter, field === searchItem?.searchField,
+              field.window === window else { return }
+        synchronizeSearch {
+            if let editor = ownedSearchEditor(for: field) {
+                if editor.hasMarkedText() {
+                    editor.inputContext?.discardMarkedText()
+                    editor.unmarkText()
+                }
+                editor.string = ""
+                editor.setSelectedRange(NSRange(location: 0, length: 0))
+            }
+            field.stringValue = ""
+            presentation.setFilter("")
+        }
     }
 
     static func makeEditorAlert(for dialog: LibraryEditorDialog) -> NSAlert {
