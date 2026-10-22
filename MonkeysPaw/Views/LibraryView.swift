@@ -326,7 +326,8 @@ struct LibraryEditorView: View {
 
     private var previewColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let description = presentation.editorState.form?.description, !description.isEmpty {
+            if let description = presentation.editorState.form?.description ?? presentation.openPromptRow?.previewLine,
+               !description.isEmpty {
                 Text(description).foregroundStyle(.secondary)
             }
             previewBody
@@ -543,7 +544,7 @@ struct LibraryInspectorView: View {
     }
 
     private var promptTags: String {
-        let tags = presentation.editorState.form?.tags ?? []
+        let tags = presentation.editorState.form?.tags ?? presentation.openPromptRow?.tags ?? []
         return tags.isEmpty ? LibraryNativeStrings.none : tags.joined(separator: ", ")
     }
 

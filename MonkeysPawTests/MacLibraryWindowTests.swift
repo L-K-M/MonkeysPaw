@@ -659,7 +659,7 @@ final class MacLibraryWindowTests: XCTestCase {
         let cancel = #selector(NSResponder.cancelOperation(_:))
         XCTAssertTrue(controller.control(search, textView: editor, doCommandBy: cancel))
         XCTAssertEqual(editor.string, "")
-        controller.searchFieldDidEndSearching(search)
+        search.sendAction(search.action, to: search.target)
         XCTAssertEqual(controller.presentation.snapshot.filter, "")
         XCTAssertFalse(controller.control(search, textView: editor, doCommandBy: cancel), "Empty Search ends natively")
         search.stringValue = "Alpha"
@@ -673,6 +673,42 @@ final class MacLibraryWindowTests: XCTestCase {
         controller.presentation.setFilter("Other")
         controller.refreshWindowPresentation()
         XCTAssertEqual(search.stringValue, "Other")
+    }
+
+    func testEndingToolbarSearchDoesNotPublishStaleNativeText() throws {
+        try put("Kept", at: "kept.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let search = try XCTUnwrap(controller.searchItem?.searchField)
+        controller.presentation.setFilter("Kept")
+        // A model publication can precede the toolbar's queued render. Ending
+        // or collapsing search is a lifecycle event, not a new query edit.
+        search.stringValue = ""
+        (search.delegate as? NSSearchFieldDelegate)?.searchFieldDidEndSearching?(search)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
+        controller.refreshWindowPresentation()
+        XCTAssertEqual(search.stringValue, "Kept")
+        search.stringValue = ""
+        search.sendAction(search.action, to: search.target)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "", "The cancel action still clears the query")
+    }
+
+    func testNativeSearchCancelButtonClearsTheQuery() throws {
+        try put("Kept", at: "kept.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        controller.searchLibrary(nil)
+        let search = try XCTUnwrap(controller.searchItem?.searchField)
+        search.stringValue = "Kept"
+        search.sendAction(search.action, to: search.target)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
+        let cell = try XCTUnwrap(search.cell as? NSSearchFieldCell)
+        let cancel = try XCTUnwrap(cell.cancelButtonCell)
+        cancel.performClick(withFrame: cell.cancelButtonRect(forBounds: search.bounds), in: search)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "")
+        XCTAssertEqual(search.stringValue, "")
     }
 
     func testFindWithoutAnOpenEditorFocusesLibrarySearch() throws {

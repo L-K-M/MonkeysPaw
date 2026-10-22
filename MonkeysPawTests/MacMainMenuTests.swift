@@ -184,7 +184,7 @@ final class MacMainMenuTests: XCTestCase {
 
     func testViewMenuItemsCarryPaneAndToolbarActions() throws {
         let menu = try submenu(MainMenu.make(), MainMenuStrings.view)
-        XCTAssertEqual(titles(menu), [MainMenuStrings.editMode, MainMenuStrings.previewMode, "-",
+        XCTAssertEqual(titles(menu), [MainMenuStrings.editMode, MainMenuStrings.previewMode, LibraryFormStrings.source, "-",
             MainMenuStrings.showSidebar, MainMenuStrings.showInspector, MainMenuStrings.fields,
             MainMenuStrings.history, MainMenuStrings.assistant, "-", MainMenuStrings.showToolbar,
             MainMenuStrings.customizeToolbar])

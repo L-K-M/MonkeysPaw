@@ -12,7 +12,7 @@ enum LibraryFormStrings {
     static let body = "Prompt"
     static let bodyHint = "Use {{name}} for a placeholder. Edit field settings in Source."
     static let source = "Source"
-    static let unavailable = "These properties need repair. Edit Source to use the form."
+    static let unavailable = "Edit Source to fix validation errors and use the form."
     static func removeTag(_ tag: String) -> String { "Remove tag “" + tag + "”" }
 }
 

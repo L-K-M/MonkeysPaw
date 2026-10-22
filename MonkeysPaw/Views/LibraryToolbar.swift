@@ -133,12 +133,6 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
 
     @objc func filterSearch(_ sender: NSSearchField) { presentation.setFilter(sender.stringValue) }
 
-    func searchFieldDidEndSearching(_ sender: NSSearchField) {
-        // The native cancel button and Escape can send a search action without
-        // a text-edit notification. Read the field's final value in both paths.
-        filterSearch(sender)
-    }
-
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard let field = control as? NSSearchField, field === searchItem?.searchField,
               commandSelector == #selector(NSResponder.cancelOperation(_:)), !textView.hasMarkedText(),
