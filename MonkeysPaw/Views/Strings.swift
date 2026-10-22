@@ -291,8 +291,10 @@ enum Strings {
 
     static func backend(_ backend: PasteBackend) -> String {
         switch backend {
-        case .cgEvent: return "CGEvent"
-        case .appleScript: return "AppleScript"
+        // Name what the user grants, not the API: keystrokes need Accessibility,
+        // the fallback needs Automation of System Events.
+        case .cgEvent: return "Keystroke"
+        case .appleScript: return "System Events"
         case .remoteDesktopPortal: return "RemoteDesktop portal"
         case .ydotool: return "ydotool"
         case .xdotool: return "xdotool"

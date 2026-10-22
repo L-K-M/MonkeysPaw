@@ -246,7 +246,7 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertGreaterThan(window.frame.height, shortFrame.height)
         XCTAssertEqual(window.frame.minX, frame.minX, accuracy: 0.5)
         XCTAssertEqual(window.frame.maxY, frame.maxY, accuracy: 0.5)
-        XCTAssertEqual(window.contentRect(forFrameRect: window.frame).height, 640, accuracy: 0.5)
+        XCTAssertEqual(window.contentRect(forFrameRect: window.frame).height, 720, accuracy: 0.5)
     }
 
     func testHostedCompositionReadsSavedTierOnlyThroughInjectedSecrets() throws {

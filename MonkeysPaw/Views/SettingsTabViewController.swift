@@ -26,7 +26,7 @@ extension SettingsViewState.Tab {
 
     private var idealHeight: CGFloat {
         switch self {
-        case .general: return 590
+        case .general: return 700
         case .shortcuts: return 550
         case .delivery: return 520
         case .assistant: return 820
@@ -35,7 +35,7 @@ extension SettingsViewState.Tab {
     }
 
     // Grouped forms scroll within tall panes instead of growing off screen.
-    var contentSize: NSSize { NSSize(width: 600, height: min(idealHeight, 640)) }
+    var contentSize: NSSize { NSSize(width: 600, height: min(idealHeight, 720)) }
 }
 
 /// Retains each pane and its draft while the native toolbar selects it.
