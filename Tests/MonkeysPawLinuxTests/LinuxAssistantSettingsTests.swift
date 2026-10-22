@@ -592,7 +592,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         }
         view.show()
         window = try XCTUnwrap(settingsWindow())
-        gtk_notebook_set_current_page(mp_notebook(try settingsWidget("settings-tabs", in: window)), 2)
+        gtk_stack_set_visible_child_name(mp_stack(try settingsWidget("settings-stack", in: window)), "assistant")
         waitLoaded()
     }
 

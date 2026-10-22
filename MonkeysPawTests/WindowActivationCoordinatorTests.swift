@@ -50,6 +50,30 @@ final class WindowActivationCoordinatorTests: XCTestCase {
         XCTAssertEqual(policies.last, .accessory)
     }
 
+    func testMiniaturizedLibraryKeepsItsDockTileAndRegularPolicy() {
+        var policies: [NSApplication.ActivationPolicy] = []
+        let coordinator = WindowActivationCoordinator(mainThread: DispatchMainThread(),
+            setPolicy: { policies.append($0) }, activate: {})
+        coordinators.append(coordinator)
+        // Real miniaturizing animates asynchronously on CI; the fake reports
+        // the same state change deterministically.
+        let library = MiniaturizingTestWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 260),
+            styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+        library.isReleasedWhenClosed = false
+        windows.append(library)
+        coordinator.show(library)
+        library.miniaturize(nil)
+        XCTAssertFalse(library.isVisible)
+        NotificationCenter.default.post(name: NSWindow.didMiniaturizeNotification, object: library)
+        XCTAssertTrue(library.isMiniaturized)
+        XCTAssertEqual(policies, [.regular])
+        coordinator.show(library)
+        XCTAssertFalse(library.isMiniaturized)
+        XCTAssertEqual(policies, [.regular])
+        library.close()
+        XCTAssertEqual(policies, [.regular, .accessory])
+    }
+
     func testDeferredWindowNotificationsPruneReleasedWindowsAndRestoreAccessoryPolicy() {
         for name in [NSWindow.willCloseNotification, NSWindow.didChangeOcclusionStateNotification] {
             let main = DeferredWindowMainThread()
@@ -113,4 +137,15 @@ private final class DeferredWindowMainThread: MainThread {
     private var pending: [() -> Void] = []
     func run(_ work: @escaping () -> Void) { pending.append(work) }
     func drain() { while !pending.isEmpty { pending.removeFirst()() } }
+}
+
+/// Reports miniaturized state without the Dock animation.
+private final class MiniaturizingTestWindow: NSWindow {
+    private var reportsMiniaturized = false
+    override var isMiniaturized: Bool { reportsMiniaturized }
+    override func miniaturize(_ sender: Any?) {
+        reportsMiniaturized = true
+        orderOut(nil)
+    }
+    override func deminiaturize(_ sender: Any?) { reportsMiniaturized = false }
 }

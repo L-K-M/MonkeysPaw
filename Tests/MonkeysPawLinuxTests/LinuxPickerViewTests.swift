@@ -62,11 +62,11 @@ final class LinuxPickerViewTests: XCTestCase {
         try files.write(Data("Body".utf8), at: "a.md")
         try configureX11Target(windowClass: "kitty")
         try open()
-        XCTAssertNotEqual(gtk_widget_activate(try widget("picker-use")), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(try widget("picker-use")), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
         try open()
         let row = try XCTUnwrap(gtk_list_box_get_row_at_index(mp_list_box(try widget("picker-results")), 0))
-        XCTAssertNotEqual(gtk_widget_activate(UnsafeMutableRawPointer(row).assumingMemoryBound(to: GtkWidget.self)), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(UnsafeMutableRawPointer(row).assumingMemoryBound(to: GtkWidget.self)), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
         XCTAssertEqual(tools.arguments.filter { $0.first == "key" }, [
             ["key", "--clearmodifiers", "ctrl+shift+v"], ["key", "--clearmodifiers", "ctrl+shift+v"],
@@ -103,7 +103,7 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertFalse(sendKey(GDK_KEY_Return))
         XCTAssertEqual(fill.state, .editing)
         XCTAssertEqual(environment.pickerModel.state, .fill)
-        XCTAssertNotEqual(gtk_widget_activate(try widget("picker-use")), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(try widget("picker-use")), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
         XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
     }
@@ -494,12 +494,95 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertFalse(environment.panel.isVisible)
     }
 
+    func testFooterPresentsFlatKeyHintButtonsAndOverflowMenu() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try open()
+        for (name, hint) in [("picker-use", LinuxPickerStrings.useHint),
+                             ("picker-copy", LinuxPickerStrings.copyHint),
+                             ("picker-edit", LinuxPickerStrings.editHint),
+                             ("picker-open-folder", LinuxPickerStrings.libraryHint)] {
+            let button = try widget(name)
+            XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), hint, name)
+            XCTAssertEqual(gtk_widget_has_css_class(button, "flat"), 1, name)
+        }
+        _ = try widget("picker-menu")
+        for (name, title) in [("picker-forget-values", LinuxStrings.forgetValues),
+                              ("picker-setup", LinuxStrings.setup),
+                              ("picker-settings", LinuxStrings.openSettings)] {
+            let item = try widget(name)
+            XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(item))), title, name)
+        }
+        XCTAssertNotEqual(gtk_widget_get_visible(try widget("picker-forget-values")), 0)
+    }
+
+    func testFooterUseButtonOpensFillAndBecomesSuggestedDeliver() throws {
+        try files.write(Data("{{topic}}".utf8), at: "a.md")
+        try open()
+        let use = try widget("picker-use")
+        XCTAssertNotEqual(GTKTestSupport.activate(use), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .fill })
+        XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(use))), LinuxPickerStrings.deliverHint)
+        XCTAssertEqual(gtk_widget_has_css_class(use, "suggested-action"), 1)
+        XCTAssertEqual(gtk_widget_get_visible(try widget("picker-edit")), 0)
+        XCTAssertEqual(gtk_widget_get_visible(try widget("picker-open-folder")), 0)
+    }
+
+    func testFooterUseButtonDeliversFieldlessPrompt() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try configureX11Target(windowClass: "kitty")
+        try open()
+        XCTAssertNotEqual(GTKTestSupport.activate(try widget("picker-use")), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
+        XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testFooterCopyButtonCopiesPromptWithoutOpeningFill() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try open()
+        let copy = try widget("picker-copy")
+        XCTAssertNotEqual(GTKTestSupport.activate(copy), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertFalse(environment.panel.isVisible)
+        let clipboard = PickerClipboardRead()
+        GTKClipboard(owner: environment.panel.clipboardOwner).readText { clipboard.store($0) }
+        XCTAssertTrue(GTKTestSupport.spin { clipboard.value == "Body" })
+    }
+
+    func testFooterEditButtonOpensLibraryEditorAndDismissesPicker() throws {
+        let path = "sub dir/Prompt.md"
+        try files.write(Data("Body".utf8), at: path)
+        try open()
+        XCTAssertNotEqual(GTKTestSupport.activate(try widget("picker-edit")), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .closed })
+        XCTAssertTrue(GTKTestSupport.spin {
+            self.environment.editorModel.state.prompt?.relativePath.string == path
+                && self.environment.editorModel.state.source == "Body" })
+        XCTAssertTrue(launchedURLs.isEmpty)
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
+    func testFooterLibraryButtonOpensLibraryAndDismissesPicker() throws {
+        try files.write(Data("Body".utf8), at: "a.md")
+        try open()
+        XCTAssertNotEqual(GTKTestSupport.activate(try widget("picker-open-folder")), 0)
+        XCTAssertTrue(GTKTestSupport.spin {
+            guard let window = gtk_application_get_active_window(self.application),
+                  let title = gtk_window_get_title(window) else { return false }
+            return String(cString: title) == LinuxStrings.library
+                && gtk_widget_get_visible(mp_window_widget(window)) != 0
+        })
+        XCTAssertTrue(launchedURLs.isEmpty)
+        XCTAssertEqual(environment.pickerModel.state, .closed)
+        XCTAssertFalse(environment.panel.isVisible)
+    }
+
     func testNativeOpenLibraryButtonOpensBrowserAndDismissesPicker() throws {
         try open()
         mp_entry_set_text(try widget("picker-query"), "missing prompt")
-        let button = try widget("picker-open-folder")
+        let button = try widget("picker-library")
         XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), LinuxStrings.library)
-        XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(button), 0)
         XCTAssertTrue(GTKTestSupport.spin {
             guard let window = gtk_application_get_active_window(self.application),
                   let title = gtk_window_get_title(window) else { return false }
@@ -825,7 +908,7 @@ final class LinuxPickerViewTests: XCTestCase {
         let button = try XCTUnwrap(findWidget {
             mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == createLabel
         })
-        XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(button), 0)
         XCTAssertTrue(GTKTestSupport.spin { (try? self.files.stamp(at: expectedPath)) != nil })
         let document = PromptCodec.parseFile(try files.read(at: expectedPath), filename: expectedPath)
         XCTAssertEqual(document.frontMatter.title, query)

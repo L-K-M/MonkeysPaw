@@ -5,6 +5,9 @@ final class SetupViewState: ObservableObject {
     @Published private(set) var rows: [SetupRow]
     @Published private(set) var state: SetupModel.State
     let model: SetupModel
+    /// The window supplies its native close path so Done follows the same
+    /// route as the title-bar button.
+    var requestClose: (() -> Void)?
 
     init(model: SetupModel) {
         self.model = model
@@ -16,56 +19,88 @@ final class SetupViewState: ObservableObject {
             self.state = self.model.state
         }
     }
+
+    func close() { requestClose?() }
 }
 
 struct SetupView: View {
     @ObservedObject var presentation: SetupViewState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(Strings.setupTitle).font(.title2)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(presentation.rows, id: \.kind) { row in
-                        HStack(alignment: .top, spacing: 12) {
-                            Circle().fill(color(for: row.status)).frame(width: 8, height: 8).padding(.top, 6)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(Strings.rowTitle(row.kind)).font(.headline)
-                                if row.kind == .hotkey { Text(Strings.defaultHotkey).font(.caption) }
-                                Text(Strings.status(row.status)).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if row.kind == .accessibility, case .needsAction = row.status {
-                                Button(Strings.fix) { presentation.model.fix(row.kind) }
-                            }
-                        }
-                    }
-                    if case .tested(let report) = presentation.state {
-                        Divider()
-                        ForEach(report.results, id: \.backend) { result in
-                            Text("\(Strings.backend(result.backend)): \(Strings.selfTestStatus(result.status))")
-                        }
-                    }
-                }
-            }
-            HStack {
-                Button(SetupStrings.pressShortcut) { presentation.model.beginHotkeyVerification() }
-                Button(presentation.state == .testing ? Strings.testing : Strings.runSelfTest) {
-                    presentation.model.runSelfTest()
-                }
-                .disabled(presentation.state == .testing)
-                Spacer()
-                Button(Strings.refresh) { presentation.model.refresh() }
-            }
+        WelcomeWindowView(title: Strings.setupTitle, explanation: WelcomeStrings.setupExplanation) {
+            rows
+            selfTestResults
+        } secondaryActions: {
+            secondaryButtons
+        } defaultAction: {
+            doneButton
         }
-        .padding(24)
     }
 
-    private func color(for status: SetupStatus) -> Color {
-        switch status {
-        case .ok: return .green
-        case .needsAction: return .orange
-        case .unknown, .notApplicable: return .gray
+    private var rows: some View {
+        // Rows for the other desktop (portal, ydotool, KDE) only add noise here.
+        ForEach(presentation.rows.filter(\.appliesHere), id: \.kind) { row in
+            WelcomeStatusRow(symbol: Self.symbol(for: row.status)) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(Strings.rowTitle(row.kind)).font(.headline)
+                    if row.kind == .hotkey { Text(Strings.defaultHotkey).font(.caption) }
+                    Text(Strings.status(row.status)).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if row.kind == .accessibility, case .needsAction = row.status {
+                    Button(Strings.fix) { presentation.model.fix(row.kind) }
+                }
+            }
         }
+    }
+
+    @ViewBuilder private var selfTestResults: some View {
+        if case .tested(let report) = presentation.state {
+            Divider()
+            ForEach(report.results, id: \.backend) { result in
+                WelcomeStatusRow(symbol: Self.symbol(for: result.status)) {
+                    Text("\(Strings.backend(result.backend)): \(Strings.selfTestStatus(result.status))")
+                        .font(.caption)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var secondaryButtons: some View {
+        Button(SetupStrings.pressShortcut) { presentation.model.beginHotkeyVerification() }
+        Button(presentation.state == .testing ? Strings.testing : Strings.runSelfTest) {
+            presentation.model.runSelfTest()
+        }
+        .disabled(presentation.state == .testing)
+        Button(Strings.refresh) { presentation.model.refresh() }
+    }
+
+    private var doneButton: some View {
+        Button(Strings.done) { presentation.close() }
+            .keyboardShortcut(.defaultAction)
+            .accessibilityIdentifier("setup-done")
+    }
+
+    private static func symbol(for status: SetupStatus) -> WelcomeStatusSymbol {
+        switch status {
+        case .ok: return .ready
+        case .needsAction: return .needsAttention
+        case .unknown, .notApplicable: return .unchecked
+        }
+    }
+
+    private static func symbol(for status: SelfTestStatus) -> WelcomeStatusSymbol {
+        switch status {
+        case .pasted: return .ready
+        case .sentButNotReceived, .failed: return .needsAttention
+        }
+    }
+}
+
+extension SetupRow {
+    /// macOS hides checks that only apply to Linux desktops.
+    var appliesHere: Bool {
+        if case .notApplicable = status { return false }
+        return true
     }
 }

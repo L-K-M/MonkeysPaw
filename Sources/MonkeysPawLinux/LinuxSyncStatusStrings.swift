@@ -3,6 +3,7 @@ import Foundation
 import MonkeysPawCore
 
 enum LinuxSyncStatusStrings {
+    static let actions = "Sync actions"
     static let syncNow = "Sync now"
     static let account = "Open Account…"
     static let errors = "Show sync errors"

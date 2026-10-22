@@ -169,10 +169,12 @@ final class LinuxScopeDragTests: XCTestCase {
         let browser = LibraryBrowserModel(index: index, usage: usage, favorites: library, main: main, editor: editor)
         defer { browser.deactivate(); editor.deactivate() }
         let list = try settingsWidget("library-list", in: rig.window)
-        XCTAssertNotNil(gtk_widget_get_first_child(list))
+        XCTAssertNotNil(gtk_list_box_get_row_at_index(mp_list_box(list), 0))
         rig.view.rebind(browser: browser, editor: editor)
         XCTAssertTrue(browser.rows.isEmpty)
-        XCTAssertNil(gtk_widget_get_first_child(list), "A replacement empty graph must remove every retired row")
+        XCTAssertNil(gtk_list_box_get_row_at_index(mp_list_box(list), 0),
+            "A replacement empty graph must remove every retired row")
+        XCTAssertNotEqual(gtk_widget_get_visible(try settingsWidget("library-empty", in: rig.window)), 0)
     }
 
     func testQueuedNavigationRejectsDrop() throws {

@@ -38,6 +38,10 @@ enum StatusNotifierWire {
         guard let entry else {
             return dictionary([("children-display", g_variant_new_string("submenu"))], names: names)
         }
+        if entry.kind == .separator {
+            return dictionary([("type", g_variant_new_string("separator")),
+                               ("visible", g_variant_new_boolean(1))], names: names)
+        }
         return dictionary([("label", g_variant_new_string(entry.label)),
                            ("enabled", g_variant_new_boolean(entry.enabled ? 1 : 0)),
                            ("visible", g_variant_new_boolean(1))], names: names)

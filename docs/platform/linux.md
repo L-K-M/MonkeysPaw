@@ -55,7 +55,7 @@ chooser presentation and accessibility still need these owner checks.
 
 | Check | Expected result | Status |
 |---|---|---|
-| Native file selection | Library's Import… opens a modal native file chooser. Select several lowercase `.md`, `.prompt`, `.prompty` files. The destination defaults to `Imported/`; prompts appear without changing the sources or replacing an occupied library path. | NOT RUN |
+| Native file selection | Library's Import Files… menu item reveals the import bar; Choose Files… opens a modal native file chooser. Select several lowercase `.md`, `.prompt`, `.prompty` files. The destination defaults to `Imported/`; prompts appear without changing the sources or replacing an occupied library path. | NOT RUN |
 | Native folder selection | Import folder… opens the native folder chooser and accepts the selected folder. Import its nested files without adding the selected folder's basename. GTK 4.8 uses a separate folder action because file-open mode does not accept folders. | NOT RUN |
 | File-manager drops | On GNOME and KDE, drop files, a folder, then mixed files/folders onto the Library prompt list, including names with spaces and non-ASCII characters. All local sources enter the same import flow and use the selected destination. | NOT RUN |
 | Destination and progress | Choose an existing subfolder, start a multi-source import, and confirm the destination and both chooser actions stay disabled while progress advances. A second drop is refused with a visible explanation. Temporary drop guidance clears when the batch finishes. Every source in that batch uses the original destination. | NOT RUN |
@@ -113,7 +113,7 @@ error bodies. Automated private-bus/X11 tests use a stub transport; they do not
 prove live provider compatibility or desktop accessibility.
 
 Open Library from the picker or tray, select a prompt, and choose **Assistant**
-in the editor toolbar. **Ctrl+R** starts Review and **Ctrl+I** starts Improve.
+from the primary menu. **Ctrl+R** starts Review and **Ctrl+I** starts Improve.
 Escape closes the Assistant first; closing Library cancels it before the
 editor's existing unsaved-edit decision.
 
@@ -184,8 +184,8 @@ shutdown; these real desktop checks remain owner-run.
 
 | Check | Expected result | Status |
 |---|---|---|
-| KDE Plasma tray icon and menu | Interactive and service startup show one Monkey's Paw icon. Left click and Show Picker toggle the picker; Open Library reveals the active folder; Settings… and Setup… open their reusable windows; Quit exits and removes the icon. | NOT RUN |
-| GNOME with the AppIndicator extension | With the extension enabled, the icon and all five menu entries work. An unavailable library disables Library unavailable; a successful folder switch restores Open Library. Quit removes the item. | NOT RUN |
+| KDE Plasma tray icon and menu | Interactive and service startup show one Monkey's Paw icon. Left click and Show Picker toggle the picker; Library opens its reusable window; Repeat Last Prompt uses the current target; About opens the app information dialog; Settings… and Setup… open their reusable windows; Quit exits and removes the icon. | NOT RUN |
+| GNOME with the AppIndicator extension | With the extension enabled, the icon and the sectioned picker, repeat, Library, Settings, Setup, About and Quit entries work. An unavailable library disables Library unavailable; a successful folder switch restores Open Library. Quit removes the item. | NOT RUN |
 | Stock GNOME without a tray | No fallback window appears. The hotkey, launcher toggle/Settings desktop actions and picker Settings button still work; an ordinary service launch stays hidden. | NOT RUN |
 
 ## Onboarding and library recovery (M2, NOT RUN)
@@ -268,13 +268,25 @@ tool versions and date. These owner checks are not completed by Xvfb tests.
 - [ ] Click another window while filling. The panel hides after 300 ms,
   leaves focus in that window and restores typed values on the next form open.
 - [ ] Search for no matches. Open the library folder, create a prompt and
-  verify its safe filename opens in Library's Edit tab. The assistant action
+  verify its safe filename opens in Library's Edit mode. The assistant action
   is disabled and shows the Settings hint. Ctrl+Return opens a selected prompt
-  in Library's Edit tab; Ctrl+L opens Library and dismisses the picker. Open Folder inside
-  Library reveals the active folder.
+  in Library's Edit mode; Ctrl+L opens Library and dismisses the picker. Show in Files in the Library menu reveals the selected prompt’s containing folder.
 - [ ] Make the library unavailable at startup, then remove it while running.
   The app stays usable and shows the banner; cached prompts remain available
   after removal. Restore the folder and restart to resume watching.
+
+## Native GNOME layout (§24.6, NOT RUN)
+
+Private-bus/Xvfb screenshots and automated tests do not complete these checks.
+Run on GNOME and KDE with GTK 4.8 or newer, light/dark themes and Orca.
+
+| Check | Expected result | Status |
+|---|---|---|
+| Library panes and commands | A header bar and resizable sidebar/list/editor/inspector fit at 1180×720. F9 hides the sidebar; the inspector starts hidden. Menus expose imports, file commands, Settings and About with accelerators; dialog and input-method guards prevent commands from firing. | NOT RUN |
+| Validation and conflict bars | The editor status bar expands validation issues. Read-only reasons appear above the editor. Sync conflicts reveal resolution actions and an expandable comparison. | NOT RUN |
+| Settings pages | A header stack switcher selects General, Shortcuts, Delivery, Assistant and Account in that order. Each page scrolls a centered column of grouped setting rows; reopening reuses the window and preserves all sensitivity rules. | NOT RUN |
+| Picker and fill | The rounded panel has large search, icon/title/subtitle results and preview. Footer key hints perform Use, Copy, Edit and Library; its menu offers Forget values, Setup and Settings. Fill fields retain labels and descriptions; Deliver is suggested, Copy flat, and Escape returns to picker. | NOT RUN |
+| Tray and About | The tray orders Show Picker, Repeat Last Prompt, Library, Settings, Setup, About and Quit in separated groups. The shared About dialog shows the app version, repository and Unlicense text. | NOT RUN |
 
 ## Library browser shell (M3L1, NOT RUN)
 
@@ -287,15 +299,15 @@ do not complete these owner checks. The editor and History checks follow below.
 |---|---|---|
 | Picker Library, no-match Library and Ctrl+L | Each dismisses the picker without delivery and opens or raises one Library window. Close natively, reopen, and confirm the same window remains usable. | NOT RUN |
 | Tray Open Library and launcher Library action | Both open the same window, including a cold `gapplication action ch.lkmc.monkeyspaw library`. Missing/unreadable libraries keep the tray row disabled. Repeat the launcher action without a tray host. | NOT RUN |
-| Sidebar and filter | All, Favourites, Recent, nested folders and tags show the model's counts. Counts remain stable while filtering. Folder sections include descendants; changing the filter or section retains the selected preview even when its row is hidden. | NOT RUN |
-| Prompt rows and Recent | Rows show title, exact relative path, favourite star and invalid/read-only badges. Recent orders retained uses newest first and shows last-used times. Delivery/copy refreshes Recent while Library is open. | NOT RUN |
+| Sidebar and filter | The resizable sidebar groups icon/title/count rows under Library, Groups, Folders and Tags. Ctrl+F reveals and focuses the search bar. All, Favourites, Recent, nested folders and tags show the model's counts. Counts remain stable while filtering. Folder sections include descendants; changing the filter or section retains the selected preview even when its row is hidden. | NOT RUN |
+| Prompt rows and Recent | Rows show a title, description or folder/tags subtitle, and favourite, invalid and read-only icons. The header shows the open prompt's title and exact relative path, with Edited while dirty; an empty editor shows the section and prompt count. Recent orders retained uses newest first and shows last-used times. Delivery/copy refreshes Recent while Library is open. | NOT RUN |
 | Read-only preview and privacy | Defaults appear, empty fields use `{field}` names, date/time are real and clipboard uses `{clipboard}`. Selecting and filtering never read the clipboard or write prompt files. Invalid, future-format, non-UTF-8 and oversized prompts display their issues. | NOT RUN |
 | Favourite button and Ctrl+D | A valid prompt saves its favourite through the library service, refreshes sidebar/list and picker, and retains selection after first-save identity assignment. A stale file or failed write shows an error without changing the star. Read-only entries disable the button. | NOT RUN |
-| Open Folder and folder switching | Open Folder reveals the active folder. With Library visible or hidden, change the folder in Settings or Use Default: the same window binds to the new library, clears its old selection/filter and receives no retired-library updates. | NOT RUN |
-| Keyboard, Orca and visible focus | Tab/Shift+Tab reach the labelled sidebar, prompt list, preview and actions. Arrows navigate the lists; Return on a prompt opens nothing. Escape clears a nonempty filter, then hides the window. Input-method Escape stays with active filter preedit. Orca announces rows/counts, badges, preview and favourite errors; focus stays visible. | NOT RUN |
+| Show in Files and folder switching | Show in Files in the primary or context menu reveals the selected prompt's containing folder. With Library visible or hidden, change the folder in Settings or Use Default: the same window binds to the new library, clears its old selection/filter and receives no retired-library updates. | NOT RUN |
+| Keyboard, Orca and visible focus | Tab/Shift+Tab reach the labelled sidebar, prompt list, preview and actions. Arrows navigate the lists; Return on a prompt focuses the source editor. Delete and F2 request Delete and Rename. Escape in search clears and hides the search bar; elsewhere it leaves Library open. Ctrl+W closes through the draft guard. Input-method Escape stays with active filter preedit. Orca announces rows/counts, badges, preview and favourite errors; focus stays visible. | NOT RUN |
 | Settings and shutdown | Settings and Library can remain open together; closing either leaves the other usable. Quit with both open and reopen the app: no stale window or callback survives. | NOT RUN |
 
-## Library editor tabs (M3L2, NOT RUN)
+## Library editor and inspector (M3L2, NOT RUN)
 
 Run these on X11 and GNOME/KDE Wayland with GTK 4.8 or newer. Record the
 commit, date, desktop/compositor, GTK, Orca and input-method versions.
@@ -306,21 +318,21 @@ file…", disables Revert and holds conflict/discard dialogs until completion.
 
 | Check | Expected result | Status |
 |---|---|---|
-| Edit, Preview and Fields | Select a prompt. Edit shows its exact raw source in a native monospace multiline control; validation updates as you type. Preview uses field defaults, real date/time and literal `{clipboard}`. Fields shows parsed names, labels, descriptions, kinds, defaults, options and behavior read-only. | NOT RUN |
+| Edit, Preview and Fields | Select a prompt. Header toggles and Ctrl+1/Ctrl+2 switch Edit/Preview; the inspector toggle reveals Fields, History and Assistant pages. Edit shows its exact raw source in a native monospace multiline control; validation updates as you type. Preview uses field defaults, real date/time and literal `{clipboard}`. Fields shows parsed names, labels, descriptions, kinds, defaults, options and behavior read-only. | NOT RUN |
 | Native editing and undo | Copy/cut/paste, selection, multiline Return, Ctrl+Z and redo work natively. Save normalization keeps the caret in the body and can be undone. Closing/reopening or replacing the library resets the old session's undo. | NOT RUN |
-| Save, Ctrl+S, Revert and Save as Copy | Save writes disk bytes and shows saving/saved or a typed failure while retaining failed drafts. Revert asks before discarding edits. Copy creates a distinct file/id and selects it without replacing the original. History-maintenance failures report a committed save with a warning. | NOT RUN |
-| Read-only prompts | Future format, non-UTF-8 and oversized files show the specific reason and disable Edit, Save and Save as Copy. | NOT RUN |
+| Save, Ctrl+S, Revert and Duplicate | Save writes disk bytes and shows saving/saved or a typed failure while retaining failed drafts. Revert asks before discarding edits. Copy creates a distinct file/id and selects it without replacing the original. History-maintenance failures report a committed save with a warning. | NOT RUN |
+| Read-only prompts | Future format, non-UTF-8 and oversized files show the specific reason and disable source editing, Save and Duplicate. | NOT RUN |
 | Modified conflict and Cancel | Edit, then save the file externally. The modal dialog offers Keep Mine, Take Theirs and Save Mine as Copy. Check each choice on separate files. Native close/Escape/Cancel keeps the conflict and draft; repair invalid text and Save reopens the choices. | NOT RUN |
 | Deleted conflict and Cancel | Delete a dirty file externally. The draft remains visible after its browser row disappears. Keep Mine recreates it; Save Mine as Copy creates a distinct file; Discard closes the draft. Cancel retains the conflict and draft. External deletion retains the selection key, including after Discard; restoring the file recovers its selection. | NOT RUN |
 | Selection, window close and app quit | Dirty selection changes, native close, Ctrl+W and the tray/GApplication quit action wait for Save/Discard/Cancel. Cancel preserves the current selection/window/draft; a failed save keeps the decision pending. Closing retains the selection, filter and section for reopening. Close/quit during a save or file command wait for completion and any newer draft. | NOT RUN |
 | Settings folder switch | While dirty, saving, running a file command or awaiting a decision, choosing another folder or Use Default is refused with the Library editor message and preserves the graph. Save/discard or wait for completion, then switch; no old editor publication or draft leaks into the replacement. | NOT RUN |
-| Picker Edit and no-match creation | Ctrl+Return/Edit and no-match Create dismiss the picker and open the prompt in Library's Edit tab. A target hidden by the Library filter/section is revealed only after the discard guard allows it. Open Folder still reveals the active folder. | NOT RUN |
+| Picker Edit and no-match creation | Ctrl+Return/Edit and no-match Create dismiss the picker and open the prompt in Library's Edit mode. A target hidden by the Library filter/section is revealed only after the discard guard allows it. Show in Files reveals the prompt’s containing folder. | NOT RUN |
 | Library New prompt… and Ctrl+N | Both share enablement. The title dialog selects `New prompt` and names the captured folder/editable-group destination or root fallback, including viewer groups. Title then draft guard cancellation writes nothing; Save/Discard creates with collision suffixes and opens Edit with selection visible, filter cleared and source focused. Failure stays in Library; dialogs, busy work and IME composition suppress Ctrl+N. | NOT RUN |
 | New prompt interrupted by an external write | Enter a title, modify the open dirty file externally, resolve the conflict, and confirm the resumed title dialog keeps its title and destination. | PASS on isolated X11, 2026-10-22; Wayland/real IME remain NOT RUN |
 | Ctrl+F from a dirty editor | Focus the filter, type a query and confirm the open source and unsaved status survive even when the selected row is filtered out. | PASS on isolated X11, 2026-10-22; Wayland/Orca remain NOT RUN |
 | Real IBus/Fcitx editor composition | Compose with a real conversion engine. Return commits and Escape cancels through the input method without saving or closing. Model refreshes preserve active preedit; committed characters appear once and update validation/preview. Switch/reopen the session and confirm no old composition survives. | NOT RUN |
-| Orca and visible focus | Tab/Shift+Tab reach source, tabs, actions, validation, Fields and modal choices. Orca announces labels, read-only reasons, errors and conflict/discard choices; Cancel has initial dialog focus. | NOT RUN |
-| Clipboard privacy | Trace `gdk_clipboard_read_text_async` with harmless clipboard contents, recording counts only. Browsing, typing, tab changes and saves read zero times when the prompt source contains `{{clipboard}}`; Preview renders the literal marker `{clipboard}`. | NOT RUN |
+| Orca and visible focus | Tab/Shift+Tab reach source, mode toggles, menus, validation status, inspector pages and modal choices. Orca announces labels, read-only reasons, errors and conflict/discard choices; Cancel has initial dialog focus. | NOT RUN |
+| Clipboard privacy | Trace `gdk_clipboard_read_text_async` with harmless clipboard contents, recording counts only. Browsing, typing, mode or inspector changes and saves read zero times when the prompt source contains `{{clipboard}}`; Preview renders the literal marker `{clipboard}`. | NOT RUN |
 
 The 2026-10-22 follow-up smoke used GTK 4.8.3, Xvfb and Openbox 3.6.1,
 isolated library/app data, native pointer/xdotool input and screenshot/disk
@@ -343,17 +355,17 @@ not complete these owner checks.
 | History list and refresh | Save several revisions, open History and use Refresh History. Revisions appear newest first with local timestamp, exact byte size and Valid or Forensic only status. Opening a different prompt refreshes its own list. | NOT RUN |
 | History selected during a command | Select History while Rename or Move runs, including returning to previously loaded History. When the command completes, the list reloads even after an occupied-destination failure at the same path, and the command's feedback stays visible. Empty history settles without repeated reads. | NOT RUN |
 | First save and external identity assignment | Keep History open on an unassigned prompt, edit and save. Its first revision appears at the same path, with native undo and caret preserved. Rename follows the assigned prompt and its revisions. Assign an id externally at the same path on a clean prompt: History reloads that id's revisions. | NOT RUN |
-| Save and availability recovery | Keep History open and save again: the list gains the previous source without changing tabs. After library availability is lost and returns, History retries and clears any prior read failure, including an earlier read whose reply is still pending. If the prompt is reloading, History retries after that load completes. Reporting available again without a loss does not repeat the read. | NOT RUN |
+| Save and availability recovery | Keep History open and save again: the list gains the previous source without changing inspector pages. After library availability is lost and returns, History retries and clears any prior read failure, including an earlier read whose reply is still pending. If the prompt is reloading, History retries after that load completes. Reporting available again without a loss does not repeat the read. | NOT RUN |
 | Read-only revision preview | Select valid and malformed revisions. Exact source appears in a read-only monospace control and leaves the live draft untouched. Non-UTF-8 and oversized revisions show the specific reason without fabricated text. | NOT RUN |
 | Restore and refusals | Restore a valid revision: the editor and history reload and the current id stays. Forensic and future-format revisions remain selectable; Restore reports the typed refusal without changing the file. | NOT RUN |
-| Rename | Use Rename… in the editor header with a .md filename. File bytes and front-matter title stay; the selection follows the new path, including an unassigned prompt. Occupied, ignored and invalid names show an error without replacing another file. | NOT RUN |
+| Rename | Use Rename… in the primary or list context menu with a .md filename. File bytes and front-matter title stay; the selection follows the new path, including an unassigned prompt. Occupied, ignored and invalid names show an error without replacing another file. | NOT RUN |
 | Move | Choose an existing folder, type a new nested relative folder, then move to the root with an empty input. Parents are created and selection follows. Occupied destinations and invalid paths are refused. | NOT RUN |
 | Scope drag (M6, Wayland and X11) | Drag prompt rows onto group, All (personal root) and folder destinations. Repeat personal to group, group to personal and group to group with Save/Discard/Cancel, occupied destinations and viewer/creator denial. Identity and history stay with the prompt; denied transfers retain a private copy. External file drops still import. | NOT RUN |
 | Delete and Cancel | Delete… names the exact relative path and initially focuses Cancel. Cancel, Escape and native close preserve the file. Confirming closes the editor and clears selection while keeping history. | NOT RUN |
 | Unsaved decisions | Repeat Rename, Move, Delete and Restore with a dirty draft. Save commits before the command; Discard uses the loaded baseline; Cancel preserves draft, file, history and selection. A failed save keeps the decision pending. | NOT RUN |
 | Stale or missing file | Change or delete the file externally while a form is open, then confirm. The existing modified/deleted conflict dialog opens without overwriting or recreating it. Resolve it, then retry the intended command. | NOT RUN |
 | Disabled controls and graph replacement | No open prompt, read-only files, unavailable library, saving, pending decisions and running commands disable file actions and Restore. Losing the library or switching its graph cancels an open form and drops stale replies. | NOT RUN |
-| Keyboard, Orca and privacy | Tab/Shift+Tab reach the header actions, History list, preview and labelled form controls. Orca announces revision metadata, refusal/status copy and delete confirmation. Escape respects native input-method preedit. Browsing History and using these commands read no clipboard contents. | NOT RUN |
+| Keyboard, Orca and privacy | Tab/Shift+Tab reach the header controls and menus, History list, preview and labelled form controls. Orca announces revision metadata, refusal/status copy and delete confirmation. Escape respects native input-method preedit. Browsing History and using these commands read no clipboard contents. | NOT RUN |
 
 ## Orca, visible focus and reduced motion (M2, NOT RUN)
 

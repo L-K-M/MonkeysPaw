@@ -1,36 +1,5 @@
 import MonkeysPawCore
 import SwiftUI
-import UniformTypeIdentifiers
-
-struct LibraryImportControls: View {
-    @ObservedObject var presentation: LibraryImportViewState
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Button(ImportStrings.action, action: presentation.choose)
-                .disabled(!presentation.canImport)
-                .accessibilityIdentifier("library-import")
-            Picker(ImportStrings.destination, selection: Binding(get: { presentation.destination },
-                set: presentation.selectDestination)) {
-                ForEach(presentation.destinations, id: \.self) { path in
-                    Text(verbatim: path.string + "/").tag(path)
-                }
-            }
-            .pickerStyle(.menu)
-            .fixedSize()
-            .disabled(!presentation.canImport)
-            .accessibilityIdentifier("library-import-destination")
-            Spacer()
-            if presentation.isBusy {
-                ProgressView().controlSize(.small)
-                Text(ImportStrings.progress(presentation.progress,
-                    selection: presentation.requestNumber, total: presentation.requestCount))
-                    .font(.caption).accessibilityIdentifier("library-import-progress")
-            }
-        }
-        .padding(.horizontal, 12).padding(.bottom, 12)
-    }
-}
 
 struct LibraryImportReportView: View {
     @ObservedObject var presentation: LibraryImportViewState
@@ -97,14 +66,5 @@ struct LibraryImportReportView: View {
                 Text(verbatim: ImportStrings.warning(item.element)).font(.caption)
             }
         }
-    }
-}
-
-/// Keeps SwiftUI's asynchronous item-provider bridge tied to the current graph.
-struct LibraryImportDropTarget: ViewModifier {
-    @ObservedObject var presentation: LibraryImportViewState
-
-    func body(content: Content) -> some View {
-        content.onDrop(of: [UTType.fileURL.identifier], isTargeted: nil, perform: presentation.acceptDrop)
     }
 }

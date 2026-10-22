@@ -43,6 +43,24 @@ The app lives in the menu bar. Open Library and Settings there. Library edits
 Markdown under `~/Documents/MonkeysPaw` by default; General can choose a folder.
 Use [the format guide](docs/plan/05-prompt-library.md) for external edits.
 
+## Library
+
+Use the sidebar for folders, tags, favourites and recent prompts. The toolbar
+search filters the prompt list; **Option+Cmd+F** focuses it. **Cmd+F** finds
+text in the source editor.
+
+- **Cmd+N** creates a prompt; **Cmd+S** saves; **Shift+Cmd+S** duplicates.
+- **Cmd+1 / Cmd+2** switches between Edit and Preview.
+- **Option+Cmd+I** toggles the Fields, History and Assistant inspector.
+- The File menu and prompt context menu offer rename, move, reveal and delete.
+- **Cmd+W** closes the window. Escape dismisses a dialog or clears focused
+  search. Closing with edits offers Save, Don't Save and Cancel.
+
+Saving is explicit: each save creates a history revision. One Library window
+owns the draft; closing it keeps the menu-bar utility running. Its layout and
+toolbar are remembered. See [desktop verification](docs/platform/native-desktop.md)
+for build commands, automated coverage and remaining hardware checks.
+
 ## Repeat and Delivery settings
 
 Settings → Shortcuts lets you assign, clear and verify each action. Repeat

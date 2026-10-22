@@ -217,8 +217,10 @@ final class LinuxGroupManagementTests: XCTestCase {
         backend.configure { $0.blockNext = .refresh(GroupPageBackend.group) }
         try click("refresh")
         XCTAssertTrue(GTKTestSupport.spin { self.backend.isBlocked })
-        let notebook = try settingsWidget("settings-tabs", in: window)
-        XCTAssertNotEqual(gtk_widget_grab_focus(notebook), 0)
+        // Moving focus to the header-bar switcher leaves all rendered regions.
+        let switcher = try settingsWidget("settings-page-switcher", in: window)
+        let moved = try XCTUnwrap(GTKTestSupport.firstFocusable(switcher))
+        XCTAssertNotEqual(gtk_widget_grab_focus(moved), 0)
         let movedFocus = gtk_root_get_focus(gtk_widget_get_root(window))
         XCTAssertNotNil(movedFocus)
         backend.release()
@@ -263,8 +265,8 @@ final class LinuxGroupManagementTests: XCTestCase {
         drainUI()
         XCTAssertEqual(backend.copyCount, 1)
         XCTAssertTrue(backend.copyMatchesCreatedLink, "Copy did not forward the created invitation")
-        let notebook = try settingsWidget("settings-tabs", in: window)
-        gtk_notebook_set_current_page(mp_notebook(notebook), 0)
+        let stack = try settingsWidget("settings-stack", in: window)
+        gtk_stack_set_visible_child_name(mp_stack(stack), "general")
         XCTAssertTrue(GTKTestSupport.spin { self.model.state.createdInvite == nil })
         XCTAssertTrue(try label("invite-link").isEmpty, "Tab hide retained invitation text")
         try selectAccount()
@@ -521,9 +523,9 @@ final class LinuxGroupManagementTests: XCTestCase {
     }
 
     private func selectAccount() throws {
-        let notebook = try settingsWidget("settings-tabs", in: window)
+        let stack = try settingsWidget("settings-stack", in: window)
         let page = try settingsWidget("settings-account-page", in: window)
-        gtk_notebook_set_current_page(mp_notebook(notebook), gtk_notebook_page_num(mp_notebook(notebook), page))
+        gtk_stack_set_visible_child(mp_stack(stack), page)
     }
     private func findWindow() -> GTK.Widget? {
         var windows = gtk_application_get_windows(application)

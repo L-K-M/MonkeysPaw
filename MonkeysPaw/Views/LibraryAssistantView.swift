@@ -4,22 +4,20 @@ import SwiftUI
 
 struct LibraryAssistantView: View {
     @ObservedObject var presentation: LibraryAssistantViewState
-    let close: () -> Void
+    @FocusState private var instructionFocused: Bool
+    @State private var appliedFocusRevision: UInt64 = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(LibraryAssistantStrings.title).font(.headline)
-                Spacer()
-                Button("Close Assistant", action: close)
-                    .accessibilityIdentifier("library-assistant-close")
-            }
-            Picker("Assistant flow", selection: $presentation.flow) {
-                Text("Write").tag(LibraryAssistantViewState.Flow.write)
-                Text("Review").tag(LibraryAssistantViewState.Flow.review)
-                Text("Improve").tag(LibraryAssistantViewState.Flow.improve)
+            Picker(LibraryAssistantStrings.flow, selection: $presentation.flow) {
+                Text(LibraryAssistantStrings.write).tag(LibraryAssistantViewState.Flow.write)
+                Text(LibraryAssistantStrings.review).tag(LibraryAssistantViewState.Flow.review)
+                Text(LibraryAssistantStrings.improve).tag(LibraryAssistantViewState.Flow.improve)
             }
             .pickerStyle(.segmented)
+            // The inspector is narrow; the segment titles explain themselves.
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
             .disabled(presentation.isWorking || presentation.state.isAccepting)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -28,7 +26,7 @@ struct LibraryAssistantView: View {
                         Text(LibraryAssistantStrings.viewer).font(.caption)
                     }
                     if presentation.isWorking {
-                        HStack { ProgressView().controlSize(.small); Text("Working…") }
+                        HStack { ProgressView().controlSize(.small); Text(LibraryAssistantStrings.working) }
                     }
                     Text(presentation.resultMessage).fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("library-assistant-result")
@@ -47,21 +45,34 @@ struct LibraryAssistantView: View {
         }
         .padding(12)
         .accessibilityIdentifier("library-assistant")
+        .onChange(of: presentation.instructionFocusRevision) { _ in
+            applyInstructionFocus()
+        }
+        .onAppear { applyInstructionFocus() }
+    }
+
+    /// A focus bump may arrive before the inspector mounts this view; the
+    /// applied marker keeps each request once-only either way.
+    private func applyInstructionFocus() {
+        guard presentation.instructionFocusRevision != appliedFocusRevision else { return }
+        appliedFocusRevision = presentation.instructionFocusRevision
+        guard presentation.flow == .improve else { return }
+        instructionFocused = true
     }
 
     @ViewBuilder private var inputs: some View {
         switch presentation.flow {
         case .write:
-            Text("Describe the reusable prompt you want to write.").font(.caption)
+            Text(LibraryAssistantStrings.writeHint).font(.caption)
             TextEditor(text: $presentation.brief).frame(minHeight: 72, maxHeight: 120)
-                .accessibilityLabel("Prompt brief")
+                .accessibilityLabel(LibraryAssistantStrings.brief)
                 .disabled(presentation.isWorking || presentation.state.isAccepting)
-            Button("Write", action: presentation.write).disabled(!presentation.canWrite)
+            Button(LibraryAssistantStrings.write, action: presentation.write).disabled(!presentation.canWrite)
                 .accessibilityIdentifier("library-assistant-write")
             if let message = presentation.writeDisabledMessage { Text(message).font(.caption) }
         case .review:
-            Text("Review the current template against the prompt rubric.").font(.caption)
-            Button("Review", action: presentation.review).disabled(!presentation.canReview)
+            Text(LibraryAssistantStrings.reviewHint).font(.caption)
+            Button(LibraryAssistantStrings.review, action: presentation.review).disabled(!presentation.canReview)
                 .accessibilityIdentifier("library-assistant-review")
             if let message = presentation.sourceDisabledMessage { Text(message).font(.caption) }
         case .improve:
@@ -72,11 +83,12 @@ struct LibraryAssistantView: View {
 
     private var instruction: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Improvement instruction", text: Binding(get: { presentation.state.instruction },
+            TextField(LibraryAssistantStrings.instruction, text: Binding(get: { presentation.state.instruction },
                 set: presentation.editInstruction))
-                .accessibilityLabel("Improvement instruction")
+                .accessibilityLabel(LibraryAssistantStrings.instruction)
+                .focused($instructionFocused)
                 .disabled(presentation.isWorking || presentation.state.isAccepting)
-            Text("Use selected findings, an instruction, or both.").font(.caption)
+            Text(LibraryAssistantStrings.instructionHint).font(.caption)
             Button(presentation.improveTitle, action: presentation.improve).disabled(!presentation.canImprove)
                 .accessibilityIdentifier("library-assistant-improve")
         }
@@ -100,7 +112,7 @@ struct LibraryAssistantView: View {
                         .textSelection(.enabled)
                     switch item.element.quoteMatch {
                     case .matched:
-                        Button("Show quote in editor") { presentation.highlightFinding(item.offset) }
+                        Button(LibraryAssistantStrings.showQuote) { presentation.highlightFinding(item.offset) }
                             .disabled(!presentation.canSelectFindings)
                     case .unmatched:
                         Text(LibraryAssistantStrings.unmatched).font(.caption).foregroundStyle(.secondary)
@@ -123,7 +135,7 @@ struct LibraryAssistantView: View {
 
     private func draft(_ artifact: LlmArtifact) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Draft").font(.headline)
+            Text(LibraryAssistantStrings.draft).font(.headline)
             Text(verbatim: artifact.title).font(.headline)
             Text(verbatim: artifact.description)
             Text(verbatim: artifact.tags.joined(separator: ", ")).font(.caption)
@@ -133,7 +145,7 @@ struct LibraryAssistantView: View {
             }
             Text(verbatim: artifact.body).font(.system(.body, design: .monospaced)).textSelection(.enabled)
             if !artifact.notes.isEmpty {
-                Text("Draft notes (not saved)").font(.caption)
+                Text(LibraryAssistantStrings.draftNotes).font(.caption)
                 Text(verbatim: artifact.notes).textSelection(.enabled)
             }
         }
@@ -154,18 +166,18 @@ struct LibraryAssistantView: View {
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
             if presentation.isWorking || presentation.state.isAccepting {
-                Button("Cancel", action: presentation.cancel)
+                Button(LibraryAssistantStrings.cancel, action: presentation.cancel)
             } else {
                 HStack {
-                    Button("Show diff", action: presentation.showDiff).disabled(!presentation.canShowDiff)
-                    Button("Accept", action: presentation.accept).disabled(!presentation.canAccept)
+                    Button(LibraryAssistantStrings.showDiff, action: presentation.showDiff).disabled(!presentation.canShowDiff)
+                    Button(LibraryAssistantStrings.accept, action: presentation.accept).disabled(!presentation.canAccept)
                         .accessibilityIdentifier("library-assistant-accept")
-                    Button("Reject", action: presentation.reject)
+                    Button(LibraryAssistantStrings.reject, action: presentation.reject)
                         .accessibilityIdentifier("library-assistant-reject")
                 }
-                TextField("Feedback for retry", text: $presentation.feedback)
-                    .accessibilityLabel("Feedback for retry")
-                Button("Retry with feedback", action: presentation.retry).disabled(!presentation.canRetry)
+                TextField(LibraryAssistantStrings.feedback, text: $presentation.feedback)
+                    .accessibilityLabel(LibraryAssistantStrings.feedback)
+                Button(LibraryAssistantStrings.retry, action: presentation.retry).disabled(!presentation.canRetry)
                     .accessibilityIdentifier("library-assistant-retry")
             }
         }

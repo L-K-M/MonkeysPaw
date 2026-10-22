@@ -78,7 +78,7 @@ final class MacSyncStatusViewTests: XCTestCase {
         let focusRevision = presentation.focusRevision
         assertMatrix(source, model: model, status: status)
         XCTAssertEqual(presentation.focusRevision, focusRevision)
-        let host = NSHostingView(rootView: LibraryView(presentation: presentation))
+        let host = NSHostingView(rootView: LibrarySidebarView(presentation: presentation))
         host.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         host.layoutSubtreeIfNeeded()
         model.retire()

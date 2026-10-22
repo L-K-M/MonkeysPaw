@@ -253,40 +253,65 @@ struct SettingsAccountView: View {
     @ObservedObject var presentation: AccountSettingsViewState
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        Form {
+            Section {
                 Text(presentation.connectionMessage).textSelection(.enabled)
                 if let state = presentation.state { Text(state.secretStorageMessage) }
                 loginForm
                 status
                 reservedFolders
-                devices
                 heldFiles
-                Divider()
+            } header: {
+                Text(SettingsAccountStrings.tab)
+            }
+            // Devices exist only for a signed-in account; hide an empty section.
+            if !(presentation.state?.devices ?? []).isEmpty {
+                Section {
+                    devices
+                } header: {
+                    Text(SettingsAccountStrings.devices)
+                }
+            }
+            Section {
                 SettingsInviteView(presentation: presentation.invites)
-                Divider()
+            } header: {
+                Text(SettingsAccountStrings.invites)
+            }
+            Section {
                 if presentation.groups.isBusy { Text(GroupManagementStrings.busyAccount) }
                 GroupManagementView(presentation: presentation.groups)
+            } header: {
+                Text(GroupManagementStrings.groups)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
         }
+        .formStyle(.grouped)
         .onDisappear { presentation.hide() }
     }
 
     private var loginForm: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField(SettingsAccountStrings.server, text: $presentation.server)
-                .accessibilityLabel(SettingsAccountStrings.server)
-            TextField(SettingsAccountStrings.username, text: $presentation.username)
-                .accessibilityLabel(SettingsAccountStrings.username)
-            SettingsAccountPasswordField(input: presentation.passwordInput,
-                reset: presentation.passwordInputReset, isEditable: presentation.canOperate)
-                .frame(height: 24)
-            TextField(SettingsAccountStrings.deviceName, text: $presentation.deviceName)
-                .accessibilityLabel(SettingsAccountStrings.deviceName)
+        Group {
+            LabeledContent(SettingsAccountStrings.server) {
+                TextField(SettingsAccountStrings.server, text: $presentation.server,
+                          prompt: Text(SettingsAccountStrings.serverPrompt))
+                    .labelsHidden().accessibilityLabel(SettingsAccountStrings.server)
+            }
+            LabeledContent(SettingsAccountStrings.username) {
+                TextField(SettingsAccountStrings.username, text: $presentation.username,
+                          prompt: Text(SettingsAccountStrings.requiredPrompt))
+                    .labelsHidden().accessibilityLabel(SettingsAccountStrings.username)
+            }
+            LabeledContent(SettingsAccountStrings.password) {
+                SettingsAccountPasswordField(input: presentation.passwordInput,
+                    reset: presentation.passwordInputReset, isEditable: presentation.canOperate)
+                    .frame(height: 24)
+            }
+            LabeledContent(SettingsAccountStrings.deviceName) {
+                TextField(SettingsAccountStrings.deviceName, text: $presentation.deviceName,
+                          prompt: Text(SettingsAccountStrings.requiredPrompt))
+                    .labelsHidden().accessibilityLabel(SettingsAccountStrings.deviceName)
+            }
             HStack {
-                Button(SettingsAccountStrings.signIn, action: presentation.login)
+                signIn
                 Button(SettingsAccountStrings.refresh, action: presentation.refresh)
                 Button(SettingsAccountStrings.signOut, action: presentation.signOut)
                     .disabled(!presentation.canSignOut)
@@ -295,19 +320,29 @@ struct SettingsAccountView: View {
         .disabled(!presentation.canOperate)
     }
 
-    private var status: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let operation = presentation.state?.operation {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text(SettingsAccountStrings.progress(operation))
-                }
-                .accessibilityElement(children: .combine)
+    @ViewBuilder private var signIn: some View {
+        if presentation.state?.connection == nil {
+            Button(SettingsAccountStrings.signIn, action: presentation.login).keyboardShortcut(.defaultAction)
+        } else {
+            Button(SettingsAccountStrings.signIn, action: presentation.login)
+        }
+    }
+
+    /// One form row per status line; nothing when the account is idle.
+    @ViewBuilder private var status: some View {
+        if let operation = presentation.state?.operation {
+            HStack {
+                ProgressView().controlSize(.small)
+                Text(SettingsAccountStrings.progress(operation))
             }
-            if let issue = presentation.state?.error { Text(issue.message).foregroundStyle(.red) }
-            if let message = presentation.cleanupMessage {
-                Text(message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
+            .accessibilityElement(children: .combine)
+        }
+        if let issue = presentation.state?.error {
+            Label(issue.message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+        }
+        if let message = presentation.cleanupMessage {
+            Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -322,7 +357,6 @@ struct SettingsAccountView: View {
 
     private var devices: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(SettingsAccountStrings.devices).font(.headline)
             ForEach(presentation.state?.devices ?? [], id: \.id) { device in
                 HStack {
                     Text(SettingsAccountStrings.device(device))

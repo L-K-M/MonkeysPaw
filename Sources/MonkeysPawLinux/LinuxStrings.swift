@@ -34,7 +34,6 @@ enum LinuxStrings {
     static let removeFavorite = "Remove from Favourites"
     static let readOnly = "Read-only"
     static let invalidPrompt = "Invalid"
-    static let libraryHint = "Ctrl+N: new prompt · Ctrl+F: search · Ctrl+S: save · Ctrl+D: toggle favourite · Ctrl+W: close · Esc: clear filter, then close"
     static let newPrompt = "New prompt…"
     static let newPromptTitle = "New prompt"
     static let newPromptDefaultTitle = "New prompt"
@@ -134,6 +133,7 @@ enum LinuxStrings {
     static let openFolder = "Open Folder"
     static let togglePicker = "Toggle picker"
     static let repeatLast = "Repeat last"
+    static let trayRepeat = "Repeat Last Prompt"
     static let openRepeatPrompt = "Open prompt…"
 
     static func repeatMessage(_ result: RepeatResult) -> String? {

@@ -18,52 +18,62 @@ final class LinuxSettingsDeliveryPage {
 
     init(model: DeliverySettingsModel, session: DesktopSession) {
         self.model = model
-        let page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
-        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
-                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(page, 12) }
-        widget = gtk_scrolled_window_new()!
-        gtk_widget_set_name(widget, "settings-delivery-page")
-        gtk_scrolled_window_set_child(mp_scrolled_window(widget), page)
+        let (scroll, column) = LinuxSettingsLayout.page(named: "settings-delivery-page")
+        widget = scroll
+        do {
+            let pasting = LinuxSettingsLayout.group(LinuxSettingsStrings.pasting, in: column)
+            let list = LinuxSettingsLayout.list(in: pasting)
+            let chordRow = LinuxSettingsLayout.row(in: list)
+            LinuxSettingsLayout.rowText(DeliverySettingsStrings.defaultChord, in: chordRow)
+            chord = gtk_combo_box_text_new()!
+            gtk_widget_set_name(chord, "settings-default-chord")
+            mp_accessible_label(chord, DeliverySettingsStrings.defaultChord)
+            for title in [DeliverySettingsStrings.standardChord, DeliverySettingsStrings.terminalChord] {
+                gtk_combo_box_text_append_text(mp_combo_box_text(chord), title)
+            }
+            gtk_widget_set_valign(chord, GTK_ALIGN_CENTER)
+            gtk_box_append(mp_box(chordRow), chord)
 
-        gtk_box_append(mp_box(page), GTK.label(DeliverySettingsStrings.defaultChord))
-        chord = gtk_combo_box_text_new()!
-        gtk_widget_set_name(chord, "settings-default-chord")
-        mp_accessible_label(chord, DeliverySettingsStrings.defaultChord)
-        for title in [DeliverySettingsStrings.standardChord, DeliverySettingsStrings.terminalChord] {
-            gtk_combo_box_text_append_text(mp_combo_box_text(chord), title)
-        }
-        gtk_box_append(mp_box(page), chord)
-        let explanation = GTK.label(DeliverySettingsStrings.chordExplanation(for: session))
-        gtk_widget_set_name(explanation, "settings-chord-explanation")
-        gtk_box_append(mp_box(page), explanation)
-        let explicit = GTK.label(LinuxSettingsDeliveryStrings.explicitChoices)
-        gtk_widget_set_name(explicit, "settings-explicit-chords")
-        gtk_box_append(mp_box(page), explicit)
-        restore = gtk_check_button_new_with_label(DeliverySettingsStrings.restoreClipboard)!
-        gtk_widget_set_name(restore, "settings-restore-clipboard")
-        mp_accessible_label(restore, DeliverySettingsStrings.restoreClipboard)
-        gtk_box_append(mp_box(page), restore)
-        gtk_box_append(mp_box(page), GTK.label(DeliverySettingsStrings.restoreCaveat))
-        gtk_box_append(mp_box(page), GTK.label(LinuxSettingsDeliveryStrings.restoreOwnership))
-        status = Self.label("settings-delivery-status", in: page)
-        permissions = Self.label("settings-delivery-permissions", in: page)
-        error = Self.label("settings-delivery-error", in: page)
-        gtk_widget_add_css_class(error, "error")
-        report = Self.label("settings-delivery-report", in: page)
+            let restoreRow = LinuxSettingsLayout.row(in: list)
+            LinuxSettingsLayout.rowText(DeliverySettingsStrings.restoreClipboard, in: restoreRow)
+            // A check button keeps the existing tests and accessibility intact.
+            restore = gtk_check_button_new()!
+            gtk_widget_set_name(restore, "settings-restore-clipboard")
+            mp_accessible_label(restore, DeliverySettingsStrings.restoreClipboard)
+            gtk_widget_set_valign(restore, GTK_ALIGN_CENTER)
+            gtk_box_append(mp_box(restoreRow), restore)
 
-        let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        testButton = GTK.button(DeliverySettingsStrings.testPaste) { [weak self] in
-            guard let self, self.isShown else { return }
-            self.model.runSelfTest()
+            LinuxSettingsLayout.caption(
+                DeliverySettingsStrings.chordExplanation(for: session),
+                name: "settings-chord-explanation", in: pasting)
+            LinuxSettingsLayout.caption(
+                LinuxSettingsDeliveryStrings.explicitChoices,
+                name: "settings-explicit-chords", in: pasting)
+            LinuxSettingsLayout.caption(DeliverySettingsStrings.restoreCaveat, in: pasting)
+            LinuxSettingsLayout.caption(LinuxSettingsDeliveryStrings.restoreOwnership, in: pasting)
+
+            let statusGroup = LinuxSettingsLayout.group(LinuxSettingsStrings.status, in: column)
+            let statusList = LinuxSettingsLayout.list(in: statusGroup)
+            status = Self.rowLabel("settings-delivery-status", in: statusList)
+            permissions = Self.rowLabel("settings-delivery-permissions", in: statusList)
+            report = Self.rowLabel("settings-delivery-report", in: statusList)
+            error = LinuxSettingsLayout.caption(name: "settings-delivery-error", in: statusGroup)
+            gtk_widget_add_css_class(error, "error")
+
+            let buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+            testButton = GTK.button(DeliverySettingsStrings.testPaste) { [weak self] in
+                guard let self, self.isShown else { return }
+                self.model.runSelfTest()
+            }
+            gtk_widget_set_name(testButton, "settings-test-paste")
+            let setup = GTK.button(DeliverySettingsStrings.openSetup) { [weak self] in
+                guard let self, self.isShown else { return }
+                self.model.openSetup()
+            }
+            gtk_widget_set_name(setup, "settings-delivery-open-setup")
+            for button in [testButton!, setup] { gtk_box_append(mp_box(buttons), button) }
+            gtk_box_append(mp_box(statusGroup), buttons)
         }
-        gtk_widget_set_name(testButton, "settings-test-paste")
-        let setup = GTK.button(DeliverySettingsStrings.openSetup) { [weak self] in
-            guard let self, self.isShown else { return }
-            self.model.openSetup()
-        }
-        gtk_widget_set_name(setup, "settings-delivery-open-setup")
-        for button in [testButton!, setup] { gtk_box_append(mp_box(buttons), button) }
-        gtk_box_append(mp_box(page), buttons)
 
         GTK.onSignal(chord, "changed") { [weak self] in
             guard let self, self.isShown, !self.isRendering, !self.model.state.isReadOnly else { return }
@@ -122,11 +132,10 @@ final class LinuxSettingsDeliveryPage {
         Self.message(report, text)
     }
 
-    private static func label(_ name: String, in page: GTK.Widget) -> GTK.Widget {
-        let label = GTK.label("")
-        gtk_widget_set_name(label, name)
-        gtk_box_append(mp_box(page), label)
-        return label
+    private static func rowLabel(_ name: String, in list: GTK.Widget) -> GTK.Widget {
+        let row = LinuxSettingsLayout.row(in: list)
+        let text = LinuxSettingsLayout.rowText(in: row)
+        return LinuxSettingsLayout.label("", name: name, in: text)
     }
 
     private static func message(_ label: GTK.Widget, _ text: String?) {

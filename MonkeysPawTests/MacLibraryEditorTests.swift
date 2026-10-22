@@ -110,7 +110,7 @@ final class MacLibraryEditorTests: XCTestCase {
         }
         work.drain()
         XCTAssertEqual(presentation.editorState.conflict?.kind, kind)
-        guard case .conflict(let conflict, _) = try dialog().dialog else { throw EditorTestError.noConflict }
+        guard case .conflict(let conflict, _, _) = try dialog().dialog else { throw EditorTestError.noConflict }
         XCTAssertEqual(conflict.kind, kind)
         return presentation
     }
@@ -118,13 +118,13 @@ final class MacLibraryEditorTests: XCTestCase {
     func testEditTabsSaveExactCommittedBytesValidationAndClipboardFreePreview() throws {
         let source = "---\nfields:\n  tone: {default: brief}\n---\n{{tone}} {{implicit}} {{date}} {{time}} {{clipboard}}"
         let presentation = try open(source)
-        XCTAssertEqual(presentation.editorTab, .edit)
+        XCTAssertEqual(presentation.editorMode, .edit)
         XCTAssertEqual(presentation.editorState.fields.map(\.name), ["tone", "implicit"])
         XCTAssertTrue(presentation.editorState.preview.contains("brief {implicit}"))
         XCTAssertTrue(presentation.editorState.preview.hasSuffix("{clipboard}"))
         XCTAssertFalse(presentation.editorState.preview.contains("{{date}}"))
-        presentation.editorTab = .preview
-        presentation.editorTab = .fields
+        presentation.editorMode = .preview
+        presentation.showInspector(.fields)
         presentation.edit("---\ntitle: [broken\n---\nDraft")
         XCTAssertTrue(presentation.editorState.issues.contains { $0.code == .invalidYAML })
         presentation.save()
@@ -150,10 +150,7 @@ final class MacLibraryEditorTests: XCTestCase {
         guard case .editedBuffer? = presentation.favoriteOutcome else { return XCTFail("Expected a draft favourite") }
         XCTAssertEqual(try body(), "Original")
         XCTAssertTrue(try XCTUnwrap(presentation.editorState.source).contains("favorite: true"))
-        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
-            timestamp: 0, windowNumber: try window().windowNumber, context: nil,
-            characters: "s", charactersIgnoringModifiers: "s", isARepeat: false, keyCode: UInt16(kVK_ANSI_S)))
-        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow).handleKeyEvent(event))
+        try XCTUnwrap(delegate.libraryWindow).saveDocument(nil)
         work.drain()
         XCTAssertEqual(try body(), "Draft")
         XCTAssertTrue(presentation.snapshot.selectedPrompt?.favorite == true)
@@ -173,12 +170,9 @@ final class MacLibraryEditorTests: XCTestCase {
         panel.orderFrontRegardless()
         let controller = try XCTUnwrap(delegate.libraryWindow)
         for otherWindow in [settings, panel] {
-            for (characters, keyCode) in [("s", kVK_ANSI_S), ("w", kVK_ANSI_W)] {
-                let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero,
-                    modifierFlags: .command, timestamp: 0, windowNumber: otherWindow.windowNumber,
-                    context: nil, characters: characters, charactersIgnoringModifiers: characters,
-                    isARepeat: false, keyCode: UInt16(keyCode)))
-                XCTAssertFalse(controller.handleKeyEvent(event))
+            for action in [#selector(LibraryWindowController.saveDocument(_:)), #selector(NSWindow.performClose(_:))] {
+                let item = NSMenuItem(title: "Library command", action: action, keyEquivalent: "")
+                XCTAssertFalse(controller.validateLibraryMenuItem(item, in: otherWindow))
             }
         }
         work.drain()
@@ -205,6 +199,21 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(presentation.editorState.source, "Original")
         XCTAssertFalse(presentation.editorState.isDirty)
         XCTAssertEqual(try body(), "Original")
+    }
+
+    func testCancelledTableSelectionReturnsHighlightToTheOpenPrompt() throws {
+        try put("Second", at: "two.md")
+        let presentation = try open()
+        let list = try XCTUnwrap(delegate.libraryWindow?.promptList)
+        let originalIndex = try XCTUnwrap(presentation.snapshot.rows.firstIndex { $0.relativePath == "one.md" })
+        let otherIndex = try XCTUnwrap(presentation.snapshot.rows.firstIndex { $0.relativePath == "two.md" })
+        presentation.edit("Mine")
+        list.tableView.selectRowIndexes(IndexSet(integer: otherIndex), byExtendingSelection: false)
+        XCTAssertNotNil(presentation.editorState.pendingDecision)
+        try respond(.decision(.cancel))
+        XCTAssertEqual(list.tableView.selectedRow, originalIndex)
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "one.md")
+        XCTAssertEqual(presentation.editorState.source, "Mine")
     }
 
     func testPendingDecisionDisablesToolbarFileActions() throws {
@@ -266,7 +275,7 @@ final class MacLibraryEditorTests: XCTestCase {
         work.drain()
         XCTAssertEqual(presentation.editorState.conflict, dismissed)
         XCTAssertEqual(dialogs.count, count + 1)
-        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected new conflict") }
+        guard case .conflict(let conflict, _, _) = try dialog().dialog else { return XCTFail("Expected new conflict") }
         XCTAssertEqual(conflict, dismissed)
         XCTAssertEqual(presentation.editorState.source, "Mine plus")
     }
@@ -277,14 +286,42 @@ final class MacLibraryEditorTests: XCTestCase {
         try window().close()
         let decision = try XCTUnwrap(presentation.editorState.pendingDecision)
         let alert = LibraryWindowController.makeEditorAlert(for: .decision(decision, status: .idle))
-        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["\r", "", "\u{1b}"])
+        XCTAssertEqual(alert.buttons.map(\.title), [EditorStrings.save, "Cancel", "Don't Save"])
+        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["\r", "\u{1b}", "d"])
+        XCTAssertEqual(alert.buttons[2].keyEquivalentModifierMask, .command)
+    }
+
+    func testNativeSaveAndRevertAlertsNameThePromptAndUseMacButtonOrder() throws {
+        let presentation = try open("---\ntitle: Visible Title\n---\nOriginal")
+        presentation.edit("Draft")
+        try window().close()
+        let saveDialog = try dialog().dialog
+        let save = LibraryWindowController.makeEditorAlert(for: saveDialog)
+        XCTAssertEqual(save.messageText, "Do you want to save the changes you made to “Visible Title”?")
+        XCTAssertEqual(save.informativeText, "Your changes will be lost if you don't save them.")
+        XCTAssertEqual(save.buttons.map(\.title), ["Save", "Cancel", "Don't Save"])
+        XCTAssertEqual(save.buttons.map(\.keyEquivalent), ["\r", "\u{1b}", "d"])
+        XCTAssertEqual(save.buttons[2].keyEquivalentModifierMask, .command)
+        try respond(.decision(.cancel))
+        presentation.revert()
+        let revertDialog = try dialog().dialog
+        let revert = LibraryWindowController.makeEditorAlert(for: revertDialog)
+        XCTAssertEqual(revert.messageText, "Revert to the saved version of “Visible Title”?")
+        XCTAssertEqual(revert.informativeText, "Your current changes will be lost.")
+        XCTAssertEqual(revert.buttons.map(\.title), [EditorStrings.revert, "Cancel"])
+        XCTAssertEqual(revert.buttons.map(\.keyEquivalent), ["", "\u{1b}"])
+        XCTAssertNil(revert.window.defaultButtonCell)
+        XCTAssertFalse(revertDialog.accepts(.decision(.save)))
+        try respond(.decision(.cancel))
     }
 
     func testConflictOverwriteNeverUsesReturn() throws {
         let presentation = try externalConflict(.deleted)
         let conflict = try XCTUnwrap(presentation.editorState.conflict)
-        let alert = LibraryWindowController.makeEditorAlert(for: .conflict(conflict, status: .idle))
+        let alert = LibraryWindowController.makeEditorAlert(for: .conflict(conflict, status: .idle, title: presentation.displayTitle))
+        XCTAssertEqual(alert.messageText, "“" + presentation.displayTitle + "” was deleted on disk")
         XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["", "", "", "\u{1b}"])
+        XCTAssertNil(alert.window.defaultButtonCell)
     }
 
     func testNativeDecisionCancelKeepsDraftAndCompletesRequest() throws {
@@ -554,7 +591,7 @@ final class MacLibraryEditorTests: XCTestCase {
         window.orderFrontRegardless()
         try XCTUnwrap(delegate.libraryWindow).windowDidDeminiaturize(
             Notification(name: NSWindow.didDeminiaturizeNotification, object: window))
-        guard case .conflict(let conflict, _) = try dialog().dialog else { return XCTFail("Expected restored sheet") }
+        guard case .conflict(let conflict, _, _) = try dialog().dialog else { return XCTFail("Expected restored sheet") }
         XCTAssertEqual(conflict.kind, .modified)
     }
 
@@ -568,7 +605,7 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertFalse(dialogs.contains { !$0.cancelled })
         window.orderFrontRegardless()
         delegate.applicationDidUnhide(Notification(name: NSApplication.didUnhideNotification))
-        guard case .decision(let decision, _) = try dialog().dialog else { return XCTFail("Expected restored decision") }
+        guard case .decision(let decision, _, _, _) = try dialog().dialog else { return XCTFail("Expected restored decision") }
         XCTAssertEqual(decision.action, .close)
         try respond(.decision(.cancel))
         XCTAssertTrue(window.isVisible)
@@ -621,10 +658,7 @@ final class MacLibraryEditorTests: XCTestCase {
         let presentation = try open()
         presentation.edit("Mine")
         let beforeClose = presentation.sourceRevision
-        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
-            timestamp: 0, windowNumber: try window().windowNumber, context: nil,
-            characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: UInt16(kVK_ANSI_W)))
-        XCTAssertTrue(try XCTUnwrap(delegate.libraryWindow).handleKeyEvent(event))
+        try XCTUnwrap(delegate.libraryWindow).requestClose()
         try respond(.decision(.discard))
         XCTAssertGreaterThan(presentation.sourceRevision, beforeClose)
         delegate.showLibrary()
@@ -842,7 +876,7 @@ final class MacLibraryEditorTests: XCTestCase {
         let path = try XCTUnwrap(presentation.editorState.prompt?.relativePath.string)
         XCTAssertNotEqual(path, "one.md")
         XCTAssertEqual(PromptCodec.parseFile(try files.read(at: path), filename: path).frontMatter.title, "Brand new prompt")
-        XCTAssertEqual(presentation.editorTab, .edit)
+        XCTAssertEqual(presentation.editorMode, .edit)
         XCTAssertTrue(try window().isVisible)
         XCTAssertTrue(launched.isEmpty)
     }
@@ -856,9 +890,10 @@ final class MacLibraryEditorTests: XCTestCase {
         work.drain()
         presentation.selectSection(.folder("Folder"))
         presentation.setFilter("no matching prompt")
-        presentation.editorTab = .preview
+        presentation.editorMode = .preview
         let native = try window()
         let focusRevision = presentation.focusRevision
+        let editorFocus = presentation.editorFocusRevision
         XCTAssertTrue(presentation.canCreatePrompt)
         presentation.requestNewPrompt()
         guard case .newPrompt(let request) = try dialog().dialog else { return XCTFail("Expected title sheet") }
@@ -876,8 +911,9 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertTrue(presentation.snapshot.rows.contains { $0.relativePath == "Folder/Title.md" })
         XCTAssertEqual(presentation.snapshot.selectedSection, .folder("Folder"))
         XCTAssertEqual(presentation.snapshot.filter, "")
-        XCTAssertEqual(presentation.editorTab, .edit)
-        XCTAssertEqual(presentation.focusRevision, focusRevision)
+        XCTAssertEqual(presentation.editorMode, .edit)
+        XCTAssertEqual(presentation.focusRevision, focusRevision, "Creation never moves focus to Search")
+        XCTAssertGreaterThan(presentation.editorFocusRevision, editorFocus, "The new prompt's editor takes focus")
         XCTAssertTrue(try window() === native)
         XCTAssertTrue(native.isVisible)
         XCTAssertTrue(launched.isEmpty)
@@ -933,7 +969,7 @@ final class MacLibraryEditorTests: XCTestCase {
             else { XCTAssertEqual(try files.read(at: oldPath), before) }
             XCTAssertEqual(presentation.editorState.prompt?.relativePath.string, title + ".md")
             XCTAssertEqual(presentation.snapshot.selection, presentation.editorState.prompt)
-            XCTAssertEqual(presentation.editorTab, .edit)
+            XCTAssertEqual(presentation.editorMode, .edit)
             XCTAssertFalse(presentation.editorState.isDirty)
         }
     }

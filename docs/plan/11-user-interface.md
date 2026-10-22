@@ -6,7 +6,7 @@
 |---|---|
 | Picker panel (hidden at start, `PANEL_SIZE = 640×420`) | search field, result list, preview pane, footer with key hints, the paste target, and sync status |
 | Fill form (same panel, next state) | one control per field, live preview, Deliver / Copy / Cancel |
-| Library (menu bar or tray → "Library…", or `⌘L` / `Ctrl+L` in the picker) | sidebar: All, Favourites, Recent, Conflicts, folders, groups, tags; list; editor with tabs Edit · Preview · Fields · History |
+| Library (menu bar or tray → "Library…", or `⌘L` / `Ctrl+L` in the picker) | sidebar: All, Favourites, Recent, Conflicts, folders, groups, tags; list; Edit/Preview editor; Fields, History and Assistant inspector |
 | Assistant (panel inside Library) | write from a description, review findings, improve diff |
 | Settings | General · Shortcuts · Delivery · Assistant · Account (sign in, devices, groups, members, invites) |
 | Setup | §6.4 |
@@ -115,9 +115,9 @@ Per OS:
     silently in text fields (Vervellum).
 - **Linux.** GTK4 through the shim:
   - `GtkListBox` with single selection for the picker
-  - `GtkEntry`, `GtkComboBoxText`, `GtkTextView`
-  - `GtkNotebook` for tabs
-  - `GtkApplication` actions for menus
+  - `GtkSearchEntry`, `GtkEntry`, `GtkComboBoxText`, `GtkTextView`
+  - `GtkHeaderBar`, nested `GtkPaned` panes and `GtkStack` pages
+  - Window and application actions for menus and accelerators
 
   Choose **Settings…** in the picker footer, press **Ctrl+,** in the picker,
   or use your launcher's desktop action to open or raise the reusable General
@@ -125,15 +125,15 @@ Per OS:
   delivery. Closing Settings hides it for the next opening. **Open Setup…**
   in Shortcuts opens the existing Setup window and shares its live service.
 
-  Plainer than macOS by design. The tray uses a StatusNotifierItem where
-  available. The hotkey is the primary entry point, because stock GNOME
+  The windows share the macOS structure with GNOME conventions (§24.6).
+  The tray uses a StatusNotifierItem where available. The hotkey is the primary entry point, because stock GNOME
   hides tray icons.
 
   Linux attaches one StatusNotifierItem at resident startup, with left click and
   **Show Picker** toggling the picker, the shared library status row opening the
   Library window (§11.7) when available, and **Settings…**, **Setup…** and
   **Quit** actions.
-  Without a tray watcher, the hotkey, desktop actions and picker Settings button
+  Without a tray watcher, the hotkey, desktop actions and picker Settings menu item
   remain the entry points.
 
   Linux's **Repeat Last Prompt** desktop action and repeat shortcut share the
@@ -260,7 +260,10 @@ Footers differ per OS:
 | Fill form | `Ctrl+Shift+Return` | deliver with the terminal chord (Linux) |
 | Fill form | `⌥Return` / `Alt+Return` | copy only |
 | Fill form | `Esc` | back to the picker |
-| Library | `⌘/Ctrl+N` · `⌘/Ctrl+S` · `⌘/Ctrl+F` | new · save · search |
+| Library | `⌘/Ctrl+N` · `⌘/Ctrl+S` · `⇧⌘S`/`Ctrl+Shift+S` | new · save · duplicate (save as copy) |
+| Library | `⌥⌘F` / `Ctrl+F` · `⌘F` (macOS) | search the library · find in the editor |
+| Library | `⌘/Ctrl+D` · `⌘/Ctrl+1` · `⌘/Ctrl+2` | favourite · Edit · Preview |
+| Library | `⌃⌘S` / `F9` · `⌥⌘I` (macOS) | sidebar · inspector (§24.4) |
 | Editor | `⌘/Ctrl+R` · `⌘/Ctrl+I` | review · improve |
 
 ### 11.4 First run
@@ -422,25 +425,27 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   including for viewers and dirty open editors. The toggle never edits their
   source, mode or history; sidebar counts and picker ranking refresh from the
   same effective value. Private-scope favourites keep the file-key behavior.
-- **New prompt.** The toolbar action and ⌘/Ctrl+N (also File → New Prompt…
-  on macOS) ask for a title, initially selected as `New prompt`. The dialog
-  names the destination captured from the sidebar: the selected folder or
-  editable group's `Groups/<folder>`, otherwise the library root, including
-  for viewer groups. An external reload or conflict temporarily replaces the
-  dialog; resuming it keeps the entered title and captured destination.
-  Create keeps the exact title, using `New prompt` for
-  blank input, then asks Save/Discard/Cancel for an open dirty draft before
-  writing. Cancelling either dialog writes nothing. Creation uses the usual
-  exclusive filename and collision suffix rules, clears the filter, and opens
-  Edit in the same window with the new prompt selected; keep the containing
-  sidebar section, otherwise select All. Both desktop creation entry points
-  notify sync immediately through its usual save debounce, without waiting
-  for a filesystem event.
-- **Search.** ⌘/Ctrl+F focuses the Library filter without changing the
-  query, selection or editor draft. Native dialogs
-  and active input-method composition retain keyboard ownership.
-- **Edit · Preview · Fields · History.** Edit shows the raw file, front
-  matter and body, with live validation from the same codec and validator as
+- **New prompt.** The toolbar's New Prompt item and ⌘/Ctrl+N (also File →
+  New Prompt… on macOS) ask for a title, initially selected as `New prompt`.
+  The dialog names the destination captured from the sidebar: the selected
+  folder or editable group's `Groups/<folder>`, otherwise the library root,
+  including for viewer groups. An external reload or conflict temporarily
+  replaces the dialog; resuming it keeps the entered title and destination.
+  Create keeps the exact title, using
+  `New prompt` for blank input, then asks Save/Don't Save/Cancel for an open
+  dirty draft before writing. Cancelling either dialog writes nothing.
+  Creation uses the usual exclusive filename and collision suffix rules,
+  clears the filter, and opens Edit in the same window with the new prompt
+  selected and the editor focused; keep the containing sidebar section,
+  otherwise select All. Both desktop creation entry points notify sync
+  through its save debounce without waiting for a filesystem event.
+- **Search.** ⌥⌘F on macOS and Ctrl+F on Linux focus the Library filter
+  without changing the query, selection or editor draft. macOS ⌘F finds
+  text in the source editor. Native dialogs and input-method composition
+  retain keyboard ownership.
+- **Edit · Preview · Fields · History.** Edit and Preview are the editor's
+  modes; Fields, History and the Assistant are inspector panes (§24.3).
+  Edit shows the raw file, front matter and body, with live validation from the same codec and validator as
   the picker. Fields lists the parsed fields read-only. Preview renders with
   field defaults (or the field name when there is none), the real date and
   time, and a `{clipboard}` placeholder; browsing or typing never reads the
@@ -504,8 +509,8 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   unassigned path-hash move (§5.2). A committed editor Delete command explicitly
   clears that key, closes the editor and keeps its history; restoring a
   deleted prompt arrives later. Window close and Cmd+W retain the browser
-  selection, filter and section for reopening; Escape retains the selection
-  when it closes the window after the filter is clear. External deletion
+  selection, filter and section for reopening. Escape clears a focused
+  search field but never closes the window (§24.3). External deletion
   also retains the selection key, including after discarding a deleted draft;
   a missing row has no selected preview, and restoration can recover the
   retained selection. Closing an editor with no prompt is not a Delete signal.

@@ -10,24 +10,23 @@ enum LibraryCommandStrings {
     static let create = "Create"
     static let promptTitle = "Title"
     static let rename = "Rename…"
-    static let move = "Move…"
+    static let move = "Move To…"
     static let delete = "Delete…"
-    static let renameTitle = "Rename prompt"
-    static let moveTitle = "Move prompt"
     static let renameButton = "Rename"
     static let moveButton = "Move"
     static let deleteButton = "Delete"
     static let cancel = "Cancel"
     static let filename = "Filename"
     static let folder = "Folder relative to the library"
-    static let renameHint = "Enter a filename including .md. The prompt title stays the same. Existing files are never replaced."
-    static let moveHint = "Choose an existing folder or enter a new relative folder. Leave it empty for the library root. Existing files are never replaced."
+    static let renameHint = "Enter a new filename. The prompt's title stays the same."
+    static let moveHint = "Choose a folder or enter a new folder relative to the library. Leave it empty for the top level of the library."
     static let historyTab = "History"
     static let revisions = "Prompt revisions"
     static let historyPreview = "Read-only revision source"
     static let refreshHistory = "Refresh History"
     static let loadingHistory = "Loading history…"
     static let noHistory = "No saved revisions for this prompt."
+    static let noRevisionsTitle = "No Revisions"
     static let selectRevision = "Select a revision to preview it."
     static let restore = "Restore"
     static let valid = "Valid"
@@ -51,13 +50,16 @@ enum LibraryCommandStrings {
     static let historyAndProvenanceWarning = "The prompt was updated, but its history and provenance record need maintenance."
     static let relocated = "The file moved, but its destination changed or could not be checked. Resolve the conflict or check the library before retrying."
 
+    static func renameTitle(_ filename: String) -> String { "Rename “\(filename)”" }
+    static func moveTitle(_ filename: String) -> String { "Move “\(filename)”" }
+
     static func deleteTitle(_ path: String) -> String { "Delete “\(path)”?" }
     static func newPromptHint(_ folder: RelativePath) -> String {
         folder.string.isEmpty ? "Creates the prompt in the library root."
             : "Creates the prompt in \(folder.string)."
     }
     static func deleteHint(_ path: String) -> String {
-        "Delete “\(path)” from your library? This removes the file and closes the editor. Its history is kept."
+        "The prompt is removed from your library. Its history is kept."
     }
 
     static func timestamp(_ date: Date) -> String {

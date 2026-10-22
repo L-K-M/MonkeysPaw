@@ -15,10 +15,13 @@ final class PickerViewState: ObservableObject {
     private let isCurrent: () -> Bool
     private let requestedIntent: (PickerModel.Intent) -> Void
     private let createPrompt: (String) -> Void
+    private let openSetup: () -> Void
+    private let openSettings: () -> Void
 
     init(model: PickerModel, mainThread: MainThread,
          isCurrent: @escaping () -> Bool = { true },
          syncStatus: SyncStatusViewState? = nil,
+         openSetup: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
          requestedIntent: @escaping (PickerModel.Intent) -> Void,
          createPrompt: @escaping (String) -> Void) {
         self.model = model
@@ -27,6 +30,8 @@ final class PickerViewState: ObservableObject {
         self.isCurrent = isCurrent
         self.requestedIntent = requestedIntent
         self.createPrompt = createPrompt
+        self.openSetup = openSetup
+        self.openSettings = openSettings
         state = model.state
         model.onChange = { [weak self] in
             self?.mainThread.run { [weak self] in self?.refresh() }
@@ -50,6 +55,9 @@ final class PickerViewState: ObservableObject {
     }
 
     func didHide() { syncStatus?.hide() }
+
+    func showSetup() { if isCurrent() { openSetup() } }
+    func showSettings() { if isCurrent() { openSettings() } }
 
     deinit { syncStatus?.retire() }
 
@@ -124,6 +132,26 @@ final class PickerViewState: ObservableObject {
         case .none: return ""
         case .body(let text): return text
         case .issues(let issues): return issues.map(\.message).joined(separator: "\n")
+        }
+    }
+
+    /// Footer buttons perform the same intents as their keys.
+    enum FooterAction: CaseIterable { case paste, copy, edit, library, deliver, copyFilled, back }
+
+    func perform(_ action: FooterAction) {
+        guard isCurrent(), model.state != .delivering else { return }
+        switch action {
+        case .paste: if useEnabled { model.use(mode: .paste(.standard)) }
+        case .copy: if useEnabled { model.use(mode: .copyOnly) }
+        case .edit: model.editSelected()
+        case .library: model.openLibrary()
+        case .deliver:
+            guard let fill = model.fillModel, fill.deliverEnabled else { return }
+            fill.deliver(mode: fill.preferredMode)
+        case .copyFilled:
+            guard let fill = model.fillModel, fill.canCopyOnly else { return }
+            fill.deliver(mode: .copyOnly)
+        case .back: model.escape()
         }
     }
 

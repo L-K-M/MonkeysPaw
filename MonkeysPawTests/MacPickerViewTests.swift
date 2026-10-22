@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon.HIToolbox
 import Combine
 import MonkeysPawCore
@@ -40,8 +41,10 @@ final class MacPickerViewTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private func start(scheduler: MonkeysPawCore.Scheduler = DispatchScheduler()) throws -> PickerModel {
+    private func start(scheduler: MonkeysPawCore.Scheduler = DispatchScheduler(),
+                       clipboard: Clipboard = PasteboardClipboard(), pasteInjectors: [PasteInjector]? = nil) throws -> PickerModel {
         delegate = AppDelegate(libraryRoot: root, dataRoot: data, launchURI: { [weak self] in self?.launched.append($0) },
+            clipboard: clipboard, pasteInjectors: pasteInjectors,
             makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in
                     XCTFail("Hosted picker tests must not activate an external app")
@@ -73,6 +76,70 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(picker.libraryAvailable)
         XCTAssertTrue(picker.results.isEmpty)
         XCTAssertEqual(NSApp.windows.map(ObjectIdentifier.init).filter { !originalWindows.contains($0) }, [])
+    }
+
+    func testSearchUsesLargeBorderlessNativeControl() throws {
+        _ = try open()
+        let field = try XCTUnwrap(find("picker-query") as? PickerTextField)
+        XCTAssertFalse(field.isBezeled)
+        XCTAssertFalse(field.isBordered)
+        XCTAssertFalse(field.drawsBackground)
+        XCTAssertEqual(field.font, NSFont.preferredFont(forTextStyle: .title2))
+        XCTAssertEqual(field.accessibilityLabel(), Strings.searchPrompts)
+    }
+
+    func testFooterPasteAndCopyRetainDeliveryModesAndBackPreservesDraft() throws {
+        try files.write(Data("---\nfields:\n  topic: {default: Initial}\n---\n{{topic}}".utf8), at: "footer.md")
+        let picker = try open()
+        try pressPickerAction("picker-use")
+        XCTAssertTrue(spin { picker.state == .fill })
+        let fill = try XCTUnwrap(picker.fillModel)
+        XCTAssertEqual(fill.preferredMode, .paste(.standard))
+        fill.setValue("Retained draft", name: "topic")
+        try pressPickerAction("picker-back")
+        XCTAssertTrue(spin { picker.state == .picker })
+        try pressPickerAction("picker-copy")
+        XCTAssertTrue(spin { picker.state == .fill })
+        XCTAssertEqual(picker.fillModel?.preferredMode, .copyOnly)
+        XCTAssertEqual(picker.fillModel?.values["topic"], "Retained draft")
+    }
+
+    func testFooterPasteAndCopyDeliverThroughExistingClipboardPath() throws {
+        try files.write(Data("Footer delivery".utf8), at: "footer.md")
+        let clipboard = MacRepeatClipboard()
+        let picker = try start(clipboard: clipboard, pasteInjectors: [])
+        for identifier in ["picker-use", "picker-copy"] {
+            picker.open()
+            XCTAssertTrue(spin { self.controller.isActiveAndVisible })
+            let before = clipboard.writes.count
+            try pressPickerAction(identifier)
+            // Delivery retains its outcome after hiding the panel.
+            XCTAssertTrue(spin {
+                guard case .done(.copiedOnly(_)) = picker.state else { return false }
+                return !self.controller.isVisible && clipboard.writes.count > before
+            },
+                "\(identifier): state=\(picker.state) writes=\(clipboard.writes.count - before)")
+            XCTAssertEqual(clipboard.writes.last, "Footer delivery")
+            if identifier == "picker-copy" {
+                XCTAssertEqual(picker.state, .done(.copiedOnly(.requested)))
+            }
+        }
+    }
+
+    func testFooterEditAndLibraryOpenTheExistingLibraryWindow() throws {
+        try files.write(Data("Footer editing".utf8), at: "footer.md")
+        let picker = try open()
+        try pressPickerAction("picker-edit")
+        XCTAssertTrue(spin { picker.state == .closed && self.delegate.libraryWindow?.window?.isVisible == true })
+        XCTAssertEqual(delegate.libraryWindow?.presentation.editorState.prompt?.relativePath, RelativePath("footer.md"))
+        let library = try XCTUnwrap(delegate.libraryWindow?.window)
+        library.close()
+        picker.open()
+        XCTAssertTrue(spin { self.controller.isActiveAndVisible })
+        try pressPickerAction("picker-library")
+        XCTAssertTrue(spin { picker.state == .closed && library.isVisible })
+        XCTAssertTrue(delegate.libraryWindow?.window === library)
+        XCTAssertTrue(launched.isEmpty)
     }
 
     func testLibrarySwitchReusesPanelAndHostingViewWithFreshControlsAndCallbacks() throws {
@@ -172,7 +239,7 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertNil(picker.requestedIntent)
         XCTAssertTrue(launched.isEmpty)
         XCTAssertEqual(delegate.libraryWindow?.presentation.editorState.prompt?.relativePath, RelativePath(path))
-        XCTAssertEqual(delegate.libraryWindow?.presentation.editorTab, .edit)
+        XCTAssertEqual(delegate.libraryWindow?.presentation.editorMode, .edit)
         XCTAssertEqual(picker.state, .closed)
         XCTAssertFalse(controller.isVisible)
 
@@ -801,6 +868,47 @@ final class MacPickerViewTests: XCTestCase {
     private func isFocused(_ field: NSTextField, in panel: NSWindow) -> Bool {
         guard let editor = field.currentEditor() else { return false }
         return panel.firstResponder === editor
+    }
+
+    /// Confirms the footer exposes the button to Accessibility, then performs
+    /// the intent that button sends. An in-process AX press is unreliable on
+    /// CI: SwiftUI requires the main actor, where AX performs fail.
+    private func pressPickerAction(_ identifier: String) throws {
+        let panel = try currentPanel()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let found = expectation(description: "Picker footer action is accessible: " + identifier)
+        // Query off-main so AppKit can service its accessibility client while
+        // XCTest pumps the main run loop, including SwiftUI's virtual buttons.
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            var button: AXUIElement?
+            repeat {
+                button = Self.accessibilityElement(identifier, in: application)
+            } while button == nil && ProcessInfo.processInfo.systemUptime < deadline
+            XCTAssertNotNil(button, "Missing picker footer action: " + identifier)
+            found.fulfill()
+        }
+        wait(for: [found], timeout: 5)
+        let actions: [String: PickerViewState.FooterAction] = ["picker-use": .paste, "picker-copy": .copy,
+            "picker-edit": .edit, "picker-library": .library, "picker-deliver": .deliver, "picker-back": .back]
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        var action = try XCTUnwrap(actions[identifier], "Unknown footer action " + identifier)
+        if action == .copy, presentation.model.fillModel != nil { action = .copyFilled }
+        presentation.perform(action)
+    }
+
+    private static func accessibilityElement(_ identifier: String, in element: AXUIElement) -> AXUIElement? {
+        var value: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXIdentifierAttribute as CFString, &value) == .success,
+           value as? String == identifier { return element }
+        var children: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+              let children = children as? [AXUIElement] else { return nil }
+        for child in children {
+            if let match = accessibilityElement(identifier, in: child) { return match }
+        }
+        return nil
     }
 
     private func find(_ identifier: String) -> NSView? {
