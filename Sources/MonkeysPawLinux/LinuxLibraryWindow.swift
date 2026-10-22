@@ -527,6 +527,7 @@ final class LinuxLibraryWindow {
         case .search:
             gtk_search_bar_set_search_mode(mp_search_bar(searchBar), 1)
             gtk_widget_grab_focus(filter)
+            gtk_editable_select_region(OpaquePointer(filter), 0, -1)
         case .sidebar: gtk_widget_set_visible(sidebarPane, gtk_widget_get_visible(sidebarPane) == 0 ? 1 : 0)
         case .inspector: gtk_widget_set_visible(inspectorPane, gtk_widget_get_visible(inspectorPane) == 0 ? 1 : 0)
         case .fields: showInspector("fields")
