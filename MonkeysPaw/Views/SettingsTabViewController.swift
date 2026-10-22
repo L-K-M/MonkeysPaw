@@ -118,28 +118,10 @@ final class SettingsTabViewController: NSTabViewController {
         title = pane.title
         guard isViewLoaded, let window = view.window else { return }
         window.title = pane.title
-        let screen = window.screen ?? NSScreen.main
-        var size = window.frameRect(forContentRect: NSRect(origin: .zero, size: pane.contentSize)).size
-        // Include toolbar chrome when fitting small displays; forms can scroll.
-        if let visible = screen?.visibleFrame {
-            size.width = min(size.width, visible.width)
-            size.height = min(size.height, visible.height)
-        }
+        let size = window.frameRect(forContentRect: NSRect(origin: .zero, size: pane.contentSize)).size
         let previous = previousFrame ?? window.frame
-        var frame = NSRect(x: previous.minX, y: previous.maxY - size.height, width: size.width, height: size.height)
-        // AppKit only promises to constrain the top edge; fit both axes here.
-        if let visible = screen?.visibleFrame {
-            frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
-            frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
-        }
-
-        // AppKit's deferred tab resize must use the same bounded geometry.
-        let preferred = window.contentRect(forFrameRect: frame).size
-        if let child = tabViewItems[pane.rawValue].viewController, child.preferredContentSize != preferred {
-            child.preferredContentSize = preferred
-        }
-        if preferredContentSize != preferred { preferredContentSize = preferred }
-
+        let proposed = NSRect(x: previous.minX, y: previous.maxY - size.height, width: size.width, height: size.height)
+        let frame = window.constrainFrameRect(proposed, to: window.screen)
         guard frame != window.frame else { return }
         window.setFrame(frame, display: true,
             animate: window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)

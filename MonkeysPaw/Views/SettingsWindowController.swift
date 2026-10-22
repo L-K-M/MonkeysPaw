@@ -234,7 +234,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     private func makeWindow() -> NSWindow {
         let tabs = SettingsTabViewController(presentation: presentation, mainThread: mainThread)
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: presentation.selectedTab.contentSize),
+        let window = SettingsWindow(contentRect: NSRect(origin: .zero, size: presentation.selectedTab.contentSize),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.isRestorable = false
@@ -276,5 +276,34 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             guard alert.window.sheetParent === window else { return }
             window.endSheet(alert.window, returnCode: .cancel)
         }
+    }
+}
+
+/// Native tab sizing and explicit pane changes share one whole-window limit.
+private final class SettingsWindow: NSWindow {
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(fittedFrame(frameRect), display: flag)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display displayFlag: Bool, animate animateFlag: Bool) {
+        super.setFrame(fittedFrame(frameRect), display: displayFlag, animate: animateFlag)
+    }
+
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        fittedFrame(super.constrainFrameRect(frameRect, to: screen), on: screen)
+    }
+
+    private func fittedFrame(_ proposed: NSRect, on nominatedScreen: NSScreen? = nil) -> NSRect {
+        // Restored windows can target a different display from their current one.
+        let center = NSPoint(x: proposed.midX, y: proposed.midY)
+        let target = nominatedScreen ?? NSScreen.screens.first { $0.frame.contains(center) } ?? screen ?? NSScreen.main
+        guard let visible = target?.visibleFrame else { return proposed }
+
+        var frame = proposed
+        frame.size.width = min(frame.width, visible.width)
+        frame.size.height = min(frame.height, visible.height)
+        frame.origin.x = min(max(proposed.minX, visible.minX), visible.maxX - frame.width)
+        frame.origin.y = min(max(proposed.maxY - frame.height, visible.minY), visible.maxY - frame.height)
+        return frame
     }
 }
