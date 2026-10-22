@@ -117,8 +117,22 @@ struct LibrarySidebarView: View {
                 .onDrop(of: [LibraryViewState.scopeDragTypeIdentifier],
                     delegate: LibraryScopeDropTarget(presentation: presentation, section: section.id,
                         epoch: presentation.scopeDragEpoch, targeted: $dropTarget))
+                .contextMenu { sectionMenu(section) }
         } else {
             sectionLabel(section)
+                .contextMenu { sectionMenu(section) }
+        }
+    }
+
+    /// New Prompt lands in the clicked section's folder, as the toolbar's does
+    /// for the selected one; folders also open in Finder.
+    @ViewBuilder
+    private func sectionMenu(_ section: LibraryBrowserSection) -> some View {
+        Button(LibraryCommandStrings.newPrompt) { presentation.requestNewPrompt(in: section.id) }
+            .disabled(!presentation.canCreatePrompt)
+        if case .folder(let folder) = section.id {
+            Button(Strings.showInFinder) { presentation.revealFolder(folder) }
+                .disabled(!presentation.libraryAvailable)
         }
     }
 

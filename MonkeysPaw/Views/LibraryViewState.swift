@@ -188,6 +188,19 @@ final class LibraryViewState: ObservableObject {
         editor.move(to: folder, completion: commandCompletion(success: LibraryCommandStrings.moved))
     }
 
+    /// Sidebar folders reveal themselves in Finder through the same driver as prompts.
+    func revealFolder(_ folder: RelativePath) {
+        guard isActive, libraryAvailable, snapshot.sections.contains(where: { $0.id == .folder(folder) }) else { return }
+        revealPromptAction(folder)
+    }
+
+    /// The sidebar's context menu creates a prompt in the clicked section.
+    func requestNewPrompt(in section: LibrarySectionID) {
+        guard canCreatePrompt else { return }
+        selectSection(section)
+        requestNewPrompt()
+    }
+
     func revealPrompt(at path: RelativePath? = nil) {
         guard isActive, libraryAvailable, let path = path ?? editorState.prompt?.relativePath,
               path == editorState.prompt?.relativePath || snapshot.rows.contains(where: { $0.relativePath == path }) else { return }

@@ -414,6 +414,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showSetup()
             return false
         }
+        // A minimized Library or Settings keeps the Dock icon; clicking it
+        // brings that window back, as in any Mac app.
+        if !flag, libraryWindow?.window?.isMiniaturized == true {
+            libraryWindow?.show()
+            return false
+        }
+        if !flag, settingsWindow?.window?.isMiniaturized == true {
+            settingsWindow?.show()
+            return false
+        }
 
         let step = onboardingModel.state.step
         presentedOnboardingStep = step

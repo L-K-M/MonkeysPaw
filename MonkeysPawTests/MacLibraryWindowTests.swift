@@ -76,6 +76,12 @@ final class MacLibraryWindowTests: XCTestCase {
     }
 
     private func put(_ source: String, at path: String) throws { try files.write(Data(source.utf8), at: path) }
+    private func spin(_ predicate: () -> Bool, timeout: TimeInterval = 5) -> Bool {
+        let end = Date().addingTimeInterval(timeout)
+        while !predicate(), Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+        return predicate()
+    }
+
     private func controller() throws -> LibraryWindowController { try XCTUnwrap(delegate.libraryWindow) }
     private func window() throws -> NSWindow { try XCTUnwrap(controller().window) }
 
@@ -670,6 +676,37 @@ final class MacLibraryWindowTests: XCTestCase {
         let search = try XCTUnwrap(controller.searchItem?.searchField)
         let responder = try window().firstResponder
         XCTAssertTrue(responder === search.currentEditor() || responder === search)
+    }
+
+    func testDockReopenRestoresAMinimizedLibraryInsteadOfOpeningThePicker() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let window = try window()
+        XCTAssertTrue(spin { window.isVisible })
+        window.miniaturize(nil)
+        guard spin({ window.isMiniaturized }) else {
+            throw XCTSkip("The window server did not minimize the hosted window")
+        }
+        XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
+        XCTAssertTrue(spin { !window.isMiniaturized && window.isVisible })
+        XCTAssertNotEqual(delegate.pickerModel?.state, .picker, "The Dock restores the window, not the picker")
+    }
+
+    func testSidebarContextMenuCreatesInClickedFolderAndRevealsIt() throws {
+        try put("Body", at: "Folder/one.md")
+        try start()
+        delegate.showLibrary()
+        let presentation = try presentation()
+        presentation.requestNewPrompt(in: .folder("Folder"))
+        XCTAssertEqual(presentation.snapshot.selectedSection, .folder("Folder"))
+        let request = try XCTUnwrap(presentation.newPromptRequest)
+        XCTAssertEqual(request.folder, "Folder")
+        presentation.resolveNewPrompt(.cancelFileCommand, id: request.id)
+        presentation.revealFolder("Folder")
+        XCTAssertEqual(revealed, [root.appendingPathComponent("Folder")])
+        presentation.revealFolder("Missing")
+        XCTAssertEqual(revealed.count, 1, "Only sidebar folders can be revealed")
     }
 
     func testNewPromptCommandUsesSharedGateAndRefusesOtherWindowsAndDialogs() throws {
