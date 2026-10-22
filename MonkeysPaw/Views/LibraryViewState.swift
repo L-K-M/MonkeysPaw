@@ -15,7 +15,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     enum Direction { case up, down }
-    enum EditorMode: Hashable { case edit, preview }
+    enum EditorMode: Int, Hashable { case edit, preview, source }
     enum InspectorPane: Hashable { case fields, history, assistant }
     private enum OpenContext { case library, picker, creation }
     private struct ScopeDrop {
@@ -131,7 +131,7 @@ final class LibraryViewState: ObservableObject {
                 self.quoteHighlight = range.flatMap { range in
                     self.editor.state.source.map { LibrarySourceHighlight(byteRange: range, sourceBytes: Data($0.utf8)) }
                 }
-                if range != nil { self.editorMode = .edit }
+                if range != nil { self.editorMode = .source }
             }
             assistantSession = session
             assistantPrompt = editor.state.prompt
@@ -176,10 +176,10 @@ final class LibraryViewState: ObservableObject {
         if load { loadHistory() }
     }
 
-    func focusEditor() {
+    func focusEditor(mode: EditorMode = .edit) {
         guard isActive, libraryAvailable, editorState.prompt != nil, editorState.pendingDecision == nil,
-              fileCommandRequest == nil, !isScopeDropPending else { return }
-        editorMode = .edit
+              fileCommandRequest == nil, !isScopeDropPending, mode != .preview else { return }
+        editorMode = mode
         editorFocusRevision &+= 1
     }
 
@@ -459,6 +459,12 @@ final class LibraryViewState: ObservableObject {
         guard canEditSource else { return }
         commandMessage = nil
         editor.edit(source)
+    }
+
+    func edit(_ change: PromptEdit) {
+        guard canEditSource else { return }
+        commandMessage = nil
+        editor.edit(change)
     }
 
     // After Cancel, Save reopens conflict choices without writing the stale draft.

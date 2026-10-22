@@ -40,12 +40,14 @@ authorize a new plaintext save. See [credential tiers](SECURITY.md#credentials).
 
 ## Library
 
-The header bar provides New, Edit/Preview, Favourite, Search and Inspector.
+The header bar provides New, Edit/Preview/Source, Favourite, Search and Inspector.
 The sidebar groups folders, tags, favourites and recent prompts. The inspector
 contains Fields, History and Assistant; opening it keeps the window's width.
 
 - **Ctrl+N** creates a prompt; **Ctrl+S** saves; **Ctrl+Shift+S** duplicates.
-- **Ctrl+F** searches the list; **Ctrl+1 / Ctrl+2** selects Edit or Preview.
+- **Ctrl+F** searches the list; **Ctrl+1 / Ctrl+2 / Ctrl+3** selects Edit, Preview or Source.
+- Edit has controls for title, description, tags and privacy, plus a body-only
+  text editor. Source edits the complete Markdown file and advanced field settings.
 - **F9** toggles the sidebar; **F2** renames the selected prompt.
 - The primary menu and prompt context menu offer file commands.
 - **Ctrl+W** closes Library, asking about unsaved edits. Escape dismisses a

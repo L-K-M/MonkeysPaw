@@ -143,6 +143,99 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(clipboard.writes, 0)
     }
 
+    func testFormPropertiesAndSourceUseOneUnsavedDraft() throws {
+        let source = "---\ntitle: Old\nname: custom-name\nfields:\n  topic: {default: Earth, hint: keep}\n---\nHello {{topic}}"
+        let presentation = try open(source)
+        XCTAssertEqual(presentation.editorMode, .edit)
+        XCTAssertEqual(presentation.editorState.form?.title, "Old")
+        XCTAssertEqual(presentation.editorState.form?.body, "Hello {{topic}}")
+        presentation.edit(.title("New title"))
+        presentation.edit(.description("A summary"))
+        presentation.edit(.tags(["code, review", "writing"]))
+        presentation.edit(.isPrivate(true))
+        presentation.edit(.body("  Draft {{topic}}\r\n"))
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertTrue(presentation.editorState.isPrivate)
+        XCTAssertEqual(try files.read(at: "one.md"), Data(source.utf8))
+        let draft = presentation.editorState.source
+        presentation.editorMode = .source
+        presentation.editorMode = .preview
+        presentation.editorMode = .edit
+        XCTAssertEqual(presentation.editorState.source, draft, "Mode changes do not serialize or save")
+        presentation.save()
+        work.drain()
+        let saved = PromptCodec.parseFile(try files.read(at: "one.md"), filename: "one.md")
+        XCTAssertEqual(saved.frontMatter.title, "New title")
+        XCTAssertEqual(saved.frontMatter.description, "A summary")
+        XCTAssertEqual(saved.frontMatter.tags, ["code, review", "writing"])
+        XCTAssertTrue(saved.frontMatter.isPrivate)
+        XCTAssertEqual(Data(saved.body.utf8), Data("  Draft {{topic}}\r\n".utf8))
+        XCTAssertTrue(saved.source.contains("name: custom-name"))
+        XCTAssertTrue(saved.source.contains("hint: keep"))
+        XCTAssertFalse(presentation.editorState.isDirty)
+        presentation.edit("---\ntitle: From source\n---\nBody from source")
+        XCTAssertEqual(presentation.editorState.form?.title, "From source")
+        XCTAssertEqual(presentation.editorState.form?.body, "Body from source")
+    }
+
+    func testRenderedEditorShowsBodyByDefaultAndSourceOnRequest() throws {
+        let source = "---\ntitle: Title\n---\nBody {{topic}}"
+        let presentation = try open(source)
+        let native = try window()
+        let body = try waitForNativeEditor("library-body", in: native)
+        let raw = try waitForNativeEditor("library-source", in: native)
+        XCTAssertEqual(body.string, "Body {{topic}}")
+        XCTAssertFalse(body.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(raw.isHiddenOrHasHiddenAncestor)
+        let title = try nativeProperty("library-prompt-title", in: native)
+        let description = try nativeProperty("library-prompt-description", in: native)
+        XCTAssertEqual(title.stringValue, "Title")
+        for (field, value) in [(title, "GUI title"), (description, "GUI summary")] {
+            field.stringValue = value
+            field.delegate?.controlTextDidChange?(Notification(name: NSControl.textDidChangeNotification, object: field))
+        }
+        XCTAssertEqual(presentation.editorState.form?.title, "GUI title")
+        XCTAssertEqual(presentation.editorState.form?.description, "GUI summary")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(try files.read(at: "one.md"), Data(source.utf8))
+        let draft = try XCTUnwrap(presentation.editorState.source)
+        XCTAssertTrue(native.makeFirstResponder(body))
+        presentation.editorMode = .source
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertTrue(body.isHiddenOrHasHiddenAncestor)
+        XCTAssertFalse(raw.isHiddenOrHasHiddenAncestor)
+        XCTAssertEqual(raw.string, draft)
+        XCTAssertFalse(native.firstResponder === body, "A hidden editor must release keyboard ownership")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        presentation.edit("---\ntitle: [broken\n---\nExact invalid draft")
+        presentation.editorMode = .edit
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertNil(presentation.editorState.form)
+        XCTAssertFalse(raw.isHiddenOrHasHiddenAncestor, "Invalid properties retain the editable source fallback")
+        XCTAssertEqual(raw.string, "---\ntitle: [broken\n---\nExact invalid draft")
+    }
+
+    private func waitForNativeEditor(_ identifier: String, in window: NSWindow) throws -> LibrarySourceTextView {
+        func find(_ view: NSView) -> LibrarySourceTextView? {
+            if let text = view as? LibrarySourceTextView, text.accessibilityIdentifier() == identifier { return text }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        let deadline = Date(timeIntervalSinceNow: 2)
+        while Date() < deadline {
+            if let root = window.contentView, let text = find(root) { return text }
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        return try XCTUnwrap(window.contentView.flatMap(find), "Missing native editor: " + identifier)
+    }
+
+    private func nativeProperty(_ identifier: String, in window: NSWindow) throws -> NSTextField {
+        func find(_ view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.identifier?.rawValue == identifier { return field }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        return try XCTUnwrap(window.contentView.flatMap(find), "Missing property control: " + identifier)
+    }
+
     func testCommandSSavesAndFavouriteChangesTheOpenDraft() throws {
         let presentation = try open()
         presentation.edit("Draft")

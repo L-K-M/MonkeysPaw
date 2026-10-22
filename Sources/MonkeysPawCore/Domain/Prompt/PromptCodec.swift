@@ -173,6 +173,49 @@ public enum PromptCodec {
         return parse(try write(updated), filename: filename)
     }
 
+    /// Form editing is allowed while the body is incomplete. Only the header
+    /// is serialized; ordinary Save still validates the entire prompt.
+    static func editing(_ edit: PromptEdit, in document: PromptDocument,
+                        filename: String) throws -> PromptDocument {
+        guard let form = PromptForm(document) else { throw PromptWriteError.invalidPrompt }
+        let key: String
+        let value: Node
+        switch edit {
+        case .body(let body):
+            guard !body.utf8.elementsEqual(document.body.utf8) else { return document }
+            let prefixCount = document.source.utf8.count - document.body.utf8.count
+            var prefix = String(decoding: document.source.utf8.prefix(prefixCount), as: UTF8.self)
+            // A body beginning with a delimiter must not become front matter.
+            if prefix.isEmpty, body == "---" || body.hasPrefix("---\n") || body.hasPrefix("---\r\n") {
+                prefix = "---\n---\n"
+            }
+            if !prefix.isEmpty, prefix.utf8.last != UInt8(ascii: "\n") { prefix += "\n" }
+            return parse(prefix + body, filename: filename)
+        case .title(let title):
+            guard !title.utf8.elementsEqual(form.title.utf8) else { return document }
+            key = "title"; value = Node(title, Tag(.str))
+        case .description(let description):
+            guard !description.utf8.elementsEqual(form.description.utf8) else { return document }
+            key = "description"; value = Node(description, Tag(.str))
+        case .tags(let tags):
+            guard tags.count != form.tags.count || !zip(tags, form.tags).allSatisfy({ $0.utf8.elementsEqual($1.utf8) }) else {
+                return document
+            }
+            key = "tags"; value = Node(tags.map { Node($0, Tag(.str)) }, Tag(.seq), .block)
+        case .isPrivate(let isPrivate):
+            guard isPrivate != form.isPrivate else { return document }
+            key = "private"; value = Node(isPrivate ? "true" : "false", Tag(.bool))
+        }
+
+        var pairs = document.preservedHeader?.mapping?.map { ($0.key, $0.value) } ?? []
+        if let index = pairs.firstIndex(where: { PortableYAML.string($0.0) == key }) {
+            pairs[index].1 = value
+        } else { pairs.append((Node(key, Tag(.str)), value)) }
+        let header = PromptDocument(source: "", body: "", frontMatter: document.frontMatter,
+            template: Template.parse(""), preservedHeader: Node(pairs, Tag(.map), .block))
+        return parse(try write(header) + document.body, filename: filename)
+    }
+
     private static let knownKeys = ["id", "title", "description", "tags", "favorite", "private", "fields", "format"]
 
     private struct SourceParts {

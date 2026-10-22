@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "edits": [{"property": "body", "value": "{{name"}, {"property": "title", "value": "Draft"},
+            {"property": "body", "value": "Hello {{name}}.\n"}],
+  "expected": {
+    "metadata": {"id": null, "title": "Draft", "description": null, "tags": [], "favorite": false,
+                 "private": false, "format": "1", "declarations": []},
+    "body": "Hello {{name}}.\n",
+    "issues": [],
+    "canonical": "---\ntitle: Draft\n---\nHello {{name}}.\n"
+  }
+}

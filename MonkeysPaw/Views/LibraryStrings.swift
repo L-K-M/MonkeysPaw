@@ -26,7 +26,7 @@ enum LibraryStrings {
     static let noPrompts = "No Prompts"
     static let search = "Search"
     static let favourite = "Favourite"
-    static let editPreview = "Edit or Preview"
+    static let editPreview = "Edit, Preview or Source"
     static let showSidebar = "Show Sidebar"
     static let hideSidebar = "Hide Sidebar"
     static let showInspector = "Show Inspector"

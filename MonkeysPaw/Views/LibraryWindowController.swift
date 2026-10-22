@@ -256,7 +256,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
            (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             field.stringValue = presentation.snapshot.filter
         }
-        modeItem?.selectedIndex = presentation.editorMode == .edit ? 0 : 1
+        modeItem?.selectedIndex = presentation.editorMode.rawValue
         updateToolbarItems()
         window.toolbar?.validateVisibleItems()
         if appliedSearchFocusRevision != presentation.focusRevision, commandsAvailable(in: window) {

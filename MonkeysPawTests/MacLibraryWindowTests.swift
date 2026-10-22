@@ -552,6 +552,10 @@ final class MacLibraryWindowTests: XCTestCase {
         group.selectedIndex = 1
         controller.selectEditorMode(group)
         XCTAssertEqual(presentation.editorMode, .preview)
+        group.selectedIndex = LibraryViewState.EditorMode.source.rawValue
+        controller.selectEditorMode(group)
+        XCTAssertEqual(presentation.editorMode, .source)
+        XCTAssertEqual(group.subitems.count, 3)
         controller.showEdit(nil)
         XCTAssertEqual(presentation.editorMode, .edit)
         let item = NSMenuItem(title: "Preview", action: #selector(LibraryWindowController.showPreview(_:)), keyEquivalent: "2")

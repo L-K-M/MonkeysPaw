@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "edits": [{"property": "body", "value": "---\ntitle: body text\n---\nLiteral\n"}],
+  "expected": {
+    "metadata": {"id": null, "title": "Example", "description": null, "tags": [], "favorite": false,
+                 "private": false, "format": "1", "declarations": []},
+    "body": "---\ntitle: body text\n---\nLiteral\n",
+    "issues": [],
+    "canonical": "---\n{}\n---\n---\ntitle: body text\n---\nLiteral\n"
+  }
+}

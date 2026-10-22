@@ -70,6 +70,7 @@ public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var isPrivate = false
     public fileprivate(set) var issues: [PromptIssue] = []
     public fileprivate(set) var fields: [PromptField] = []
+    public fileprivate(set) var form: PromptForm?
     public fileprivate(set) var preview = ""
     public fileprivate(set) var previewFailure: PromptRenderError?
     public fileprivate(set) var conflict: EditorConflict?
@@ -96,7 +97,7 @@ public struct EditorState: Equatable, Sendable {
         lhs.prompt == rhs.prompt && editorSourceEqual(lhs.source, rhs.source)
             && lhs.stamp == rhs.stamp && lhs.isDirty == rhs.isDirty && lhs.status == rhs.status
             && lhs.readOnlyReason == rhs.readOnlyReason && lhs.isPrivate == rhs.isPrivate && lhs.issues == rhs.issues
-            && lhs.fields == rhs.fields && editorSourceEqual(lhs.preview, rhs.preview)
+            && lhs.fields == rhs.fields && lhs.form == rhs.form && editorSourceEqual(lhs.preview, rhs.preview)
             && lhs.previewFailure == rhs.previewFailure && lhs.conflict == rhs.conflict
             && lhs.pendingDecision == rhs.pendingDecision && lhs.queuedActions == rhs.queuedActions
             && lhs.historyMaintenanceFailed == rhs.historyMaintenanceFailed
@@ -280,6 +281,19 @@ public final class EditorModel: @unchecked Sendable {
         if state.status != .saving { state.status = .idle }
         updateDocument(PromptCodec.parse(text, filename: filename))
         changed()
+    }
+
+    public func edit(_ change: PromptEdit) {
+        guard isActive, state.canEdit, state.form != nil, let document else { return }
+        do {
+            edit(try PromptCodec.editing(change, in: document, filename: filename).source)
+        } catch let failure as PromptWriteError {
+            state.status = .failed(.editing(.write(failure)))
+            changed()
+        } catch {
+            state.status = .failed(.editing(.write(.serializationFailed)))
+            changed()
+        }
     }
 
     public func save() {
@@ -679,6 +693,7 @@ public final class EditorModel: @unchecked Sendable {
     private func updateDocument(_ document: PromptDocument) {
         if !editorSourceEqual(self.document?.source, document.source) { assistantRevision &+= 1 }
         self.document = document
+        state.form = PromptForm(document)
         state.isPrivate = document.frontMatter.isPrivate
         state.issues = document.issues
         let effective = document.effectiveFields

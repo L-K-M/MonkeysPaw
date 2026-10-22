@@ -11,6 +11,7 @@ struct LibrarySourceHighlight {
 /// NSTextView supplies undo, the editing responder chain and input methods.
 /// SwiftUI publications must never replace an active marked-text composition.
 struct LibrarySourceEditor: NSViewRepresentable {
+    enum Content { case source, body }
     let source: String
     let path: RelativePath?
     let revision: UInt64
@@ -19,11 +20,12 @@ struct LibrarySourceEditor: NSViewRepresentable {
     var highlight: LibrarySourceHighlight? = nil
     var focusRevision: UInt64 = 0
     var isVisible = true
+    var content = Content.source
 
     func makeCoordinator() -> Coordinator { Coordinator(onEdit: onEdit) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = Self.makeScrollView(coordinator: context.coordinator)
+        let scroll = Self.makeScrollView(coordinator: context.coordinator, content: content)
         Self.updateVisibility(isVisible, in: scroll)
         if let text = scroll.documentView as? LibrarySourceTextView {
             context.coordinator.update(text, source: source, path: path, revision: revision,
@@ -34,7 +36,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
 
     /// Hosted tests exercise these same native controls without relying on
     /// SwiftUI's lazy view or accessibility trees.
-    static func makeScrollView(coordinator: Coordinator) -> NSScrollView {
+    static func makeScrollView(coordinator: Coordinator, content: Content = .source) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = false
@@ -45,7 +47,9 @@ struct LibrarySourceEditor: NSViewRepresentable {
         text.allowsUndo = true
         text.usesFindBar = true
         text.isIncrementalSearchingEnabled = true
-        text.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        text.content = content
+        text.font = content == .source ? .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+            : .systemFont(ofSize: NSFont.systemFontSize)
         text.isAutomaticQuoteSubstitutionEnabled = false
         text.isAutomaticDashSubstitutionEnabled = false
         text.isAutomaticTextReplacementEnabled = false
@@ -58,8 +62,8 @@ struct LibrarySourceEditor: NSViewRepresentable {
         text.textContainerInset = NSSize(width: 8, height: 8)
         text.minSize = .zero
         text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        text.setAccessibilityLabel(EditorStrings.source)
-        text.setAccessibilityIdentifier("library-source")
+        text.setAccessibilityLabel(content == .source ? EditorStrings.source : LibraryFormStrings.body)
+        text.setAccessibilityIdentifier(content == .source ? "library-source" : "library-body")
         text.delegate = coordinator
         text.onSourceChange = { [weak coordinator, weak text] in
             guard let text else { return }
@@ -207,7 +211,8 @@ struct LibrarySourceEditor: NSViewRepresentable {
             var previousUTF16End = 0
             // Ranges are ordered and disjoint. Convert each gap/span once so
             // a template with many placeholders still takes one linear pass.
-            for (range, color) in Self.syntaxColorRanges(in: text.string) {
+            for (range, color) in Self.syntaxColorRanges(in: text.string,
+                content: (text as? LibrarySourceTextView)?.content ?? .source) {
                 let gap = String(decoding: bytes[previousByteEnd..<range.lowerBound], as: UTF8.self)
                 let span = String(decoding: bytes[range], as: UTF8.self)
                 let converted = NSRange(location: previousUTF16End + gap.utf16.count, length: span.utf16.count)
@@ -220,7 +225,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
         /// Byte ranges matching what Core parses: the closed `---` opening
         /// block of PromptCodec.split is front matter, and `{{name}}` spans
         /// in the body are placeholders under Template.parse rules.
-        static func syntaxColorRanges(in source: String) -> [(range: Range<Int>, color: NSColor)] {
+        static func syntaxColorRanges(in source: String, content: Content = .source) -> [(range: Range<Int>, color: NSColor)] {
             let bytes = Array(source.utf8)
             var ranges = [(range: Range<Int>, color: NSColor)]()
 
@@ -236,7 +241,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
 
             var bodyStart = 0
             let first = line(at: 0)
-            if isDelimiter(0..<first.contentEnd) {
+            if content == .source, isDelimiter(0..<first.contentEnd) {
                 // Unclosed front matter still leaves the lines below to the body.
                 bodyStart = first.next
                 var start = first.next
@@ -354,6 +359,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
 }
 
 final class LibrarySourceTextView: NSTextView {
+    var content = LibrarySourceEditor.Content.source
     var onSourceChange: (() -> Void)?
     var onAttachedToWindow: (() -> Void)?
 

@@ -6,7 +6,7 @@
 |---|---|
 | Picker panel (hidden at start, `PANEL_SIZE = 640×420`) | search field, result list, preview pane, footer with key hints, the paste target, and sync status |
 | Fill form (same panel, next state) | one control per field, live preview, Deliver / Copy / Cancel |
-| Library (menu bar or tray → "Library…", or `⌘L` / `Ctrl+L` in the picker) | sidebar: All, Favourites, Recent, Conflicts, folders, groups, tags; list; Edit/Preview editor; Fields, History and Assistant inspector |
+| Library (menu bar or tray → "Library…", or `⌘L` / `Ctrl+L` in the picker) | sidebar: All, Favourites, Recent, Conflicts, folders, groups, tags; list; Edit/Preview/Source editor; Fields, History and Assistant inspector |
 | Assistant (panel inside Library) | write from a description, review findings, improve diff |
 | Settings | General · Shortcuts · Delivery · Assistant · Account (sign in, devices, groups, members, invites) |
 | Setup | §6.4 |
@@ -262,7 +262,7 @@ Footers differ per OS:
 | Fill form | `Esc` | back to the picker |
 | Library | `⌘/Ctrl+N` · `⌘/Ctrl+S` · `⇧⌘S`/`Ctrl+Shift+S` | new · save · duplicate (save as copy) |
 | Library | `⌥⌘F` / `Ctrl+F` · `⌘F` (macOS) | search the library · find in the editor |
-| Library | `⌘/Ctrl+D` · `⌘/Ctrl+1` · `⌘/Ctrl+2` | favourite · Edit · Preview |
+| Library | `⌘/Ctrl+D` · `⌘/Ctrl+1` · `⌘/Ctrl+2` · `⌘/Ctrl+3` | favourite · Edit form · Preview · Source |
 | Library | `⌃⌘S` / `F9` · `⌥⌘I` (macOS) | sidebar · inspector (§24.4) |
 | Editor | `⌘/Ctrl+R` · `⌘/Ctrl+I` | review · improve |
 
@@ -441,12 +441,20 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   through its save debounce without waiting for a filesystem event.
 - **Search.** ⌥⌘F on macOS and Ctrl+F on Linux focus the Library filter
   without changing the query, selection or editor draft. macOS ⌘F finds
-  text in the source editor. Native dialogs and input-method composition
+  text in the visible editor. Native dialogs and input-method composition
   retain keyboard ownership.
 - **Edit · Preview · Fields · History.** Edit and Preview are the editor's
   modes; Fields, History and the Assistant are inspector panes (§24.3).
-  Edit shows the raw file, front matter and body, with live validation from the same codec and validator as
-  the picker. Fields lists the parsed fields read-only. Preview renders with
+  Edit defaults to a form: title, description, individual tags, a Private
+  toggle and a separate prompt-body editor. Source is an alternative mode
+  (⌘/Ctrl+3) for the complete file, including advanced placeholder definitions
+  and custom metadata. Both modes share one draft, explicit Save, validation,
+  history and conflict handling. Switching modes never writes or normalizes
+  the draft. Form edits retain IDs, optional-key presence, field declarations
+  and unknown metadata; body-only edits retain the original header bytes.
+  Malformed headers fall back to Source with an explanation. Invalid body
+  placeholders stay editable in the form. Fields lists parsed fields read-only.
+  Preview renders with
   field defaults (or the field name when there is none), the real date and
   time, and a `{clipboard}` placeholder; browsing or typing never reads the
   clipboard. Non-UTF-8, oversized and future-format files open read-only.
