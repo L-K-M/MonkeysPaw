@@ -261,6 +261,9 @@ final class MacSettingsWindowTests: XCTestCase {
         window.close()
 
         for pane in SettingsViewState.Tab.allCases {
+            controller.presentation.selectedTab = pane == .general ? .delivery : .general
+            window.setFrameOrigin(NSPoint(x: visibleFrame.maxX - window.frame.width / 2,
+                y: visibleFrame.minY))
             controller.presentation.selectedTab = pane
             XCTAssertGreaterThanOrEqual(window.frame.minX, visibleFrame.minX - 0.5, pane.title)
             XCTAssertGreaterThanOrEqual(window.frame.minY, visibleFrame.minY - 0.5, pane.title)
