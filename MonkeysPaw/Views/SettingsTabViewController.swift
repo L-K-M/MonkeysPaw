@@ -126,8 +126,12 @@ final class SettingsTabViewController: NSTabViewController {
             size.height = min(size.height, visible.height)
         }
         let previous = previousFrame ?? window.frame
-        let proposed = NSRect(x: previous.minX, y: previous.maxY - size.height, width: size.width, height: size.height)
-        let frame = window.constrainFrameRect(proposed, to: screen)
+        var frame = NSRect(x: previous.minX, y: previous.maxY - size.height, width: size.width, height: size.height)
+        // AppKit only promises to constrain the top edge; fit both axes here.
+        if let visible = screen?.visibleFrame {
+            frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
+        }
         guard frame != window.frame else { return }
         window.setFrame(frame, display: true,
             animate: window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
