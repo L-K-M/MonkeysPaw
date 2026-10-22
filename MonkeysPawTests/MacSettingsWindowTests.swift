@@ -277,6 +277,7 @@ final class MacSettingsWindowTests: XCTestCase {
         delegate.showSettings()
         let controller = try settings()
         let window = try XCTUnwrap(controller.window)
+        let tabs = try XCTUnwrap(window.contentViewController as? NSTabViewController)
         let visibleFrame = try XCTUnwrap(window.screen ?? NSScreen.main).visibleFrame
         let resizeSettleTime: TimeInterval = 1
 
@@ -284,9 +285,14 @@ final class MacSettingsWindowTests: XCTestCase {
             controller.presentation.selectedTab = pane
             // AppKit may apply a child's preferred size after setFrame returns.
             RunLoop.main.run(until: Date(timeIntervalSinceNow: resizeSettleTime))
+            let child = try XCTUnwrap(tabs.tabViewItems[pane.rawValue].viewController)
+            let geometry = "\(pane.title) frame=\(window.frame) visible=\(visibleFrame)"
+                + " root=\(tabs.view.bounds) tab=\(tabs.tabView.bounds) content=\(tabs.tabView.contentRect)"
+                + " slot=\(tabs.tabView.convert(tabs.tabView.contentRect, to: nil)) child=\(child.view.frame)"
+                + " childPreferred=\(child.preferredContentSize) parentPreferred=\(tabs.preferredContentSize)"
             XCTAssertTrue(window.isVisible, pane.title)
-            XCTAssertGreaterThanOrEqual(window.frame.minY, visibleFrame.minY - 0.5, pane.title)
-            XCTAssertLessThanOrEqual(window.frame.maxY, visibleFrame.maxY + 0.5, pane.title)
+            XCTAssertGreaterThanOrEqual(window.frame.minY, visibleFrame.minY - 0.5, geometry)
+            XCTAssertLessThanOrEqual(window.frame.maxY, visibleFrame.maxY + 0.5, geometry)
         }
     }
 
