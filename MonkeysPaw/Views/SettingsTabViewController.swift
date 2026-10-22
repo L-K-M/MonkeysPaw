@@ -123,7 +123,7 @@ final class SettingsTabViewController: NSTabViewController {
         let proposed = NSRect(x: previous.minX, y: previous.maxY - size.height, width: size.width, height: size.height)
         let frame = window.constrainFrameRect(proposed, to: window.screen)
         guard frame != window.frame else { return }
-        window.setFrame(frame, display: true,
-            animate: window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        // Native tab layout must not race a separate window-frame animation.
+        window.setFrame(frame, display: true)
     }
 }
