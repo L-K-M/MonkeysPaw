@@ -1245,6 +1245,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Select All",
                          action: #selector(NSStandardKeyBindingResponding.selectAll(_:)),
                          keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        let search = editMenu.addItem(withTitle: LibraryCommandStrings.search, action: #selector(searchLibrary), keyEquivalent: "f")
+        search.target = self
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
@@ -1253,7 +1256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(newLibraryPrompt), #selector(saveLibraryPrompt), #selector(renameLibraryPrompt),
+        case #selector(searchLibrary), #selector(newLibraryPrompt), #selector(saveLibraryPrompt), #selector(renameLibraryPrompt),
              #selector(moveLibraryPrompt), #selector(deleteLibraryPrompt), #selector(showLibraryAssistant):
             return validateLibraryFileMenuItem(menuItem, in: NSApp.keyWindow)
         case #selector(importFromMenu):

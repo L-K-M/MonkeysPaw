@@ -370,6 +370,43 @@ internal class GroupLibraryUiTest : TemporaryFiles() {
         assertContentEquals(original.encodeToByteArray(), r.bytes())
     }
 
+    @Test fun `new prompt uses editable group and viewer group falls back to private root`() = runTest {
+        val r = Rig()
+        r.repository.refresh(); runCurrent()
+        r.browser.setFilter(LibraryFilter.Group(groupID)); runCurrent()
+        assertEquals("Groups/Team", r.browser.newPromptFolder())
+        r.editor.createDraft(folder = r.browser.newPromptFolder()); runCurrent()
+        assertEquals("Groups/Team/Untitled.md", r.editor.state.value.relativePath)
+        assertFalse(Files.exists(libraryDir.resolve("Groups/Team/Untitled.md")))
+        r.editor.edit("New group body"); r.editor.save(); runCurrent()
+        assertEquals("New group body", r.library.load("Groups/Team/Untitled.md").document.body)
+        r.role(Role.VIEWER)
+        assertEquals("", r.browser.newPromptFolder(), "Use current access even before the browser refreshes")
+        r.browser.setFilter(LibraryFilter.Folder("Groups/Team")); runCurrent()
+        assertEquals("", r.browser.newPromptFolder())
+        r.editor.createDraft(folder = r.browser.newPromptFolder()); runCurrent()
+        assertEquals("Untitled.md", r.editor.state.value.relativePath)
+        assertTrue(r.editor.state.value.canEdit)
+        assertFalse(Files.exists(libraryDir.resolve("Untitled.md")))
+    }
+
+    @Test fun `group destination captured before downgrade cannot save after access changes`() = runTest {
+        val r = Rig(Role.OWNER)
+        r.repository.refresh(); runCurrent()
+        r.browser.setFilter(LibraryFilter.Group(groupID)); runCurrent()
+        val folder = r.browser.newPromptFolder()
+        r.editor.createDraft(folder = folder); runCurrent()
+        r.editor.edit("Keep this draft")
+        r.role(Role.VIEWER)
+        r.repository.publishProjection(); runCurrent()
+        r.editor.save(); runCurrent()
+        assertEquals("Groups/Team/Untitled.md", r.editor.state.value.relativePath)
+        assertEquals("Keep this draft", r.editor.state.value.source)
+        assertTrue(r.editor.state.value.dirty)
+        assertFalse(r.editor.state.value.canSave)
+        assertFalse(Files.exists(libraryDir.resolve("Groups/Team/Untitled.md")))
+    }
+
     @Test fun `Personal writes remain usable with viewer groups and chooser refuses viewer destination`() = runTest {
         val r = Rig(Role.VIEWER)
         r.editor.createDraft("personal.md")

@@ -1,8 +1,8 @@
 import AppKit
 
 extension LibraryWindowController {
-    static func configureNewPromptAlert(_ alert: NSAlert) {
-        let input = NSTextField(string: LibraryStrings.newPromptDefaultTitle)
+    static func configureNewPromptAlert(_ alert: NSAlert, request: LibraryNewPromptRequest) {
+        let input = NSTextField(string: request.title)
         configureTextInput(alert, input: input, label: LibraryCommandStrings.promptTitle)
         input.setAccessibilityIdentifier("library-new-prompt-title")
     }

@@ -218,6 +218,12 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             return true
         }
         if flags == [.command],
+           event.keyCode == UInt16(kVK_ANSI_F) || event.charactersIgnoringModifiers?.lowercased() == "f" {
+            guard activeDialog == nil, window.attachedSheet == nil, presentation.canFocusFilter else { return false }
+            presentation.focusFilter()
+            return true
+        }
+        if flags == [.command],
            event.keyCode == UInt16(kVK_ANSI_N) || event.charactersIgnoringModifiers?.lowercased() == "n" {
             guard activeDialog == nil, window.attachedSheet == nil, presentation.canCreatePrompt else { return false }
             presentation.requestNewPrompt()
@@ -283,7 +289,7 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard) || response == .delete
         }
         if case .fileCommand(let request) = dialog { configureFileCommandAlert(alert, request: request) }
-        if case .newPrompt = dialog { configureNewPromptAlert(alert) }
+        if case .newPrompt(let request) = dialog { configureNewPromptAlert(alert, request: request) }
         return alert
     }
 
@@ -308,6 +314,11 @@ final class LibraryWindowController: NSObject, NSWindowDelegate {
             (alert.window.initialFirstResponder as? NSTextField)?.selectText(nil)
         }
         return {
+            // A conflict or reload can replace the sheet before its title is submitted.
+            if case .newPrompt(let request) = dialog,
+               case .createPrompt(let title) = fileCommandResponse(.createPrompt(""), alert: alert) {
+                request.title = title
+            }
             guard alert.window.sheetParent === window else { return }
             window.endSheet(alert.window, returnCode: .cancel)
         }

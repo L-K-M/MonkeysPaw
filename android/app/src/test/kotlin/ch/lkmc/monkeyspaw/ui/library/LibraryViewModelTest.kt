@@ -61,6 +61,26 @@ internal class LibraryViewModelTest : TemporaryFiles() {
     }
 
     @Test
+    fun `new prompt captures selected folder and other filters use the root`() = runTest {
+        fixtures()
+        val model = loadedModel()
+        model.setFilter(LibraryFilter.Folder("Work/code"))
+        runCurrent()
+        val folder = model.newPromptFolder()
+        assertEquals("Work/code", folder)
+        model.setQuery("no matches")
+        runCurrent()
+        assertEquals(folder, model.newPromptFolder())
+        for (filter in listOf(LibraryFilter.All, LibraryFilter.Favourites, LibraryFilter.Recent,
+            LibraryFilter.Conflicts, LibraryFilter.Tag("code"))) {
+            model.setFilter(filter)
+            runCurrent()
+            assertEquals("", model.newPromptFolder())
+        }
+        assertEquals("Work/code", folder)
+    }
+
+    @Test
     fun `counts include descendants and each normalized tag once regardless of search`() = runTest {
         fixtures()
         val model = loadedModel()

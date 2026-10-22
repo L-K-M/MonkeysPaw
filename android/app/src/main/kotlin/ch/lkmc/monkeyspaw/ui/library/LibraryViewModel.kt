@@ -67,6 +67,17 @@ internal class LibraryViewModel @Inject constructor(
         load()
     }
 
+    fun newPromptFolder(): String {
+        val access = repository.accessSnapshot
+        val folder = when (val filter = state.value.filter) {
+            is LibraryFilter.Folder -> filter.path
+            is LibraryFilter.Group -> access.groups[filter.id]?.let { "Groups/${it.folder}" }.orEmpty()
+            else -> ""
+        }
+        // Folder filters can also point into a viewer group. Recheck committed access.
+        return folder.takeIf { access.access("$it/").readOnlyReason == null }.orEmpty()
+    }
+
     fun select(selection: LibrarySelection?) {
         if (selection != null && state.value.rows.none { it.selection == selection }) return
         preferredSelection = selection
