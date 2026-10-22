@@ -1622,7 +1622,8 @@ final class LinuxEnvironment {
         do {
             let entry = try graph.library.createPrompt(titled: title, body: LinuxStrings.newPromptBody, in: folder)
             let path = entry.relativePath
-            do { try graph.index.apply(LibraryChangeSet(created: [RelativePath(path)])) }
+            graph.sync?.service.localSave()
+            do { try graph.index.apply(LibraryChangeSet(created: [RelativePath(path)]), origin: .local) }
             catch { log.write(.warning, "Prompt saved; immediate index refresh failed") }
             return LibraryPromptSelection(identity: entry.identity, relativePath: RelativePath(path))
         } catch {

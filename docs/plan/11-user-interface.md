@@ -426,12 +426,19 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   on macOS) ask for a title, initially selected as `New prompt`. The dialog
   names the destination captured from the sidebar: the selected folder or
   editable group's `Groups/<folder>`, otherwise the library root, including
-  for viewer groups. Create keeps the exact title, using `New prompt` for
+  for viewer groups. An external reload or conflict temporarily replaces the
+  dialog; resuming it keeps the entered title and captured destination.
+  Create keeps the exact title, using `New prompt` for
   blank input, then asks Save/Discard/Cancel for an open dirty draft before
   writing. Cancelling either dialog writes nothing. Creation uses the usual
   exclusive filename and collision suffix rules, clears the filter, and opens
   Edit in the same window with the new prompt selected; keep the containing
-  sidebar section, otherwise select All.
+  sidebar section, otherwise select All. Both desktop creation entry points
+  notify sync immediately through its usual save debounce, without waiting
+  for a filesystem event.
+- **Search.** ⌘/Ctrl+F focuses the Library filter without changing the
+  query, selection or editor draft. Native dialogs
+  and active input-method composition retain keyboard ownership.
 - **Edit · Preview · Fields · History.** Edit shows the raw file, front
   matter and body, with live validation from the same codec and validator as
   the picker. Fields lists the parsed fields read-only. Preview renders with

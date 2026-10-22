@@ -211,6 +211,10 @@ final class LibraryViewState: ObservableObject {
             && editorState.queuedActions.isEmpty && newPromptRequest == nil
     }
     var canCreatePrompt: Bool { scopeDragReady && !isScopeDropPending }
+    var canFocusFilter: Bool {
+        isActive && isPresented && fileCommandRequest == nil && newPromptRequest == nil
+            && editorState.pendingDecision == nil && editorState.conflict == nil && imports?.isChoosing != true
+    }
     var canLoadHistory: Bool {
         isActive && libraryAvailable && !isResolvingConflict && editorState.prompt != nil && editorState.status != .commandRunning
     }
@@ -532,6 +536,11 @@ final class LibraryViewState: ObservableObject {
     func revealFolder() {
         guard isActive, libraryAvailable else { return }
         revealLibrary()
+    }
+
+    func focusFilter() {
+        guard canFocusFilter else { return }
+        focusRevision &+= 1
     }
 
     /// Return true when Escape cleared search. The controller closes only on

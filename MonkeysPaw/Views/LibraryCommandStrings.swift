@@ -5,6 +5,7 @@ import MonkeysPawCore
 enum LibraryCommandStrings {
     static let fileMenu = "File"
     static let newPrompt = "New Prompt…"
+    static let search = "Search Library"
     static let newPromptTitle = "New prompt"
     static let create = "Create"
     static let promptTitle = "Title"

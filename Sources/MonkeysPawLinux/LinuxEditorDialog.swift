@@ -3,9 +3,13 @@ import CGtk
 import Foundation
 import MonkeysPawCore
 
-struct LinuxNewPromptRequest: Equatable {
+final class LinuxNewPromptRequest: Equatable {
     let id = UUID()
     let folder: RelativePath
+    var title = LinuxStrings.newPromptDefaultTitle
+
+    init(folder: RelativePath) { self.folder = folder }
+    static func == (lhs: LinuxNewPromptRequest, rhs: LinuxNewPromptRequest) -> Bool { lhs === rhs }
 }
 
 enum LinuxEditorDialogState: Equatable {
@@ -132,7 +136,11 @@ final class LinuxEditorDialog {
         if let input {
             gtk_widget_set_name(input, "library-new-prompt-title")
             mp_accessible_label(input, LinuxStrings.promptTitle)
-            mp_entry_set_text(input, LinuxStrings.newPromptDefaultTitle)
+            if case .newPrompt(let request) = state {
+                mp_entry_set_text(input, request.title)
+                // Keep the draft when a conflict temporarily replaces this dialog.
+                GTK.onSignal(input, "changed") { request.title = String(cString: mp_entry_text(input)) }
+            }
             gtk_box_append(mp_box(content), GTK.label(LinuxStrings.promptTitle))
             gtk_box_append(mp_box(content), input)
             if let text = mp_entry_text_delegate(input) {

@@ -327,7 +327,8 @@ internal class EditorViewModel @Inject constructor(
     }
 
     fun open(selection: LibrarySelection) = request(EditorAction.Open(selection))
-    fun createDraft(path: String = "Untitled.md") = request(EditorAction.New(path))
+    fun createDraft(path: String = "Untitled.md", folder: String = "") =
+        request(EditorAction.New(if (folder.isEmpty()) path else "$folder/$path"))
     fun close() = request(EditorAction.Close)
     fun closeThen(onClosed: () -> Unit) = request(EditorAction.Close, onClosed)
     fun cancelCloseThen() {

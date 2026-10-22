@@ -812,6 +812,12 @@ final class LinuxLibraryWindow {
             return true
         }
         guard activeDialog == nil, !commands.hasDialog else { return false }
+        if [UInt32(GDK_KEY_f), UInt32(GDK_KEY_F)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
+            guard imports?.isChoosing != true else { return false }
+            gtk_widget_grab_focus(filter)
+            gtk_editable_select_region(OpaquePointer(filter), 0, -1)
+            return true
+        }
         if [UInt32(GDK_KEY_n), UInt32(GDK_KEY_N)].contains(key), modifiers == GDK_CONTROL_MASK.rawValue {
             return requestNewPrompt()
         }
