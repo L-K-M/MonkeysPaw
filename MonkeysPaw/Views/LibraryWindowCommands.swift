@@ -171,6 +171,8 @@ extension LibraryWindowController: NSMenuItemValidation {
         guard commandsAvailable(in: window), presentation.canFocusFilter, let toolbar = window?.toolbar else { return }
         if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
         toolbar.isVisible = true
+        // A model publication may still be waiting for its native-control update.
+        if let field = searchItem?.searchField { field.stringValue = presentation.snapshot.filter }
         searchItem?.beginSearchInteraction()
         if let field = searchItem?.searchField { window?.makeFirstResponder(field) }
     }
