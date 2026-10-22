@@ -272,6 +272,24 @@ final class MacSettingsWindowTests: XCTestCase {
         }
     }
 
+    func testVisibleSettingsPanesStayOnScreenAfterNativeResize() throws {
+        try start()
+        delegate.showSettings()
+        let controller = try settings()
+        let window = try XCTUnwrap(controller.window)
+        let visibleFrame = try XCTUnwrap(window.screen ?? NSScreen.main).visibleFrame
+        let resizeSettleTime: TimeInterval = 1
+
+        for pane in SettingsViewState.Tab.allCases {
+            controller.presentation.selectedTab = pane
+            // AppKit may apply a child's preferred size after setFrame returns.
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: resizeSettleTime))
+            XCTAssertTrue(window.isVisible, pane.title)
+            XCTAssertGreaterThanOrEqual(window.frame.minY, visibleFrame.minY - 0.5, pane.title)
+            XCTAssertLessThanOrEqual(window.frame.maxY, visibleFrame.maxY + 0.5, pane.title)
+        }
+    }
+
     func testHostedCompositionReadsSavedTierOnlyThroughInjectedSecrets() throws {
         let secrets = SettingsAssistantSecrets()
         let profile = try installSavedSecretProfile(secrets: secrets)
