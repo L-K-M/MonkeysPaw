@@ -2,9 +2,9 @@ import AppKit
 
 extension LibraryWindowController {
     /// The title field starts with the default title selected, so typing replaces it.
-    static func configureNewPromptAlert(_ alert: NSAlert) {
+    static func configureNewPromptAlert(_ alert: NSAlert, request: LibraryNewPromptRequest) {
         let label = LibraryCommandStrings.promptTitle
-        let input = NSTextField(string: LibraryStrings.newPromptDefaultTitle)
+        let input = NSTextField(string: request.title)
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 54))
         let caption = NSTextField(labelWithString: label)
         caption.frame = NSRect(x: 0, y: 32, width: 320, height: 20)

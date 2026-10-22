@@ -250,6 +250,13 @@ Behaviour mirrors §11.5: the same error and empty states, the same
 keystroke-budget spirit (fewest taps), and the same enums and named
 constants.
 
+Library's New prompt action starts an unsaved draft in the selected folder
+or editable group's folder. Other filters and viewer groups use the private
+library root. The destination is captured when requested; group permissions
+are checked again before saving. Cancelling or leaving without Save creates
+no file. Android retains its editable path/body flow rather than the desktop
+title dialog.
+
 ### 10.6 Storage and sync
 
 - **Library.** App-private `filesDir/library/`, with the same layout as the

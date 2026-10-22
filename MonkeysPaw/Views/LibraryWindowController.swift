@@ -290,7 +290,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard) || response == .delete
         }
         if case .fileCommand(let request) = dialog { configureFileCommandAlert(alert, request: request) }
-        if case .newPrompt = dialog { configureNewPromptAlert(alert) }
+        if case .newPrompt(let request) = dialog { configureNewPromptAlert(alert, request: request) }
         // Removing the key equivalent alone must not leave AppKit's first
         // button as an implicit Return target for a destructive choice.
         switch dialog {
@@ -326,6 +326,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             (alert.window.initialFirstResponder as? NSTextField)?.selectText(nil)
         }
         return {
+            // A conflict or reload can replace the sheet before its title is submitted.
+            if case .newPrompt(let request) = dialog,
+               case .createPrompt(let title) = fileCommandResponse(.createPrompt(""), alert: alert) {
+                request.title = title
+            }
             guard alert.window.sheetParent === window else { return }
             window.endSheet(alert.window, returnCode: .cancel)
         }

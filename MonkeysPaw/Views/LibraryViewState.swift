@@ -276,6 +276,10 @@ final class LibraryViewState: ObservableObject {
             && editorState.queuedActions.isEmpty && newPromptRequest == nil
     }
     var canCreatePrompt: Bool { scopeDragReady && !isScopeDropPending }
+    var canFocusFilter: Bool {
+        isActive && isPresented && fileCommandRequest == nil && newPromptRequest == nil
+            && editorState.pendingDecision == nil && editorState.conflict == nil && imports?.isChoosing != true
+    }
     var canLoadHistory: Bool {
         isActive && libraryAvailable && !isResolvingConflict && editorState.prompt != nil && editorState.status != .commandRunning
     }

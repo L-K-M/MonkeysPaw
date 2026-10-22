@@ -247,7 +247,7 @@ class MainActivity : ComponentActivity() {
                             // A row tap delivers (Fill); editing is an explicit action on the selection.
                             onOpen = ::openFill,
                             onEdit = { assistantImprove.close(); assistantReview.close(); editor.open(it) },
-                            onCreate = { assistantImprove.close(); assistantReview.close(); editor.createDraft() },
+                            onCreate = { assistantImprove.close(); assistantReview.close(); editor.createDraft(folder = library.newPromptFolder()) },
                             onSettings = setup::openSettings,
                             onAccount = ::openAccount,
                             onResolve = ::openResolve,

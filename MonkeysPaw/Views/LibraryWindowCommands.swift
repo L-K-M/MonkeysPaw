@@ -55,7 +55,8 @@ extension LibraryWindowController: NSMenuItemValidation {
                 && state.status != .loading && state.status != .saving
                 && !state.issues.contains { $0.severity == .error }
         case #selector(importFromMenu): return presentation.imports?.canImport == true
-        case #selector(searchLibrary(_:)), #selector(performFindPanelAction(_:)), #selector(performTextFinderAction(_:)):
+        case #selector(searchLibrary(_:)): return presentation.canFocusFilter
+        case #selector(performFindPanelAction(_:)), #selector(performTextFinderAction(_:)):
             return true
         case Selector(("toggleSidebar:")), Selector(("toggleInspector:")),
              Selector(("toggleToolbarShown:")), Selector(("runToolbarCustomizationPalette:")):
@@ -167,7 +168,7 @@ extension LibraryWindowController: NSMenuItemValidation {
         presentation.imports?.choose()
     }
     @objc func searchLibrary(_ sender: Any?) {
-        guard commandsAvailable(in: window), let toolbar = window?.toolbar else { return }
+        guard commandsAvailable(in: window), presentation.canFocusFilter, let toolbar = window?.toolbar else { return }
         if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
         toolbar.isVisible = true
         searchItem?.beginSearchInteraction()

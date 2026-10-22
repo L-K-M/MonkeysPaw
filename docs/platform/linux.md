@@ -328,9 +328,19 @@ file…", disables Revert and holds conflict/discard dialogs until completion.
 | Settings folder switch | While dirty, saving, running a file command or awaiting a decision, choosing another folder or Use Default is refused with the Library editor message and preserves the graph. Save/discard or wait for completion, then switch; no old editor publication or draft leaks into the replacement. | NOT RUN |
 | Picker Edit and no-match creation | Ctrl+Return/Edit and no-match Create dismiss the picker and open the prompt in Library's Edit mode. A target hidden by the Library filter/section is revealed only after the discard guard allows it. Show in Files reveals the prompt’s containing folder. | NOT RUN |
 | Library New prompt… and Ctrl+N | Both share enablement. The title dialog selects `New prompt` and names the captured folder/editable-group destination or root fallback, including viewer groups. Title then draft guard cancellation writes nothing; Save/Discard creates with collision suffixes and opens Edit with selection visible, filter cleared and source focused. Failure stays in Library; dialogs, busy work and IME composition suppress Ctrl+N. | NOT RUN |
+| New prompt interrupted by an external write | Enter a title, modify the open dirty file externally, resolve the conflict, and confirm the resumed title dialog keeps its title and destination. | PASS on isolated X11, 2026-10-22; Wayland/real IME remain NOT RUN |
+| Ctrl+F from a dirty editor | Focus the filter, type a query and confirm the open source and unsaved status survive even when the selected row is filtered out. | PASS on isolated X11, 2026-10-22; Wayland/Orca remain NOT RUN |
 | Real IBus/Fcitx editor composition | Compose with a real conversion engine. Return commits and Escape cancels through the input method without saving or closing. Model refreshes preserve active preedit; committed characters appear once and update validation/preview. Switch/reopen the session and confirm no old composition survives. | NOT RUN |
 | Orca and visible focus | Tab/Shift+Tab reach source, mode toggles, menus, validation status, inspector pages and modal choices. Orca announces labels, read-only reasons, errors and conflict/discard choices; Cancel has initial dialog focus. | NOT RUN |
 | Clipboard privacy | Trace `gdk_clipboard_read_text_async` with harmless clipboard contents, recording counts only. Browsing, typing, mode or inspector changes and saves read zero times when the prompt source contains `{{clipboard}}`; Preview renders the literal marker `{clipboard}`. | NOT RUN |
+
+The 2026-10-22 follow-up smoke used GTK 4.8.3, Xvfb and Openbox 3.6.1,
+isolated library/app data, native pointer/xdotool input and screenshot/disk
+readback. It also verified selected default title, Escape writing no file,
+Return creating in the selected folder, Edit selection/source focus, and
+retained title after Take Theirs. These narrow checks do not complete the
+broader owner rows above. Automated regressions cover no-watcher sync
+scheduling, title interruption, search focus and synthetic preedit refusal.
 
 ## History and file commands (M3L3, NOT RUN)
 

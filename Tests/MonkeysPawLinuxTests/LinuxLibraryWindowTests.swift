@@ -173,6 +173,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
         mp_test_emit_preedit_changed(text, "かな")
         XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
         XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_f), GDK_CONTROL_MASK), 0)
         XCTAssertEqual(environment.libraryBrowserModel.filter, "Alpha")
         mp_test_emit_preedit_changed(text, "")
         // Escape inside the filter clears it and dismisses the search bar; the window stays open.

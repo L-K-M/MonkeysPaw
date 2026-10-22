@@ -312,6 +312,52 @@ final class LinuxSyncCompositionTests: XCTestCase {
         XCTAssertEqual(transport.requests.filter { $0.method == .put }.count, 1)
     }
 
+    func testPickerCreationPushesWithoutWatcherEvents() throws {
+        try assertCreationPushesWithoutWatcherEvents(from: .picker)
+    }
+
+    func testLibraryCreationPushesWithoutWatcherEvents() throws {
+        try assertCreationPushesWithoutWatcherEvents(from: .library)
+    }
+
+    private enum CreationSurface { case picker, library }
+
+    private func assertCreationPushesWithoutWatcherEvents(from surface: CreationSurface) throws {
+        let timer = LinuxSyncTestTimer()
+        compose(timer: timer, watcher: LinuxSyncTestWatcher())
+        try login()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.syncService?.report.lastSuccess != nil })
+        let title = "Created without watcher"
+        switch surface {
+        case .picker:
+            environment.activateToggle()
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+            environment.pickerModel.setQuery(title)
+            let label = try XCTUnwrap(environment.pickerModel.noMatches?.createLabel)
+            let button = try XCTUnwrap(findWidget(matching: {
+                mp_is_button($0) != 0 && gtk_button_get_label(mp_button($0)).map { String(cString: $0) } == label
+            }))
+            XCTAssertNotEqual(gtk_widget_activate(button), 0)
+        case .library:
+            environment.showLibrary()
+            XCTAssertTrue(GTKTestSupport.spin { self.findWidget("library-new-prompt") != nil })
+            XCTAssertNotEqual(gtk_widget_activate(try XCTUnwrap(findWidget("library-new-prompt"))), 0)
+            XCTAssertTrue(GTKTestSupport.spin { self.findWidget("library-new-prompt-title") != nil })
+            mp_entry_set_text(try XCTUnwrap(findWidget("library-new-prompt-title")), title)
+            XCTAssertNotEqual(gtk_widget_activate(try XCTUnwrap(findWidget("library-dialog-response-0"))), 0)
+        }
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.prompt?.relativePath.string == title + ".md"
+            && self.environment.editorModel.state.status != .loading })
+        var saves: [() -> Void] = []
+        XCTAssertTrue(GTKTestSupport.spin { saves += timer.take(Limits.syncDebounce); return !saves.isEmpty },
+            "Creation must schedule sync even if no watcher event arrives")
+        saves.forEach { $0() }
+        XCTAssertTrue(GTKTestSupport.spin { self.transport.requests.contains { $0.method == .put } })
+        let request = try XCTUnwrap(transport.requests.first { $0.method == .put })
+        let put = try JSONDecoder().decode(SyncAPI.PutPromptRequest.self, from: XCTUnwrap(request.body))
+        XCTAssertEqual(put.path, title + ".md")
+    }
+
     func testOneInvalidWatcherPathDoesNotDisableSyncForOtherChanges() throws {
         let worker = LinuxBackgroundWork()
         let raw = LinuxSyncTestWatcher()
@@ -1154,8 +1200,12 @@ final class LinuxSyncCompositionTests: XCTestCase {
     }
 
     private func findWidget(_ name: String) -> GTK.Widget? {
+        findWidget(matching: { String(cString: gtk_widget_get_name($0)) == name })
+    }
+
+    private func findWidget(matching predicate: (GTK.Widget) -> Bool) -> GTK.Widget? {
         func find(_ widget: GTK.Widget) -> GTK.Widget? {
-            if String(cString: gtk_widget_get_name(widget)) == name { return widget }
+            if predicate(widget) { return widget }
             var child = gtk_widget_get_first_child(widget)
             while let current = child {
                 if let match = find(current) { return match }
@@ -1163,10 +1213,12 @@ final class LinuxSyncCompositionTests: XCTestCase {
             }
             return nil
         }
-        var windows = gtk_application_get_windows(application)
-        while let node = windows {
-            if let data = node.pointee.data, let match = find(mp_window_widget(data.assumingMemoryBound(to: GtkWindow.self))) { return match }
-            windows = node.pointee.next
+        let windows = gtk_window_get_toplevels()
+        for index in 0..<g_list_model_get_n_items(windows) {
+            guard let object = g_list_model_get_item(windows, index) else { continue }
+            let match = find(object.assumingMemoryBound(to: GtkWidget.self))
+            g_object_unref(object)
+            if let match { return match }
         }
         return nil
     }

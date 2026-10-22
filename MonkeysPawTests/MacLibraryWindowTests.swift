@@ -411,6 +411,11 @@ final class MacLibraryWindowTests: XCTestCase {
             replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertTrue(input.hasMarkedText())
         XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        let search = NSMenuItem(title: MainMenuStrings.searchLibrary,
+            action: #selector(LibraryWindowController.searchLibrary(_:)), keyEquivalent: "f")
+        XCTAssertFalse(controller.validateLibraryMenuItem(search, in: window))
+        controller.searchLibrary(nil)
+        XCTAssertTrue(window.firstResponder === input)
         let newPrompt = NSMenuItem(title: LibraryCommandStrings.newPrompt,
             action: #selector(LibraryWindowController.newDocument(_:)), keyEquivalent: "n")
         XCTAssertFalse(controller.validateLibraryMenuItem(newPrompt, in: window))
@@ -738,6 +743,38 @@ final class MacLibraryWindowTests: XCTestCase {
         presentation.setLibraryAvailable(true)
         presentation.didHide()
         XCTAssertFalse(presentation.canCreatePrompt)
+    }
+
+    func testSearchLibraryFocusesFilterWithoutChangingSelectionOrDirtyDraft() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let presentation = try presentation()
+        let window = try window()
+        presentation.selectPath("one.md")
+        presentation.edit("Draft")
+        presentation.setFilter("one")
+        let selection = presentation.snapshot.selection
+        controller.searchLibrary(nil)
+        let filter = try XCTUnwrap(controller.searchItem?.searchField)
+        XCTAssertTrue(window.firstResponder === filter.currentEditor() || window.firstResponder === filter)
+        XCTAssertEqual(presentation.snapshot.filter, "one")
+        XCTAssertEqual(presentation.snapshot.selection, selection)
+        XCTAssertEqual(presentation.editorState.source, "Draft")
+        XCTAssertTrue(presentation.editorState.isDirty)
+
+        delegate.installMainMenu()
+        let edit = try XCTUnwrap(NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Edit" })
+        let find = try XCTUnwrap(edit.items.compactMap(\.submenu).first { $0.title == MainMenuStrings.find })
+        let search = try XCTUnwrap(find.items.first { $0.action == #selector(LibraryWindowController.searchLibrary(_:)) })
+        XCTAssertEqual(search.keyEquivalent, "f")
+        XCTAssertEqual(search.keyEquivalentModifierMask, [.command, .option])
+        XCTAssertNil(search.target)
+        XCTAssertFalse(delegate.validateLibraryFileMenuItem(search, in: nil))
+        XCTAssertTrue(delegate.validateLibraryFileMenuItem(search, in: window))
+        presentation.requestNewPrompt()
+        XCTAssertFalse(delegate.validateLibraryFileMenuItem(search, in: window))
     }
 
     func testImportChooserPublishesNewPromptToolbarGateChanges() throws {

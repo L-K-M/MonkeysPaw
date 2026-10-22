@@ -930,6 +930,30 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertNil(try files.stamp(at: "New prompt.md"))
     }
 
+    func testNativeNewPromptRetainsUnsubmittedTitleWhenPresentationIsInterrupted() throws {
+        _ = try open()
+        let parent = try window()
+        let request = LibraryNewPromptRequest(folder: "Work")
+        let dismissed = expectation(description: "Interrupted title sheet ends")
+        let cancel = LibraryWindowController.presentEditorDialog(in: parent, dialog: .newPrompt(request)) { _ in
+            dismissed.fulfill()
+        }
+        let sheet = try XCTUnwrap(parent.attachedSheet)
+        let input = try XCTUnwrap(sheet.initialFirstResponder as? NSTextField)
+        let title = "  Kept かな/title  "
+        input.stringValue = title
+        input.currentEditor()?.string = title
+        cancel()
+        wait(for: [dismissed], timeout: 2)
+
+        let resumed = LibraryWindowController.makeEditorAlert(for: .newPrompt(request))
+        XCTAssertEqual((resumed.window.initialFirstResponder as? NSTextField)?.stringValue, title)
+        XCTAssertEqual(resumed.informativeText, "Creates the prompt in Work.")
+        let fresh = LibraryWindowController.makeEditorAlert(for: .newPrompt(LibraryNewPromptRequest(folder: "")))
+        XCTAssertEqual((fresh.window.initialFirstResponder as? NSTextField)?.stringValue, LibraryStrings.newPromptDefaultTitle)
+        XCTAssertEqual(try files.listFiles().map(\.relativePath), ["one.md"])
+    }
+
     func testNativeRenameUsesEditedTextAndNonButtonDismissalCancelsForms() throws {
         var completed: XCTestExpectation?
         let presentation = try open(presenter: { window, dialog, done in
