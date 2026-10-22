@@ -230,6 +230,15 @@ struct LibraryEditorView: View {
                     LibraryConflictView(presentation: conflict)
                     Divider()
                 }
+                if presentation.editorMode == .edit, presentation.editorState.form == nil,
+                   presentation.editorState.source != nil, presentation.editorState.readOnlyReason == nil,
+                   presentation.editorState.status != .loading {
+                    Text(LibraryFormStrings.unavailable)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .accessibilityIdentifier("library-form-unavailable")
+                }
                 content
                 if showsIssues, !presentation.editorState.issues.isEmpty {
                     Divider()
@@ -272,11 +281,21 @@ struct LibraryEditorView: View {
         // Keep the native text view mounted across modes so its undo stack,
         // marked-text ownership and selection belong to the editing session.
         ZStack(alignment: .topLeading) {
+            LibraryPromptForm(presentation: presentation, isVisible: showsForm)
+                .opacity(showsForm ? 1 : 0)
+                .allowsHitTesting(showsForm)
+                .accessibilityHidden(!showsForm)
             source
-                .accessibilityHidden(presentation.editorMode != .edit)
+                .allowsHitTesting(showsSource)
+                .accessibilityHidden(!showsSource)
             if presentation.editorMode == .preview { preview }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var showsForm: Bool { presentation.editorMode == .edit && presentation.editorState.form != nil }
+    private var showsSource: Bool {
+        presentation.editorMode == .source || (presentation.editorMode == .edit && presentation.editorState.form == nil)
     }
 
     private var source: some View {
@@ -286,8 +305,8 @@ struct LibraryEditorView: View {
             isEditable: presentation.canEditSource,
             onEdit: presentation.edit,
             highlight: presentation.quoteHighlight,
-            focusRevision: presentation.editorMode == .edit ? presentation.editorFocusRevision : 0,
-            isVisible: presentation.editorMode == .edit)
+            focusRevision: showsSource ? presentation.editorFocusRevision : 0,
+            isVisible: showsSource)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -307,7 +326,8 @@ struct LibraryEditorView: View {
 
     private var previewColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let description = presentation.openPromptRow?.previewLine, !description.isEmpty {
+            if let description = presentation.editorState.form?.description ?? presentation.openPromptRow?.previewLine,
+               !description.isEmpty {
                 Text(description).foregroundStyle(.secondary)
             }
             previewBody
@@ -524,7 +544,7 @@ struct LibraryInspectorView: View {
     }
 
     private var promptTags: String {
-        let tags = presentation.openPromptRow?.tags ?? []
+        let tags = presentation.editorState.form?.tags ?? presentation.openPromptRow?.tags ?? []
         return tags.isEmpty ? LibraryNativeStrings.none : tags.joined(separator: ", ")
     }
 

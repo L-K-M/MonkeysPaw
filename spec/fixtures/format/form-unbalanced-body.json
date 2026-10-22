@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "edits": [{"property": "body", "value": "{{name"}, {"property": "title", "value": "Draft"}],
+  "expected": {
+    "metadata": {"id": null, "title": "Draft", "description": null, "tags": [], "favorite": false,
+                 "private": false, "format": "1", "declarations": []},
+    "body": "{{name",
+    "issues": [{"code": "template.unbalanced_opener", "severity": "error"}],
+    "canonical": null
+  }
+}

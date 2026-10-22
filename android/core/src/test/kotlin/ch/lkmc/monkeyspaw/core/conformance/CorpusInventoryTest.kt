@@ -213,6 +213,33 @@ class CorpusInventoryTest {
     }
 
     @Test
+    fun `format edits keep a strict property list`() {
+        withSynthetic { root, schema ->
+            editEnvelope(root, Category.FORMAT) {
+                this["edits"] = parseFixtureJson(("""[{"property":"title","value":"T"},{"property":"tags","value":["a"]},""" +
+                    """{"property":"private","value":true},{"property":"body","value":"b"},{"property":"description","value":"d"}]""").toByteArray())
+            }
+            Corpus.load(root, schema)
+        }
+        mutateRejects(Category.FORMAT, "non-array edits") { this["edits"] = JsonObject(emptyMap()) }
+        mutateRejects(Category.FORMAT, "edit extra member") {
+            this["edits"] = parseFixtureJson("""[{"property":"title","value":"T","extra":1}]""".toByteArray())
+        }
+        mutateRejects(Category.FORMAT, "edit missing value") {
+            this["edits"] = parseFixtureJson("""[{"property":"title"}]""".toByteArray())
+        }
+        mutateRejects(Category.FORMAT, "unknown edit property") {
+            this["edits"] = parseFixtureJson("""[{"property":"favorite","value":true}]""".toByteArray())
+        }
+        mutateRejects(Category.FORMAT, "mistyped edit value") {
+            this["edits"] = parseFixtureJson("""[{"property":"tags","value":"a"}]""".toByteArray())
+        }
+        mutateRejects(Category.GRAMMAR, "edits outside format") {
+            this["edits"] = parseFixtureJson("""[{"property":"title","value":"T"}]""".toByteArray())
+        }
+    }
+
+    @Test
     fun `ranking types times and references stay strict`() {
         mutateRejects(Category.RANKING, "empty prompts") { this["prompts"] = JsonArray(emptyList()) }
         listOf("2026-10-11T12:00:00+00:00", "2026-02-30T12:00:00Z", "2026-10-11T12:00:00.000Z").forEach { time ->

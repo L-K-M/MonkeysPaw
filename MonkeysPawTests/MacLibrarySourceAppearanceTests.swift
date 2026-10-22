@@ -47,6 +47,35 @@ final class MacLibrarySourceAppearanceTests: XCTestCase {
         XCTAssertTrue(text.isIncrementalSearchingEnabled)
     }
 
+    func testBodyEditorUsesNativeUndoFindAndTreatsDelimitersAsBodyText() throws {
+        var edits: [String] = []
+        let coordinator = LibrarySourceEditor.Coordinator(onEdit: { edits.append($0) })
+        let scroll = LibrarySourceEditor.makeScrollView(coordinator: coordinator, content: .body)
+        let text = try XCTUnwrap(scroll.documentView as? LibrarySourceTextView)
+        let window = host(scroll)
+        defer { scroll.removeFromSuperview(); coordinator.deactivate() }
+        let body = "---\n{{name}}\n---\nText"
+        coordinator.update(text, source: body, path: "one.md", isEditable: true, onEdit: { edits.append($0) })
+        XCTAssertEqual(text.accessibilityIdentifier(), "library-body")
+        XCTAssertTrue(text.usesFindBar)
+        XCTAssertNil(foreground(text, at: 0))
+        XCTAssertEqual(foreground(text, at: (body as NSString).range(of: "{{name}}").location), .controlAccentColor)
+        XCTAssertTrue(window.makeFirstResponder(text))
+        let undo = try XCTUnwrap(text.undoManager)
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        text.insertText(" draft", replacementRange: NSRange(location: (body as NSString).length, length: 0))
+        text.breakUndoCoalescing()
+        undo.endUndoGrouping()
+        XCTAssertEqual(edits.last, body + " draft")
+        LibrarySourceEditor.updateVisibility(false, in: scroll)
+        LibrarySourceEditor.updateVisibility(true, in: scroll)
+        undo.undo()
+        XCTAssertEqual(edits.last, body)
+        undo.redo()
+        XCTAssertEqual(edits.last, body + " draft")
+    }
+
     func testFrontMatterAndPlaceholdersColorAsTemporaryAttributes() throws {
         let source = "---\ntitle: Note\n---\nBody {{tone}} and \\{{escaped}} {{9bad}} {{unclosed"
         let (coordinator, _, text) = try makeEditor()

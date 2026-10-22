@@ -3,6 +3,8 @@ package ch.lkmc.monkeyspaw.core.conformance
 import ch.lkmc.monkeyspaw.core.domain.format.FrontMatter
 import ch.lkmc.monkeyspaw.core.domain.format.PromptBuiltinValues
 import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
+import ch.lkmc.monkeyspaw.core.domain.format.PromptDocument
+import ch.lkmc.monkeyspaw.core.domain.format.PromptEdit
 import ch.lkmc.monkeyspaw.core.domain.format.PromptField
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssue
 import ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError
@@ -10,6 +12,7 @@ import ch.lkmc.monkeyspaw.core.domain.format.PromptRenderer
 import ch.lkmc.monkeyspaw.core.domain.format.PromptValidator
 import ch.lkmc.monkeyspaw.core.domain.format.PromptWriteError
 import ch.lkmc.monkeyspaw.core.domain.format.TemplateToken
+import ch.lkmc.monkeyspaw.core.services.PromptMutations
 import java.math.BigInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -57,6 +60,24 @@ internal object PromptFixtures {
 
     private data class Registration(val fixture: FixtureCase, val completed: Set<String>)
 
+    private fun applyEdits(parsed: PromptDocument, fixture: FixtureCase, filename: String): PromptDocument {
+        val elements = fixture.envelope["edits"]?.arrayValue() ?: return parsed
+        var document = parsed
+        for (element in elements) {
+            val edit = element.objectValue()
+            val value = edit["value"]
+            document = when (edit["property"].stringValue()) {
+                "title" -> PromptMutations.editing(PromptEdit.Title(value.stringValue()), document, filename)
+                "description" -> PromptMutations.editing(PromptEdit.Description(value.stringValue()), document, filename)
+                "tags" -> PromptMutations.editing(PromptEdit.Tags(value.strings()), document, filename)
+                "private" -> PromptMutations.editing(PromptEdit.IsPrivate(value.booleanValue()), document, filename)
+                "body" -> PromptMutations.editing(PromptEdit.Body(value.stringValue()), document, filename)
+                else -> throw CorpusException("Unknown edit property")
+            }
+        }
+        return document
+    }
+
     private fun registration(fixture: FixtureCase): Registration = when (fixture.category) {
         Category.FORMAT -> Registration(fixture, setOf("metadata", "body", "issues", "canonical"))
         Category.GRAMMAR -> Registration(fixture, setOf("tokens", "names", "fields", "issues"))
@@ -69,10 +90,12 @@ internal object PromptFixtures {
         val fixture = entry.fixture
         val count = (fixture.envelope["repeat"]?.integerValue() ?: BigInteger.ONE).intValueExact()
         val source = fixture.source().utf8().repeat(count)
-        val document = PromptCodec.parse(source, fixture.envelope["filename"].stringValue())
+        val filename = fixture.envelope["filename"].stringValue()
+        val parsed = PromptCodec.parse(source, filename)
         val label = fixture.envelopeFile.relativePath
-        assertUtf8Equal(source, document.source, "$label source")
-        assertEquals(document.issues, PromptValidator.validate(document), "$label validator")
+        assertUtf8Equal(source, parsed.source, "$label source")
+        assertEquals(parsed.issues, PromptValidator.validate(parsed), "$label validator")
+        val document = applyEdits(parsed, fixture, filename)
         assertEquals(fixture.expected["issues"], JsonArray(document.issues.map(::issueJson)), "$label issues")
         if (fixture.category != Category.FORMAT) {
             assertEquals(fixture.expected["fields"], JsonArray(document.effectiveFields.map(::fieldJson)), "$label fields")

@@ -39,6 +39,8 @@ positions, inspector state and toolbar configuration.
 
 ### 24.3 Library window
 
+The example shows Source; Edit opens the properties form and body editor.
+
 ```
 ┌ ● ● ●  [⊞]          │ Review a diff               [Edit│Preview]  ☆  ✦  [⌕ Search ] │ ⓘ ┐
 │                     │ code/review-a-diff.md — Edited                                   │   │
@@ -60,7 +62,7 @@ positions, inspector state and toolbar configuration.
   the editor and an inspector (`NSSplitViewItem` sidebar, content-list and
   inspector behaviours). Panes collapse instead of widening the window.
 - **Toolbar.** A unified, customizable `NSToolbar` with tracking separators:
-  sidebar toggle; New Prompt in the list column; an Edit/Preview segmented
+  sidebar toggle; New Prompt in the list column; an Edit/Preview/Source segmented
   control, Favourite and Assistant in the editor column; a search field
   that filters the list; the inspector toggle. Commands that act on the
   selected prompt live in menus and the list's context menu, not in rows
@@ -76,9 +78,11 @@ positions, inspector state and toolbar configuration.
   Delete to delete, a context menu and dragging a prompt onto a sidebar
   folder or group. Opening a prompt follows the click's release, so a drag
   never raises the unsaved-edits alert first.
-- **Editor.** Edit shows the source in a monospaced text view with the
-  find bar, native undo and highlighted `{{placeholders}}`; Preview renders
-  the body. A slim status bar below shows validation (with an expandable
+- **Editor.** Edit shows labelled title, description, tag and privacy
+  controls above a body-only text view. Source retains the complete file in
+  a monospaced text view; both text views keep native Find, undo and highlighted
+  `{{placeholders}}`. Source also edits advanced metadata and declarations.
+  Preview renders the body. A slim status bar below shows validation (with an expandable
   issue list) and the save state. A sync conflict shows a bar above the
   editor with Keep Server, Keep Mine, Keep Both and an expandable
   comparison.
@@ -98,7 +102,7 @@ positions, inspector state and toolbar configuration.
 | Monkey's Paw | About, Check for Updates…, Settings… ⌘,, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q |
 | File | New Prompt… ⌘N, Import… ⇧⌘I, Close ⌘W, Save ⌘S, Duplicate ⇧⌘S, Rename…, Move To ▸, Revert to Saved, Show in Finder, Delete… |
 | Edit | Undo/Redo (named by the text system), Cut, Copy, Paste, Paste and Match Style, Delete, Select All, Find ▸ (Find… ⌘F, Find Next ⌘G, Find Previous ⇧⌘G, Use Selection for Find ⌘E, Search Library ⌥⌘F), Spelling and Grammar ▸ |
-| View | Edit ⌘1, Preview ⌘2, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
+| View | Edit ⌘1, Preview ⌘2, Source ⌘3, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
 | Prompt | Add to/Remove from Favourites ⌘D, Review with Assistant ⌘R, Improve with Assistant ⌘I |
 | Window | Minimize ⌘M, Zoom, Library ⌘L, Bring All to Front, window list |
 | Help | Monkey's Paw Help |
@@ -136,7 +140,7 @@ The GTK app uses the same structure with GNOME conventions (GTK 4, no
 libadwaita dependency):
 
 - **Library.** A `GtkHeaderBar` with the sidebar toggle and New on the
-  left, the title and path as a two-line title, and Edit/Preview,
+  left, the title and path as a two-line title, and Edit/Preview/Source,
   Favourite, Search, Inspector and a primary menu on the right. A search
   bar (Ctrl+F) filters the list. Nested `GtkPaned` panes hold the sidebar
   (`navigation-sidebar`), the list, the editor with its status bar, and the
@@ -144,7 +148,7 @@ libadwaita dependency):
 - **Menus.** The primary menu holds New Prompt, Import, Show in Files,
   Rename, Move, Duplicate, Revert, Delete, Settings, Keyboard Shortcuts and
   About. Application accelerators mirror macOS with Ctrl: Ctrl+N, Ctrl+S,
-  Ctrl+Shift+S, Ctrl+F, Ctrl+D, Ctrl+1/2, F9 (sidebar), Ctrl+W, Ctrl+Q,
+  Ctrl+Shift+S, Ctrl+F, Ctrl+D, Ctrl+1/2/3, F9 (sidebar), Ctrl+W, Ctrl+Q,
   Ctrl+, and F2 (rename); Delete in the list deletes.
 - **Settings.** A header bar with a stack switcher for the same five
   panes; each pane is a clamped column of `boxed-list` rows.

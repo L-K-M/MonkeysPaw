@@ -41,7 +41,7 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(revertDocumentToSaved(_:)): return presentation.canRevert
         case #selector(showInFinder(_:)): return presentation.editorState.prompt != nil
         case #selector(toggleFavorite(_:)): return presentation.canToggleFavorite
-        case #selector(showEdit(_:)), #selector(showPreview(_:)), #selector(selectEditorMode(_:)):
+        case #selector(showEdit(_:)), #selector(showPreview(_:)), #selector(showSource(_:)), #selector(selectEditorMode(_:)):
             return presentation.editorState.prompt != nil
         case #selector(showFields(_:)), #selector(showHistory(_:)):
             return presentation.editorState.prompt != nil
@@ -71,6 +71,7 @@ extension LibraryWindowController: NSMenuItemValidation {
             item.title = presentation.openPromptRow?.favorite == true ? LibraryStrings.removeFavorite : LibraryStrings.addFavorite
         case #selector(showEdit(_:)): item.state = presentation.editorMode == .edit ? .on : .off
         case #selector(showPreview(_:)): item.state = presentation.editorMode == .preview ? .on : .off
+        case #selector(showSource(_:)): item.state = presentation.editorMode == .source ? .on : .off
         case #selector(showFields(_:)): item.state = presentation.isInspectorVisible && presentation.inspectorPane == .fields ? .on : .off
         case #selector(showHistory(_:)): item.state = presentation.isInspectorVisible && presentation.inspectorPane == .history ? .on : .off
         case #selector(showAssistant(_:)): item.state = presentation.isAssistantVisible ? .on : .off
@@ -124,15 +125,26 @@ extension LibraryWindowController: NSMenuItemValidation {
     }
     @objc func showEdit(_ sender: Any?) {
         guard commandsAvailable(in: window), presentation.editorState.prompt != nil else { return }
-        presentation.editorMode = .edit
+        window?.makeFirstResponder(nil)
+        presentation.focusEditor()
     }
     @objc func showPreview(_ sender: Any?) {
         guard commandsAvailable(in: window), presentation.editorState.prompt != nil else { return }
+        window?.makeFirstResponder(nil)
         presentation.editorMode = .preview
     }
+    @objc func showSource(_ sender: Any?) {
+        guard commandsAvailable(in: window), presentation.editorState.prompt != nil else { return }
+        window?.makeFirstResponder(nil)
+        presentation.focusEditor(mode: .source)
+    }
     @objc func selectEditorMode(_ sender: NSToolbarItemGroup) {
-        if sender.selectedIndex == 1 { showPreview(sender) }
-        else { showEdit(sender) }
+        switch LibraryViewState.EditorMode(rawValue: sender.selectedIndex) {
+        case .edit: showEdit(sender)
+        case .preview: showPreview(sender)
+        case .source: showSource(sender)
+        case nil: break
+        }
     }
     @objc func showFields(_ sender: Any?) {
         guard commandsAvailable(in: window), presentation.editorState.prompt != nil else { return }
@@ -169,12 +181,15 @@ extension LibraryWindowController: NSMenuItemValidation {
     }
     @objc func searchLibrary(_ sender: Any?) {
         guard commandsAvailable(in: window), presentation.canFocusFilter, let toolbar = window?.toolbar else { return }
-        if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
-        toolbar.isVisible = true
-        // A model publication may still be waiting for its native-control update.
-        if let field = searchItem?.searchField { field.stringValue = presentation.snapshot.filter }
-        searchItem?.beginSearchInteraction()
-        if let field = searchItem?.searchField { window?.makeFirstResponder(field) }
+        synchronizeSearch {
+            if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
+            toolbar.isVisible = true
+            renderSearchQuery(presentation.snapshot.filter)
+            searchItem?.beginSearchInteraction()
+            if let field = searchItem?.searchField { window?.makeFirstResponder(field) }
+            // Reacquire the editor after AppKit establishes the interaction.
+            renderSearchQuery(presentation.snapshot.filter)
+        }
     }
 
     // A menu action reaches the controller only when no focused text view
@@ -185,7 +200,7 @@ extension LibraryWindowController: NSMenuItemValidation {
     private func routeFind(_ sender: Any?, action: FindAction) {
         guard commandsAvailable(in: window) else { return }
         guard presentation.editorState.prompt != nil else { searchLibrary(sender); return }
-        presentation.focusEditor()
+        if presentation.editorMode == .preview { presentation.focusEditor() }
         // SwiftUI installs Edit on the next turn when Preview was visible.
         enqueueUIAction { [weak self] in
             self?.runFindAction(sender, action: action)
@@ -202,6 +217,7 @@ extension LibraryWindowController: NSMenuItemValidation {
     }
 
     private func sourceTextView(in view: NSView) -> LibrarySourceTextView? {
+        guard !view.isHiddenOrHasHiddenAncestor else { return nil }
         if let text = view as? LibrarySourceTextView { return text }
         for child in view.subviews {
             if let text = sourceTextView(in: child) { return text }

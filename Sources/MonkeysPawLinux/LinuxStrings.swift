@@ -19,6 +19,7 @@ enum LinuxStrings {
     static let fillHint = "Tab: next field · Return: deliver (multiline: newline) · Ctrl+Return: standard paste\nCtrl+Shift+Return: terminal paste · Alt+Return: copy only · Esc: back"
     static let searchPrompts = "Search prompts"
     static let preview = "Preview"
+    static let source = "Source"
     static let usePrompt = "Use"
     static let deliver = "Deliver"
     static let copy = "Copy"

@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Example.md",
+  "edits": [
+    {"property": "title", "value": "New title"},
+    {"property": "description", "value": "New summary"},
+    {"property": "tags", "value": ["code", "writing"]},
+    {"property": "private", "value": false},
+    {"property": "body", "value": "Hello {{topic}}.\n"}
+  ],
+  "expected": {
+    "metadata": {
+      "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "title": "New title",
+      "description": "New summary",
+      "tags": ["code", "writing"],
+      "favorite": true,
+      "private": false,
+      "format": "1",
+      "declarations": [
+        {"name": "topic", "type": "text", "label": "Topic", "description": null,
+         "default": "Earth", "options": [], "optional": false, "remember": true, "implicit": false}
+      ]
+    },
+    "body": "Hello {{topic}}.\n",
+    "issues": [],
+    "canonical": "---\nid: 01ARZ3NDEKTSV4RRFFQ69G5FAV\ntitle: New title\ndescription: New summary\ntags:\n- code\n- writing\nfavorite: true\nprivate: false\nfields:\n  topic:\n    label: Topic\n    default: Earth\n    hint: keep\nformat: 1\nname: custom-name\nmodel:\n  family: custom\n---\nHello {{topic}}.\n"
+  }
+}

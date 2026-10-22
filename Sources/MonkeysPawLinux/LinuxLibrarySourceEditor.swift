@@ -5,25 +5,51 @@ import MonkeysPawCore
 /// GtkTextView owns native shortcuts, undo and input methods. Model refreshes
 /// leave preedit alone and keep undo/caret positions through save normalization.
 final class LinuxLibrarySourceEditor {
+    /// The complete file and the form's body-only view share this widget,
+    /// differing in name, accessible label, font and the state they mirror.
+    enum Kind {
+        case source, body
+
+        var name: String {
+            switch self {
+            case .source: return "library-source"
+            case .body: return "library-body"
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .source: return LinuxEditorStrings.source
+            case .body: return LinuxEditorStrings.promptBody
+            }
+        }
+
+        var monospace: Bool { self == .source }
+    }
+
     private static let quoteTagName = "assistant-quote"
+    let kind: Kind
     let widget = gtk_text_view_new()!
     private var buffer: UnsafeMutablePointer<GtkTextBuffer> { gtk_text_view_get_buffer(mp_text_view(widget))! }
     private var path: RelativePath?
     private var revision: UInt64 = 0
     private var isUpdating = false
-    private var hasLoadedSource = false
+    private var hasLoadedText = false
     private(set) var hasPreedit = false
     var onEdit: ((String) -> Void)?
     var onCompositionEnded: (() -> Void)?
     var onCompositionChanged: (() -> Void)?
 
-    init() {
-        gtk_widget_set_name(widget, "library-source")
-        mp_accessible_label(widget, LinuxEditorStrings.source)
-        gtk_text_view_set_monospace(mp_text_view(widget), 1)
+    init(kind: Kind = .source) {
+        self.kind = kind
+        gtk_widget_set_name(widget, kind.name)
+        mp_accessible_label(widget, kind.label)
+        gtk_text_view_set_monospace(mp_text_view(widget), kind.monospace ? 1 : 0)
         gtk_text_view_set_wrap_mode(mp_text_view(widget), GTK_WRAP_WORD_CHAR)
         gtk_text_buffer_set_enable_undo(buffer, 1)
-        _ = mp_text_buffer_background_tag(buffer, Self.quoteTagName, "#f8e5a0")
+        if kind == .source {
+            _ = mp_text_buffer_background_tag(buffer, Self.quoteTagName, "#f8e5a0")
+        }
         GTK.onSignal(UnsafeMutableRawPointer(buffer), "changed") { [weak self] in
             guard let self, !self.isUpdating, gtk_text_view_get_editable(mp_text_view(self.widget)) != 0 else { return }
             self.onEdit?(self.text)
@@ -59,6 +85,15 @@ final class LinuxLibrarySourceEditor {
         gtk_text_view_scroll_to_iter(mp_text_view(widget), &start, 0.1, 0, 0, 0)
     }
 
+    /// The body mirrors the form, which is absent for malformed headers and
+    /// read-only files; the source mirrors the complete draft.
+    private func content(of state: EditorState) -> (text: String?, editable: Bool) {
+        switch kind {
+        case .source: return (state.source, state.canEdit)
+        case .body: return (state.form?.body, state.canEdit && state.form != nil)
+        }
+    }
+
     func update(_ state: EditorState, revision: UInt64, available: Bool) {
         // revision identifies a loaded session, not an edit or save refresh.
         let changedSession = path != state.prompt?.relativePath || self.revision != revision
@@ -67,25 +102,26 @@ final class LinuxLibrarySourceEditor {
         if changedSession {
             gtk_text_view_reset_im_context(mp_text_view(widget))
             hasPreedit = false
-            hasLoadedSource = false
+            hasLoadedText = false
         }
         path = state.prompt?.relativePath
         self.revision = revision
-        let editable = available && state.canEdit
+        let content = content(of: state)
+        let editable = available && content.editable
         gtk_text_view_set_editable(mp_text_view(widget), editable ? 1 : 0)
         guard !hasPreedit else { return }
-        if !changedSession, state.prompt != nil, state.source == nil, state.readOnlyReason == nil { return }
-        let source = state.source ?? ""
-        let initialLoad = !hasLoadedSource && state.source != nil
-        if state.source != nil { hasLoadedSource = true }
-        let old = text
-        guard changedSession || !old.utf8.elementsEqual(source.utf8) else { return }
+        if !changedSession, state.prompt != nil, content.text == nil, state.readOnlyReason == nil { return }
+        let text = content.text ?? ""
+        let initialLoad = !hasLoadedText && content.text != nil
+        if content.text != nil { hasLoadedText = true }
+        let old = self.text
+        guard changedSession || !old.utf8.elementsEqual(text.utf8) else { return }
 
         let insert = offset(of: gtk_text_buffer_get_insert(buffer))
         let bound = offset(of: gtk_text_buffer_get_selection_bound(buffer))
         if changedSession || initialLoad || !editable {
             gtk_text_buffer_begin_irreversible_action(buffer)
-            gtk_text_buffer_set_text(buffer, source, Int32(source.utf8.count))
+            gtk_text_buffer_set_text(buffer, text, Int32(text.utf8.count))
             gtk_text_buffer_end_irreversible_action(buffer)
         } else {
             gtk_text_buffer_begin_user_action(buffer)
@@ -93,15 +129,15 @@ final class LinuxLibrarySourceEditor {
             var end = GtkTextIter()
             gtk_text_buffer_get_bounds(buffer, &start, &end)
             gtk_text_buffer_delete(buffer, &start, &end)
-            gtk_text_buffer_insert(buffer, &start, source, Int32(source.utf8.count))
+            gtk_text_buffer_insert(buffer, &start, text, Int32(text.utf8.count))
             gtk_text_buffer_end_user_action(buffer)
         }
         var caret = GtkTextIter()
         var anchor = GtkTextIter()
         gtk_text_buffer_get_iter_at_offset(buffer, &caret,
-            changedSession ? 0 : Self.mappedOffset(insert, from: old, to: source))
+            changedSession ? 0 : Self.mappedOffset(insert, from: old, to: text))
         gtk_text_buffer_get_iter_at_offset(buffer, &anchor,
-            changedSession ? 0 : Self.mappedOffset(bound, from: old, to: source))
+            changedSession ? 0 : Self.mappedOffset(bound, from: old, to: text))
         gtk_text_buffer_select_range(buffer, &caret, &anchor)
     }
 

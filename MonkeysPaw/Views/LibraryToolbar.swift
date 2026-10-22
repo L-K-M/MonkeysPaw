@@ -43,11 +43,12 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
             return item
         }
         if identifier == .libraryEditorMode {
-            let labels = [EditorStrings.editTab, EditorStrings.previewTab]
-            let images = ["pencil", "eye"].map { NSImage(systemSymbolName: $0, accessibilityDescription: nil) ?? NSImage() }
+            let labels = [EditorStrings.editTab, EditorStrings.previewTab, LibraryFormStrings.source]
+            let symbols = ["pencil", "eye", "curlybraces"]
+            let images = symbols.map { NSImage(systemSymbolName: $0, accessibilityDescription: nil) ?? NSImage() }
             let item = NSToolbarItemGroup(itemIdentifier: identifier, images: images,
                 selectionMode: .selectOne, labels: labels, target: self, action: #selector(selectEditorMode(_:)))
-            for (index, symbol) in ["pencil", "eye"].enumerated() {
+            for (index, symbol) in symbols.enumerated() {
                 item.subitems[index].image = NSImage(systemSymbolName: symbol, accessibilityDescription: labels[index])
                 item.subitems[index].toolTip = labels[index]
                 item.subitems[index].paletteLabel = labels[index]
@@ -55,7 +56,7 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
             item.label = LibraryStrings.editPreview
             item.paletteLabel = item.label
             item.toolTip = item.label
-            item.selectedIndex = presentation.editorMode == .edit ? 0 : 1
+            item.selectedIndex = presentation.editorMode.rawValue
             return item
         }
         if identifier == .librarySearch {
@@ -65,12 +66,17 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
             item.toolTip = item.label
             item.searchField.placeholderString = LibraryStrings.search
             item.searchField.stringValue = presentation.snapshot.filter
-            item.searchField.sendsSearchStringImmediately = true
             item.searchField.delegate = self
             item.searchField.setAccessibilityLabel(LibraryStrings.search)
             item.searchField.setAccessibilityIdentifier("library-filter")
-            item.searchField.target = self
-            item.searchField.action = #selector(filterSearch(_:))
+            // Search actions also fire during AppKit interaction transitions.
+            // Only owned edit notifications and explicit clearing may publish.
+            item.searchField.target = nil
+            item.searchField.action = nil
+            if let cancel = (item.searchField.cell as? NSSearchFieldCell)?.cancelButtonCell {
+                cancel.target = self
+                cancel.action = #selector(clearLibrarySearch(_:))
+            }
             return item
         }
         let item = NSToolbarItem(itemIdentifier: identifier)
@@ -130,28 +136,32 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
         return validateMenuItem(menuItem)
     }
 
-    @objc func filterSearch(_ sender: NSSearchField) { presentation.setFilter(sender.stringValue) }
+    private enum SearchNotification {
+        static let fieldEditor = "NSFieldEditor"
+    }
 
-    func searchFieldDidEndSearching(_ sender: NSSearchField) {
-        // The native cancel button and Escape can send a search action without
-        // a text-edit notification. Read the field's final value in both paths.
-        filterSearch(sender)
+    @objc func clearLibrarySearch(_ sender: Any?) {
+        guard let field = searchItem?.searchField,
+              let cell = (field.cell as? NSSearchFieldCell)?.cancelButtonCell else { return }
+        let object = sender as AnyObject?
+        guard object === field || object === cell else { return }
+        clearSearch(field)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard let field = control as? NSSearchField, field === searchItem?.searchField,
-              commandSelector == #selector(NSResponder.cancelOperation(_:)), !textView.hasMarkedText(),
-              !field.stringValue.isEmpty else { return false }
+              field.currentEditor() === textView, window?.firstResponder === textView,
+              commandSelector == #selector(NSResponder.cancelOperation(_:)), !textView.hasMarkedText() else { return false }
         // Consume the clear once; a second Escape can end native search editing.
-        field.stringValue = ""
-        textView.string = ""
-        filterSearch(field)
+        if textView.string.isEmpty { searchItem?.endSearchInteraction() }
+        else { clearSearch(field) }
         return true
     }
 
     func controlTextDidChange(_ notification: Notification) {
-        guard let field = notification.object as? NSSearchField else { return }
-        // Composition stays native; filtering does not replace the field editor.
-        filterSearch(field)
+        guard let field = notification.object as? NSSearchField,
+              let editor = notification.userInfo?[SearchNotification.fieldEditor] as? NSTextView else { return }
+        // Reading marked text preserves live filtering; rendering never replaces it.
+        publishSearchEdit(field, editor: editor)
     }
 }

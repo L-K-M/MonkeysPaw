@@ -93,6 +93,9 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         XCTAssertFalse(try sensitive("accept"))
         XCTAssertTrue(try widgetLabel("assistant-finding-0", check: true).contains("High"))
         try click("quote-0")
+        // Quote ranges address the full file, so highlighting opens Source.
+        XCTAssertEqual(gtk_stack_get_visible_child_name(mp_stack(try widget("library-editor-stack")))
+            .map { String(cString: $0) }, "source")
         let source = try widget("library-source")
         let range = try XCTUnwrap(environment.assistantModel?.highlightFinding(at: 0))
         let prefix = String(decoding: Data(original.utf8).prefix(range.lowerBound), as: UTF8.self)

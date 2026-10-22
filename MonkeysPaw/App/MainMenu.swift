@@ -163,6 +163,7 @@ enum MainMenu {
         let menu = NSMenu(title: MainMenuStrings.view)
         add(menu, MainMenuStrings.editMode, #selector(LibraryWindowController.showEdit(_:)), "1")
         add(menu, MainMenuStrings.previewMode, #selector(LibraryWindowController.showPreview(_:)), "2")
+        add(menu, LibraryFormStrings.source, #selector(LibraryWindowController.showSource(_:)), "3")
         menu.addItem(.separator())
         add(menu, MainMenuStrings.showSidebar, Selector(("toggleSidebar:")), "s", [.control, .command])
         add(menu, MainMenuStrings.showInspector, Selector(("toggleInspector:")), "i", [.command, .option])

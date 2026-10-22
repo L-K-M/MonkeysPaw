@@ -55,6 +55,54 @@ internal object PromptMutations {
             document.frontMatter.copy(favorite = value), filename)
     }
 
+    /** Form editing is allowed while the body is incomplete. Only the header
+        is serialized; ordinary Save still validates the entire prompt. */
+    fun editing(edit: PromptEdit, document: PromptDocument, filename: String): PromptDocument {
+        val form = PromptForm.of(document) ?: throw PromptWriteError.InvalidPrompt
+        val key: String
+        val value: YamlNode
+        when (edit) {
+            is PromptEdit.Body -> {
+                val replacement = edit.value
+                if (replacement == document.body) return document
+                val sourceBytes = document.source.encodeToByteArray()
+                val prefixCount = (sourceBytes.size - document.body.encodeToByteArray().size).coerceAtLeast(0)
+                var prefix = String(sourceBytes, 0, prefixCount, Charsets.UTF_8)
+                // A body beginning with a delimiter must not become front matter.
+                if (prefix.isEmpty() && (replacement == "---" ||
+                    replacement.startsWith("---\n") || replacement.startsWith("---\r\n"))) {
+                    prefix = "---\n---\n"
+                }
+                if (prefix.isNotEmpty() && !prefix.endsWith("\n")) prefix += "\n"
+                return PromptCodec.parse(prefix + replacement, filename)
+            }
+            is PromptEdit.Title -> {
+                if (edit.value == form.title) return document
+                key = "title"; value = YamlNode.Scalar(edit.value, YamlTag.STR)
+            }
+            is PromptEdit.Description -> {
+                if (edit.value == form.description) return document
+                key = "description"; value = YamlNode.Scalar(edit.value, YamlTag.STR)
+            }
+            is PromptEdit.Tags -> {
+                if (edit.value == form.tags) return document
+                key = "tags"; value = YamlNode.Sequence(edit.value.map { YamlNode.Scalar(it, YamlTag.STR) })
+            }
+            is PromptEdit.IsPrivate -> {
+                if (edit.value == form.isPrivate) return document
+                key = "private"; value = YamlNode.Scalar(edit.value.toString(), YamlTag.BOOL)
+            }
+        }
+
+        val entries = document.preservedHeader?.entries?.toMutableList() ?: mutableListOf()
+        val index = entries.indexOfFirst { PortableYaml.string(it.key) == key }
+        if (index >= 0) entries[index] = entries[index].copy(value = value)
+        else entries.add(YamlNode.Entry(YamlNode.Scalar(key, YamlTag.STR), value))
+        val header = PromptDocument("", "", document.frontMatter, Template.parse(""),
+            preservedHeader = YamlNode.Mapping(entries))
+        return PromptCodec.parse(PromptCodec.write(header) + document.body, filename)
+    }
+
     private fun setting(key: String, value: YamlNode, document: PromptDocument,
                         metadata: FrontMatter, filename: String): PromptDocument {
         val header = document.preservedHeader ?: YamlNode.Mapping(emptyList())

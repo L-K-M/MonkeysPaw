@@ -22,8 +22,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private(set) var inspectorItem: NSSplitViewItem?
     private var inspectorObservation: NSKeyValueObservation?
     private var presentationObservation: AnyCancellable?
+    private var filterObservation: AnyCancellable?
     private var presentationUpdatePending = false
     private var appliedSearchFocusRevision: UInt64 = 0
+    private var searchPresentationDepth = 0
     var searchItem: NSSearchToolbarItem? {
         window?.toolbar?.items.first { $0.itemIdentifier == .librarySearch } as? NSSearchToolbarItem
     }
@@ -61,6 +63,14 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         presentationObservation = presentation.objectWillChange.sink { [weak self] _ in
             self?.schedulePresentationUpdate()
         }
+        // Query edits must reach AppKit before it can echo an old field value.
+        // The other window chrome can keep its coalesced run-loop refresh.
+        filterObservation = presentation.$snapshot.map(\.filter)
+            .removeDuplicates { $0.utf8.elementsEqual($1.utf8) }
+            .sink { [weak self] query in
+                guard let self, !self.isTornDown else { return }
+                self.renderSearchQuery(query)
+            }
     }
 
     @available(*, unavailable)
@@ -93,6 +103,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     func show() {
         mainThread.run { [weak self] in
             guard let self, !self.isTornDown else { return }
+            self.searchPresentationDepth += 1
+            defer { self.searchPresentationDepth -= 1 }
             self.presentation.didShow()
             let window = self.window ?? self.makeWindow()
             self.window = window
@@ -234,6 +246,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     func refreshWindowPresentation() {
         guard !isTornDown, let window else { return }
+        searchPresentationDepth += 1
+        defer { searchPresentationDepth -= 1 }
         let state = presentation.editorState
         if let prompt = state.prompt {
             window.title = presentation.displayTitle
@@ -252,16 +266,73 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { item.isCollapsed = collapsed }
             else { item.animator().isCollapsed = collapsed }
         }
-        if let field = searchItem?.searchField, !field.stringValue.utf8.elementsEqual(presentation.snapshot.filter.utf8),
-           (field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
-            field.stringValue = presentation.snapshot.filter
-        }
-        modeItem?.selectedIndex = presentation.editorMode == .edit ? 0 : 1
+        renderSearchQuery(presentation.snapshot.filter)
+        modeItem?.selectedIndex = presentation.editorMode.rawValue
         updateToolbarItems()
         window.toolbar?.validateVisibleItems()
         if appliedSearchFocusRevision != presentation.focusRevision, commandsAvailable(in: window) {
             appliedSearchFocusRevision = presentation.focusRevision
             if searchItem != nil, window.toolbar?.isVisible == true { searchLibrary(nil) }
+        }
+    }
+
+    /// Native toolbar transitions can emit search actions while rebuilding the
+    /// field editor. Those events must not overwrite the model's retained query.
+    func synchronizeSearch(_ update: () -> Void) {
+        searchPresentationDepth += 1
+        defer { searchPresentationDepth -= 1 }
+        update()
+    }
+
+    private func ownedSearchEditor(for field: NSSearchField) -> NSTextView? {
+        guard let window, field.window === window,
+              let editor = field.currentEditor() as? NSTextView,
+              editor.window === window, window.firstResponder === editor else { return nil }
+        return editor
+    }
+
+    func publishSearchEdit(_ field: NSSearchField, editor: NSTextView) {
+        guard !isTornDown, searchPresentationDepth == 0, presentation.canFocusFilter,
+              field === searchItem?.searchField, ownedSearchEditor(for: field) === editor else { return }
+        presentation.setFilter(editor.string)
+    }
+
+    /// A control's cell and its shared field editor can hold different text.
+    /// Reconcile both without disturbing a live conversion or equal-text caret.
+    func renderSearchQuery(_ query: String) {
+        guard !isTornDown, let field = searchItem?.searchField else { return }
+        let editor = ownedSearchEditor(for: field)
+        guard editor?.hasMarkedText() != true else { return }
+        let controlChanged = !field.stringValue.utf8.elementsEqual(query.utf8)
+        let editorChanged = editor.map { !$0.string.utf8.elementsEqual(query.utf8) } ?? false
+        guard controlChanged || editorChanged else { return }
+        let selection = editor?.selectedRange()
+
+        synchronizeSearch {
+            if controlChanged { field.stringValue = query }
+            guard let current = ownedSearchEditor(for: field), !current.hasMarkedText() else { return }
+            if !current.string.utf8.elementsEqual(query.utf8) { current.string = query }
+            guard current === editor, let selection else { return }
+            let length = (query as NSString).length
+            let location = selection.location == NSNotFound ? length : min(selection.location, length)
+            current.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
+        }
+    }
+
+    func clearSearch(_ field: NSSearchField) {
+        guard !isTornDown, presentation.canFocusFilter, field === searchItem?.searchField,
+              field.window === window else { return }
+        synchronizeSearch {
+            if let editor = ownedSearchEditor(for: field) {
+                if editor.hasMarkedText() {
+                    editor.inputContext?.discardMarkedText()
+                    editor.unmarkText()
+                }
+                editor.string = ""
+                editor.setSelectedRange(NSRange(location: 0, length: 0))
+            }
+            field.stringValue = ""
+            presentation.setFilter("")
         }
     }
 

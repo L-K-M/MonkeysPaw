@@ -23,7 +23,8 @@ internal object FixtureContracts {
         }
         val optional = when (category) {
             Category.RENDER -> setOf("repeat", "values", "builtins")
-            Category.FORMAT, Category.GRAMMAR, Category.VALIDATION, Category.IMPORT -> setOf("repeat")
+            Category.FORMAT -> setOf("repeat", "edits")
+            Category.GRAMMAR, Category.VALIDATION, Category.IMPORT -> setOf("repeat")
             Category.CANONICAL -> setOf("comparison")
             else -> emptySet()
         }
@@ -89,6 +90,7 @@ internal object FixtureContracts {
         when (category) {
             Category.FORMAT -> {
                 expected.members(setOf("metadata", "body", "issues", "canonical"))
+                edits(envelope["edits"])
                 val metadata = expected["metadata"].objectValue()
                 metadata.members(setOf("id", "title", "description", "tags", "favorite", "private", "format", "declarations"))
                 nullableString(metadata["id"])
@@ -149,6 +151,20 @@ internal object FixtureContracts {
             else -> throw CorpusException("Unknown content category")
         }
         issues(expected["issues"])
+    }
+
+    private fun edits(value: JsonElement?) {
+        if (value == null) return
+        for (element in value.arrayValue()) {
+            val edit = element.objectValue()
+            edit.members(setOf("property", "value"))
+            when (edit["property"].stringValue()) {
+                "title", "description", "body" -> edit["value"].stringValue()
+                "tags" -> edit["value"].strings()
+                "private" -> edit["value"].booleanValue()
+                else -> throw CorpusException("Unknown edit property")
+            }
+        }
     }
 
     private fun fields(value: JsonElement?) {

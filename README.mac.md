@@ -47,10 +47,12 @@ Use [the format guide](docs/plan/05-prompt-library.md) for external edits.
 
 Use the sidebar for folders, tags, favourites and recent prompts. The toolbar
 search filters the prompt list; **Option+Cmd+F** focuses it. **Cmd+F** finds
-text in the source editor.
+text in the visible editor.
 
 - **Cmd+N** creates a prompt; **Cmd+S** saves; **Shift+Cmd+S** duplicates.
-- **Cmd+1 / Cmd+2** switches between Edit and Preview.
+- **Cmd+1 / Cmd+2 / Cmd+3** selects Edit, Preview or Source.
+- Edit has controls for title, description, tags and privacy, plus a body-only
+  text editor. Source edits the complete Markdown file and advanced field settings.
 - **Option+Cmd+I** toggles the Fields, History and Assistant inspector.
 - The File menu and prompt context menu offer rename, move, reveal and delete.
 - **Cmd+W** closes the window. Escape dismisses a dialog or clears focused

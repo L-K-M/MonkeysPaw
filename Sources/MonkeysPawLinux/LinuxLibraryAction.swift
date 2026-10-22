@@ -1,7 +1,7 @@
 #if os(Linux)
 enum LinuxLibraryAction: String, CaseIterable {
     case newPrompt = "new-prompt"
-    case save, duplicate, revert, rename, move, delete, favorite, edit, preview, search
+    case save, duplicate, revert, rename, move, delete, favorite, edit, preview, source, search
     case sidebar, inspector, fields, history, assistant, review, improve
     case importFiles = "import-files", importFolder = "import-folder", showFiles = "show-files"
     case settings, about, close
@@ -15,6 +15,7 @@ enum LinuxLibraryAction: String, CaseIterable {
         case .search: return "<Control>f"
         case .edit: return "<Control>1"
         case .preview: return "<Control>2"
+        case .source: return "<Control>3"
         case .sidebar: return "F9"
         case .rename: return "F2"
         case .close: return "<Control>w"

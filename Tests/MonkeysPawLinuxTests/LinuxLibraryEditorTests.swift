@@ -52,6 +52,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         let editorStack = try widget("library-editor-stack", in: window)
         XCTAssertNotNil(gtk_stack_get_child_by_name(mp_stack(editorStack), "edit"))
         XCTAssertNotNil(gtk_stack_get_child_by_name(mp_stack(editorStack), "preview"))
+        XCTAssertNotNil(gtk_stack_get_child_by_name(mp_stack(editorStack), "source"))
         let inspectorStack = try widget("library-inspector-stack", in: window)
         for name in ["fields", "history", "assistant"] {
             XCTAssertNotNil(gtk_stack_get_child_by_name(mp_stack(inspectorStack), name), "Missing inspector page \(name)")
@@ -1058,6 +1059,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
     func testSourcePreeditKeepsNativeKeysAndDefersRefreshUntilCommit() throws {
         try files.write(Data("Original".utf8), at: "a.md")
         let window = try open("a.md")
+        g_action_group_activate_action(mp_window_action_group(window), "source", nil)
         let source = try widget("library-source", in: window)
         XCTAssertTrue(GTKTestSupport.spin { gtk_window_is_active(mp_window(window)) != 0 },
             "Window never became active; the display must support focus")
@@ -1146,7 +1148,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(browser.selection, environment.editorModel.state.prompt)
         XCTAssertTrue(browser.rows.contains { $0.relativePath.string == path })
         XCTAssertEqual(page(stack), "edit")
-        XCTAssertEqual(gtk_window_get_focus(mp_window(window)), try widget("library-source", in: window))
+        XCTAssertEqual(gtk_window_get_focus(mp_window(window)), try widget("library-body", in: window))
         XCTAssertFalse(environment.panel.isVisible)
     }
 
@@ -1313,7 +1315,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         let selection = browser.selection
         browser.setFilter("a")
         drain()
-        gtk_widget_grab_focus(source)
+        gtk_widget_grab_focus(try widget("library-body", in: window))
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_f), GDK_CONTROL_MASK), 0)
         let filter = try widget("library-filter", in: window)
         let focus = try XCTUnwrap(gtk_window_get_focus(mp_window(window)))

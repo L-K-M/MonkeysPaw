@@ -146,6 +146,21 @@ final class PromptConformanceTests: XCTestCase {
         }
     }
 
+    func testRejectsUnknownOrMistypedFormEdits() throws {
+        let mutations: [(String, Any)] = [
+            ("not an array", "title"),
+            ("unknown property", [["property": "id", "value": "replacement"]]),
+            ("missing value", [["property": "title"]]),
+            ("extra member", [["property": "title", "value": "Title", "extra": true]]),
+            ("wrong text type", [["property": "title", "value": 1]]),
+            ("wrong tag type", [["property": "tags", "value": [1]]]),
+            ("numeric boolean", [["property": "private", "value": 1]])
+        ]
+        for (label, edits) in mutations {
+            try assertRejectsJSON("format/form-properties.json", label: label) { $0["edits"] = edits }
+        }
+    }
+
     func testRejectsInvalidRankingMembersTimesAndReferences() throws {
         let mutations: [(String, (inout [String: Any]) throws -> Void)] = [
             ("schema", { $0["schema"] = 2 }),
@@ -341,7 +356,8 @@ final class PromptConformanceTests: XCTestCase {
                 }
                 let data = try Data(contentsOf: directory.appendingPathComponent(file))
                 let fixture = try object(JSONSerialization.jsonObject(with: data))
-                let optional: Set<String> = category == "render" ? ["repeat", "values", "builtins"] : ["repeat"]
+                let optional: Set<String> = category == "render" ? ["repeat", "values", "builtins"]
+                    : category == "format" ? ["repeat", "edits"] : ["repeat"]
                 try keys(fixture, required: ["schema", "category", "filename", "expected"],
                          optional: optional)
                 guard try integer(fixture["schema"]) == 1,
@@ -356,8 +372,34 @@ final class PromptConformanceTests: XCTestCase {
                 let count = try fixture["repeat"].map { try integer($0) } ?? 1
                 guard count > 0 else { throw CorpusError.unrecognizedCase }
                 let source = String(repeating: unit, count: count)
-                let document = PromptCodec.parse(source, filename: filename)
+                var document = PromptCodec.parse(source, filename: filename)
                 XCTAssertEqual(Array(document.source.utf8), Array(source.utf8), file)
+                if let edits = fixture["edits"] {
+                    for value in try array(edits) {
+                        let item = try object(value)
+                        try keys(item, required: ["property", "value"])
+                        let edit: PromptEdit
+                        switch item["property"] as? String {
+                        case "title", "description", "body":
+                            guard let text = item["value"] as? String else { throw CorpusError.unrecognizedCase }
+                            switch item["property"] as? String {
+                            case "title": edit = .title(text)
+                            case "description": edit = .description(text)
+                            default: edit = .body(text)
+                            }
+                        case "tags":
+                            guard let tags = item["value"] as? [String] else { throw CorpusError.unrecognizedCase }
+                            edit = .tags(tags)
+                        case "private":
+                            guard let number = item["value"] as? NSNumber, String(cString: number.objCType) == "c" else {
+                                throw CorpusError.unrecognizedCase
+                            }
+                            edit = .isPrivate(number.boolValue)
+                        default: throw CorpusError.unrecognizedCase
+                        }
+                        document = try PromptCodec.editing(edit, in: document, filename: filename)
+                    }
+                }
                 XCTAssertEqual(document.issues, PromptValidator.validate(document), file)
                 let expected = try object(fixture["expected"])
                 let actual: [String: Any]

@@ -74,7 +74,7 @@ final class LinuxLibraryNativeStructureTests: XCTestCase {
         XCTAssertEqual(String(cString: mp_entry_text(filter)), "")
         XCTAssertEqual(gtk_search_bar_get_search_mode(mp_search_bar(searchBar)), 0)
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
-        gtk_widget_grab_focus(try settingsWidget("library-source", in: window))
+        gtk_widget_grab_focus(try settingsWidget("library-body", in: window))
         XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
         XCTAssertNotEqual(gtk_widget_get_visible(window), 0)
     }
@@ -85,6 +85,7 @@ final class LinuxLibraryNativeStructureTests: XCTestCase {
         let stack = try settingsWidget("library-editor-stack", in: window)
         let edit = try settingsWidget("library-mode-edit", in: window)
         let preview = try settingsWidget("library-mode-preview", in: window)
+        let source = try settingsWidget("library-mode-source", in: window)
         XCTAssertNotEqual(gtk_widget_activate(preview), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.page(stack) == "preview" })
         XCTAssertNotEqual(gtk_toggle_button_get_active(mp_toggle_button(preview)), 0)
@@ -93,6 +94,9 @@ final class LinuxLibraryNativeStructureTests: XCTestCase {
         XCTAssertEqual(page(stack), "edit")
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_2), GDK_CONTROL_MASK), 0)
         XCTAssertEqual(page(stack), "preview")
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_3), GDK_CONTROL_MASK), 0)
+        XCTAssertEqual(page(stack), "source")
+        XCTAssertNotEqual(gtk_toggle_button_get_active(mp_toggle_button(source)), 0)
         XCTAssertNotEqual(gtk_widget_activate(edit), 0)
         XCTAssertTrue(GTKTestSupport.spin { self.page(stack) == "edit" })
     }
@@ -159,20 +163,21 @@ final class LinuxLibraryNativeStructureTests: XCTestCase {
         }
         gtk_widget_grab_focus(mp_row_widget(gtk_list_box_get_row_at_index(mp_list_box(list), 0)))
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Return), GdkModifierType(rawValue: 0)), 0)
-        let source = try settingsWidget("library-source", in: window)
-        XCTAssertEqual(gtk_window_get_focus(mp_window(window)), source)
+        let body = try settingsWidget("library-body", in: window)
+        XCTAssertEqual(gtk_window_get_focus(mp_window(window)), body)
     }
 
     func testPreeditDisablesActionsAndImportMenuRevealsBar() throws {
         let window = try openLibrary()
         try selectPrompt(in: window)
+        activate("source", in: window)
         let source = try settingsWidget("library-source", in: window)
         gtk_widget_grab_focus(source)
         mp_test_emit_preedit_changed(source, "かな")
         XCTAssertFalse(enabled("preview", in: window))
         XCTAssertFalse(enabled("new-prompt", in: window))
         activate("preview", in: window)
-        XCTAssertEqual(page(try settingsWidget("library-editor-stack", in: window)), "edit")
+        XCTAssertEqual(page(try settingsWidget("library-editor-stack", in: window)), "source")
         mp_test_emit_preedit_changed(source, "")
         XCTAssertTrue(GTKTestSupport.spin { self.enabled("preview", in: window) })
         let bar = try settingsWidget("library-import-bar", in: window)
