@@ -355,6 +355,8 @@ final class MacLibraryWindowTests: XCTestCase {
         presentation.selectPath("one.md")
         presentation.setFilter("one")
         let window = try window()
+        let list = try XCTUnwrap(controller().promptList?.tableView)
+        XCTAssertTrue(window.makeFirstResponder(list))
         window.cancelOperation(nil)
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(presentation.snapshot.filter, "one", "Escape outside Search does not navigate")
