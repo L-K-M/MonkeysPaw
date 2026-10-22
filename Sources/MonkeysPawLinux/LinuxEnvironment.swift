@@ -240,7 +240,7 @@ final class LinuxEnvironment {
 
     private enum ActionOrigin { case shortcut, manual }
     private enum TrayEntry: Int32 {
-        case picker = 1, library, settings, setup, quit
+        case picker = 1, library, settings, setup, quit, repeatLast, about, windowsSeparator, settingsSeparator, quitSeparator
     }
 
     let log: LogSink
@@ -447,6 +447,7 @@ final class LinuxEnvironment {
     private var currentSetupWindow: LinuxSetupWindow?
     private var currentSettingsWindow: LinuxSettingsWindow?
     private var currentLibraryWindow: LinuxLibraryWindow?
+    private var aboutWindow: LinuxAboutWindow?
     private var currentOnboardingWindow: LinuxOnboardingWindow?
     private var onboardingRequestRevision = 0
     private var isShutDown = false
@@ -589,18 +590,27 @@ final class LinuxEnvironment {
             StatusNotifierEntry(id: TrayEntry.picker.rawValue, label: LinuxStrings.showPicker) { [weak self] in
                 self?.togglePicker()
             },
+            StatusNotifierEntry(id: TrayEntry.repeatLast.rawValue, label: LinuxStrings.trayRepeat) { [weak self] in
+                self?.activateRepeat()
+            },
+            StatusNotifierEntry(id: TrayEntry.windowsSeparator.rawValue, label: "", enabled: false, kind: .separator),
             StatusNotifierEntry(id: TrayEntry.library.rawValue, label: status.menuLabel,
                 enabled: status.libraryAvailable) { [weak self] in
                 guard let self, !self.isShutDown, self.libraryStatusModel.libraryAvailable,
                       self.pickerModel.state != .delivering else { return }
                 self.handle(.openLibrary, in: self.libraryGraph)
             },
+            StatusNotifierEntry(id: TrayEntry.settingsSeparator.rawValue, label: "", enabled: false, kind: .separator),
             StatusNotifierEntry(id: TrayEntry.settings.rawValue, label: LinuxStrings.openSettings) { [weak self] in
                 self?.showSettings()
             },
             StatusNotifierEntry(id: TrayEntry.setup.rawValue, label: LinuxStrings.traySetup) { [weak self] in
                 self?.showSetupFromTray()
             },
+            StatusNotifierEntry(id: TrayEntry.about.rawValue, label: LinuxAboutStrings.title) { [weak self] in
+                self?.showAbout()
+            },
+            StatusNotifierEntry(id: TrayEntry.quitSeparator.rawValue, label: "", enabled: false, kind: .separator),
             StatusNotifierEntry(id: TrayEntry.quit.rawValue, label: LinuxStrings.quit) { [weak self] in
                 guard let self, !self.isShutDown else { return }
                 // Use the same quit path as the application action. runPanel's
@@ -834,6 +844,12 @@ final class LinuxEnvironment {
         }
     }
 
+    private func showAbout(parent: GTK.Widget? = nil) {
+        guard !isShutDown, pickerModel.state != .delivering else { return }
+        if aboutWindow == nil { aboutWindow = LinuxAboutWindow(application: application) }
+        aboutWindow?.show(parent: parent)
+    }
+
     private func presentLibraryWindow() {
         if currentLibraryWindow == nil {
             let graph = libraryGraph
@@ -847,6 +863,12 @@ final class LinuxEnvironment {
                 syncNavigation: { [weak self, weak graph] action in
                     guard let graph else { return }
                     self?.navigateSyncStatus(action, in: graph)
+                }, showSettings: { [weak self] in self?.showSettings() },
+                showAbout: { [weak self] parent in self?.showAbout(parent: parent) },
+                showFiles: { [weak self] path in
+                    guard let self, !self.isShutDown, self.libraryStatusModel.libraryAvailable,
+                          (try? FileStorePath.validate(path.string)) != nil else { return }
+                    self.launchURI(self.libraryGraph.directory.appendingPathComponent(path.string).deletingLastPathComponent())
                 }, createPrompt: { [weak self, weak graph] title, folder in
                     guard let self, let graph, !self.isShutDown, self.currentLibraryGraph === graph else { return nil }
                     return self.createPrompt(titled: title, in: folder, graph: graph)

@@ -8,7 +8,8 @@ import MonkeysPawCore
 final class LinuxConflictView {
     enum RefreshReason { case requested, afterEditing }
     enum Teardown { case rebind, destroyed }
-    let widget = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+    let widget = gtk_revealer_new()!
+    private let content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
     var onResolve: ((ConflictResolutionAction) -> Void)?
     var onChange: (() -> Void)?
     private weak var model: ConflictModel?
@@ -32,15 +33,21 @@ final class LinuxConflictView {
 
     init() {
         gtk_widget_set_name(widget, "library-conflict")
-        gtk_box_append(mp_box(widget), GTK.label(LinuxConflictStrings.title))
+        gtk_revealer_set_child(mp_revealer(widget), content)
+        gtk_widget_add_css_class(content, "toolbar")
+        gtk_box_append(mp_box(content), GTK.label(LinuxConflictStrings.title))
         let scroll = gtk_scrolled_window_new()!
-        gtk_widget_set_size_request(scroll, -1, 240)
-        gtk_widget_set_vexpand(scroll, 1)
+        gtk_scrolled_window_set_min_content_height(mp_scrolled_window(scroll), 160)
+        gtk_scrolled_window_set_max_content_height(mp_scrolled_window(scroll), 240)
+        gtk_scrolled_window_set_propagate_natural_height(mp_scrolled_window(scroll), 1)
         gtk_scrolled_window_set_child(mp_scrolled_window(scroll), diff.widget)
-        gtk_box_append(mp_box(widget), scroll)
+        let comparison = gtk_expander_new(LinuxLibraryStrings.comparison)!
+        gtk_widget_set_name(comparison, "library-conflict-comparison")
+        gtk_expander_set_child(mp_expander(comparison), scroll)
+        gtk_box_append(mp_box(content), comparison)
         gtk_widget_set_name(status, "conflict-status")
         gtk_label_set_selectable(mp_label(status), 1)
-        gtk_box_append(mp_box(widget), status)
+        gtk_box_append(mp_box(content), status)
         let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
         for (button, name, action) in [(keepServer, "keep-server", ConflictResolutionAction.keepServer),
                                       (keepMine, "keep-mine", .keepMine), (keepBoth, "keep-both", .keepBoth)] {
@@ -54,7 +61,8 @@ final class LinuxConflictView {
         gtk_widget_set_name(refresh, "conflict-refresh")
         GTK.onSignal(refresh, "clicked") { [weak self] in self?.refreshComparison() }
         gtk_box_append(mp_box(actions), refresh)
-        gtk_box_append(mp_box(widget), actions)
+        gtk_box_append(mp_box(content), actions)
+        gtk_revealer_set_reveal_child(mp_revealer(widget), 0)
         gtk_widget_set_visible(widget, 0)
     }
 
@@ -88,6 +96,7 @@ final class LinuxConflictView {
             refreshPending = true
         }
         gtk_widget_set_visible(widget, 1)
+        gtk_revealer_set_reveal_child(mp_revealer(widget), 1)
         loadPending()
         render()
     }
@@ -114,6 +123,7 @@ final class LinuxConflictView {
         opening = false
         notice = nil
         diff.update(nil)
+        gtk_revealer_set_reveal_child(mp_revealer(widget), 0)
         gtk_widget_set_visible(widget, 0)
     }
 

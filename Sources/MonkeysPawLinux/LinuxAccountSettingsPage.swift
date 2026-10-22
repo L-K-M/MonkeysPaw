@@ -53,45 +53,52 @@ final class LinuxAccountSettingsPage {
         self.accountStartupPending = accountStartupPending
         invite = LinuxInviteView(makeModel: makeInvite)
         groups = LinuxGroupManagementView(makeModel: makeGroups)
-        let page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12)!
-        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
-                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(page, 12) }
-        widget = gtk_scrolled_window_new()!
-        gtk_widget_set_name(widget, "settings-account-page")
-        gtk_scrolled_window_set_child(mp_scrolled_window(widget), page)
-        connection = Self.label("connection", in: page)
-        storage = Self.label("storage", in: page)
-        form = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        gtk_box_append(mp_box(page), form)
-        server = Self.entry("server", title: LinuxAccountSettingsStrings.server, in: form)
-        username = Self.entry("username", title: LinuxAccountSettingsStrings.username, in: form)
-        gtk_box_append(mp_box(form), GTK.label(LinuxAccountSettingsStrings.password))
+        let (scroll, column) = LinuxSettingsLayout.page(named: "settings-account-page")
+        widget = scroll
+        let connectionGroup = LinuxSettingsLayout.group(LinuxSettingsStrings.connection, in: column)
+        connection = Self.status("connection", in: connectionGroup)
+        storage = Self.caption("storage", in: connectionGroup)
+        form = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
+        gtk_box_append(mp_box(connectionGroup), form)
+        let formList = LinuxSettingsLayout.list(in: form)
+        server = Self.entryRow("server", title: LinuxAccountSettingsStrings.server, in: formList)
+        username = Self.entryRow("username", title: LinuxAccountSettingsStrings.username, in: formList)
+        let passwordRow = LinuxSettingsLayout.row(in: formList)
+        LinuxSettingsLayout.rowText(LinuxAccountSettingsStrings.password, in: passwordRow)
         password = gtk_password_entry_new()!
         gtk_widget_set_name(password, "settings-account-password")
         mp_accessible_label(password, LinuxAccountSettingsStrings.password)
-        gtk_box_append(mp_box(form), password)
-        deviceName = Self.entry("device-name", title: LinuxAccountSettingsStrings.deviceName, in: form)
+        gtk_widget_set_hexpand(password, 1)
+        gtk_widget_set_valign(password, GTK_ALIGN_CENTER)
+        gtk_box_append(mp_box(passwordRow), password)
+        deviceName = Self.entryRow("device-name", title: LinuxAccountSettingsStrings.deviceName, in: formList)
         let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-        gtk_box_append(mp_box(page), actions)
-        progress = Self.label("progress", in: page)
-        error = Self.label("error", in: page)
-        cleanup = Self.label("cleanup", in: page)
+        gtk_box_append(mp_box(connectionGroup), actions)
+        progress = Self.caption("progress", in: connectionGroup)
+        error = Self.caption("error", in: connectionGroup)
+        cleanup = Self.caption("cleanup", in: connectionGroup)
         for label in [error, cleanup] { gtk_widget_add_css_class(label, "error") }
-        reserved = Self.label("reserved", in: page)
-        gtk_box_append(mp_box(page), GTK.label(LinuxAccountSettingsStrings.devices))
-        devices = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+        reserved = Self.caption("reserved", in: connectionGroup)
+        let devicesGroup = LinuxSettingsLayout.group(LinuxAccountSettingsStrings.devices, in: column)
+        devices = gtk_list_box_new()!
         gtk_widget_set_name(devices, "settings-account-devices")
-        gtk_box_append(mp_box(page), devices)
-        heldSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        gtk_box_append(mp_box(page), heldSection)
-        gtk_box_append(mp_box(heldSection), GTK.label(LinuxAccountSettingsStrings.heldFiles))
-        gtk_box_append(mp_box(heldSection), GTK.label(LinuxAccountSettingsStrings.heldGuidance))
-        heldRows = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+        gtk_widget_add_css_class(devices, "boxed-list")
+        gtk_list_box_set_selection_mode(mp_list_box(devices), GTK_SELECTION_NONE)
+        gtk_box_append(mp_box(devicesGroup), devices)
+        heldSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
+        gtk_box_append(mp_box(column), heldSection)
+        let heldHeading = GTK.label(LinuxAccountSettingsStrings.heldFiles)
+        gtk_widget_add_css_class(heldHeading, "heading")
+        gtk_box_append(mp_box(heldSection), heldHeading)
+        LinuxSettingsLayout.caption(LinuxAccountSettingsStrings.heldGuidance, in: heldSection)
+        heldRows = gtk_list_box_new()!
+        gtk_widget_add_css_class(heldRows, "boxed-list")
+        gtk_list_box_set_selection_mode(mp_list_box(heldRows), GTK_SELECTION_NONE)
         gtk_box_append(mp_box(heldSection), heldRows)
         let heldActions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         gtk_box_append(mp_box(heldSection), heldActions)
-        gtk_box_append(mp_box(page), invite.widget)
-        gtk_box_append(mp_box(page), groups.widget)
+        gtk_box_append(mp_box(column), invite.widget)
+        gtk_box_append(mp_box(column), groups.widget)
 
         signIn = button("sign-in", title: LinuxAccountSettingsStrings.signIn, in: actions) { [weak self] model in
             guard let self else { return }
@@ -223,18 +230,17 @@ final class LinuxAccountSettingsPage {
         guard rows != renderedDevices else { return }
         renderedDevices = rows
         deviceButtons.removeAll()
-        while let child = gtk_widget_get_first_child(devices) { gtk_box_remove(mp_box(devices), child) }
+        while let child = gtk_widget_get_first_child(devices) { gtk_list_box_remove(mp_list_box(devices), child) }
         for device in rows {
-            let row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
-            gtk_box_append(mp_box(devices), row)
-            let label = GTK.label(LinuxAccountSettingsStrings.device(device))
-            gtk_widget_set_hexpand(label, 1)
-            gtk_box_append(mp_box(row), label)
+            let row = LinuxSettingsLayout.row(in: devices)
+            let text = LinuxSettingsLayout.rowText(in: row)
+            LinuxSettingsLayout.label(LinuxAccountSettingsStrings.device(device), in: text)
             let revoke = button("revoke-" + device.id,
                 title: device.isCurrent ? LinuxAccountSettingsStrings.revokeCurrent : LinuxAccountSettingsStrings.revoke,
                 in: row) { model in
                     if let id = ULID(device.id) { model.revokeDevice(id) }
                 }
+            gtk_widget_set_valign(revoke, GTK_ALIGN_CENTER)
             deviceButtons.append(revoke)
         }
     }
@@ -245,14 +251,14 @@ final class LinuxAccountSettingsPage {
         renderedHeld = rows
         renderedKeptLocal = keptLocal
         selectedHeld.formIntersection(Set(rows.map(\.identity)))
-        while let child = gtk_widget_get_first_child(heldRows) { gtk_box_remove(mp_box(heldRows), child) }
+        while let child = gtk_widget_get_first_child(heldRows) { gtk_list_box_remove(mp_list_box(heldRows), child) }
         for (index, prompt) in rows.enumerated() {
             let title = LinuxAccountSettingsStrings.held(prompt, keptLocal: keptLocal.contains(prompt.identity))
             let check = gtk_check_button_new_with_label(title)!
             gtk_widget_set_name(check, "settings-account-held-\(index)")
             mp_accessible_label(check, title)
             gtk_check_button_set_active(mp_check_button(check), selectedHeld.contains(prompt.identity) ? 1 : 0)
-            gtk_box_append(mp_box(heldRows), check)
+            gtk_list_box_append(mp_list_box(heldRows), check)
             GTK.onSignal(check, "toggled") { [weak self] in
                 guard let self, self.canOperate else { return }
                 if gtk_check_button_get_active(mp_check_button(check)) != 0 { self.selectedHeld.insert(prompt.identity) }
@@ -294,19 +300,23 @@ final class LinuxAccountSettingsPage {
         gtk_widget_set_visible(label, text?.isEmpty == false ? 1 : 0)
     }
 
-    private static func label(_ name: String, in box: GTK.Widget) -> GTK.Widget {
-        let label = GTK.label("")
-        gtk_widget_set_name(label, "settings-account-" + name)
-        gtk_box_append(mp_box(box), label)
-        return label
+    private static func status(_ name: String, in box: GTK.Widget) -> GTK.Widget {
+        LinuxSettingsLayout.label("", name: "settings-account-" + name, in: box)
     }
 
-    private static func entry(_ name: String, title: String, in box: GTK.Widget) -> GTK.Widget {
-        gtk_box_append(mp_box(box), GTK.label(title))
+    private static func caption(_ name: String, in box: GTK.Widget) -> GTK.Widget {
+        LinuxSettingsLayout.caption(name: "settings-account-" + name, in: box)
+    }
+
+    private static func entryRow(_ name: String, title: String, in list: GTK.Widget) -> GTK.Widget {
+        let row = LinuxSettingsLayout.row(in: list)
+        LinuxSettingsLayout.rowText(title, in: row)
         let entry = gtk_entry_new()!
         gtk_widget_set_name(entry, "settings-account-" + name)
         mp_accessible_label(entry, title)
-        gtk_box_append(mp_box(box), entry)
+        gtk_widget_set_hexpand(entry, 1)
+        gtk_widget_set_valign(entry, GTK_ALIGN_CENTER)
+        gtk_box_append(mp_box(row), entry)
         return entry
     }
 }

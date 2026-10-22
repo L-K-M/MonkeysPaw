@@ -82,8 +82,12 @@ final class LinuxAssistantFlowsTests: XCTestCase {
 
     func testReviewHighlightsExactUnicodeQuoteAndImprovesSelectedFindings() throws {
         try open()
+        g_action_group_activate_action(mp_window_action_group(window), "inspector", nil)
+        XCTAssertEqual(gtk_widget_get_visible(try widget("library-inspector")), 0)
         transport.enqueue(try review())
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_r), GDK_CONTROL_MASK), 0)
+        XCTAssertNotEqual(gtk_widget_get_visible(try widget("library-inspector")), 0)
+        XCTAssertEqual(gtk_stack_get_visible_child_name(mp_stack(try widget("library-inspector-stack"))).map { String(cString: $0) }, "assistant")
         XCTAssertTrue(GTKTestSupport.spin { self.environment.assistantModel?.state.review != nil })
         drain()
         XCTAssertFalse(try sensitive("accept"))
@@ -153,7 +157,7 @@ final class LinuxAssistantFlowsTests: XCTestCase {
             XCTAssertNil(model.state.artifact)
             XCTAssertEqual(model.state.elapsed, 0)
             XCTAssertEqual(try files.read(at: "a.md"), Data(original.utf8))
-            try clickWidget("library-assistant")
+            try showAssistant()
         }
         XCTAssertEqual(transport.requests.count, 3)
     }
@@ -763,7 +767,17 @@ final class LinuxAssistantFlowsTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.nativeWindow(LinuxStrings.library).map { gtk_widget_get_visible($0) != 0 } == true })
         window = try XCTUnwrap(nativeWindow(LinuxStrings.library))
         try select(path)
-        try clickWidget("library-assistant")
+        try showAssistant()
+        drain()
+    }
+
+    // The old assistant button is now the inspector's Assistant page, exposed
+    // as the win.assistant window action on the header bar menu.
+    private func showAssistant() throws {
+        XCTAssertTrue(GTKTestSupport.spin {
+            g_action_group_get_action_enabled(mp_window_action_group(self.window), "assistant") != 0
+        }, "win.assistant stays disabled")
+        g_action_group_activate_action(mp_window_action_group(window), "assistant", nil)
         drain()
     }
 

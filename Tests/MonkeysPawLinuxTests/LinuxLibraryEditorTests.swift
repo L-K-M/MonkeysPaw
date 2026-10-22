@@ -49,15 +49,20 @@ final class LinuxLibraryEditorTests: XCTestCase {
         try files.write(Data(source.utf8), at: "a.md")
         let window = try open("a.md")
         let text = try widget("library-source", in: window)
-        let tabs = try widget("library-editor-tabs", in: window)
-        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), 4)
+        let editorStack = try widget("library-editor-stack", in: window)
+        XCTAssertNotNil(gtk_stack_get_child_by_name(mp_stack(editorStack), "edit"))
+        XCTAssertNotNil(gtk_stack_get_child_by_name(mp_stack(editorStack), "preview"))
+        let inspectorStack = try widget("library-inspector-stack", in: window)
+        for name in ["fields", "history", "assistant"] {
+            XCTAssertNotNil(gtk_stack_get_child_by_name(mp_stack(inspectorStack), name), "Missing inspector page \(name)")
+        }
         XCTAssertEqual(gtk_text_view_get_monospace(mp_text_view(text)), 1)
         XCTAssertEqual(gtk_text_buffer_get_enable_undo(buffer(text)), 1)
         XCTAssertEqual(contents(text), source)
         XCTAssertTrue(contents(try widget("library-preview", in: window)).hasPrefix("Hello Earth {missing} {clipboard}"))
         XCTAssertTrue(labels(try widget("library-fields", in: window)).contains { $0.contains("Pick a topic") })
         XCTAssertTrue(labels(try widget("library-fields", in: window)).contains("choice"))
-        XCTAssertTrue(labels(try widget("library-fields", in: window)).contains("a = a\nb = b"))
+        XCTAssertTrue(labels(try widget("library-fields", in: window)).contains { $0.contains("Options: a = a, b = b") })
 
         replace(text, with: "---\n[broken\n---\nDraft")
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.editorModel.state.issues.isEmpty })
@@ -87,7 +92,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         try files.write(Data("Original".utf8), at: "a.md")
         let window = try open("a.md")
         let original = environment.editorModel.state.prompt
-        XCTAssertNotEqual(gtk_widget_get_sensitive(try widget("library-save-copy", in: window)), 0,
+        XCTAssertTrue(actionEnabled("duplicate", in: window),
             "A clean prompt must still allow Save as Copy")
         replace(try widget("library-source", in: window), with: "My copy")
         try click("library-save-copy", in: window)
@@ -112,8 +117,8 @@ final class LinuxLibraryEditorTests: XCTestCase {
             let window = try open(path)
             XCTAssertEqual(environment.editorModel.state.readOnlyReason, reason)
             XCTAssertEqual(gtk_text_view_get_editable(mp_text_view(try widget("library-source", in: window))), 0)
-            XCTAssertEqual(gtk_widget_get_sensitive(try widget("library-save", in: window)), 0)
-            XCTAssertEqual(gtk_widget_get_sensitive(try widget("library-save-copy", in: window)), 0)
+            XCTAssertFalse(actionEnabled("save", in: window))
+            XCTAssertFalse(actionEnabled("duplicate", in: window))
             XCTAssertEqual(label(try widget("library-read-only", in: window)), LinuxEditorStrings.readOnly(reason))
             let state = environment.editorModel.state
             environment.editorModel.edit("Replacement")
@@ -207,6 +212,25 @@ final class LinuxLibraryEditorTests: XCTestCase {
                 XCTAssertEqual(try files.read(at: path), Data("Theirs".utf8))
             }
         }
+    }
+
+    func testCancellingConflictReenablesSaveWithoutAnotherModelChange() throws {
+        try files.write(Data("Original".utf8), at: "a.md")
+        let window = try open("a.md")
+        replace(try widget("library-source", in: window), with: "Mine")
+        try files.delete(at: "a.md")
+        try waitForConflict(.deleted)
+        drain()
+        let conflict = environment.editorModel.state.conflict
+        XCTAssertFalse(actionEnabled("save", in: window))
+
+        gtk_window_close(mp_window(try XCTUnwrap(dialog)))
+
+        XCTAssertNil(dialog)
+        XCTAssertEqual(environment.editorModel.state.conflict, conflict)
+        XCTAssertEqual(environment.editorModel.state.source, "Mine")
+        XCTAssertTrue(actionEnabled("save", in: window),
+            "Dismissing the dialog must refresh actions without waiting for a model or focus event")
     }
 
     func testDeletedConflictCancelKeepsDraftAndEachChoiceWorks() throws {
@@ -695,8 +719,8 @@ final class LinuxLibraryEditorTests: XCTestCase {
         drain()
         XCTAssertEqual(label(try widget("library-editor-status", in: window)), "Updating the file…")
         XCTAssertEqual(gtk_text_view_get_editable(mp_text_view(try widget("library-source", in: window))), 0)
-        for name in ["library-save", "library-save-copy", "library-revert", "library-new-prompt"] {
-            XCTAssertEqual(gtk_widget_get_sensitive(try widget(name, in: window)), 0)
+        for name in ["save", "duplicate", "revert", "new-prompt"] {
+            XCTAssertFalse(actionEnabled(name, in: window), name)
         }
         quit()
         quit()
@@ -708,7 +732,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.quitCount == 1 })
         XCTAssertEqual(editor.state.prompt?.relativePath.string, "renamed.md")
         drain()
-        XCTAssertNotEqual(gtk_widget_get_sensitive(try widget("library-revert", in: window)), 0)
+        XCTAssertTrue(actionEnabled("revert", in: window))
     }
 
     func testSettingsRefusesCommandRunningUntilCompletion() throws {
@@ -1055,17 +1079,16 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertNotNil(environment.editorModel.state.prompt)
     }
 
-    func testPickerEditRevealsHiddenPromptInEditTabAfterGuardAndDeduplicatesPendingOpen() throws {
+    func testPickerEditRevealsHiddenPromptInEditPageAfterGuardAndDeduplicatesPendingOpen() throws {
         try files.write(Data("Alpha".utf8), at: "a.md")
         try files.write(Data("Beta".utf8), at: "folder/b.md")
         let window = try open("a.md")
-        let tabs = try widget("library-editor-tabs", in: window)
-        let fields = try widget("library-fields", in: window)
-        let fieldsPage = try XCTUnwrap((0..<gtk_notebook_get_n_pages(mp_notebook(tabs))).first { index in
-            guard let page = gtk_notebook_get_nth_page(mp_notebook(tabs), index) else { return false }
-            return gtk_widget_is_ancestor(fields, page) != 0
-        }, "Fields must have a notebook page")
-        gtk_notebook_set_current_page(mp_notebook(tabs), fieldsPage)
+        // Fields now lives in the inspector, not the editor stack; the picker's
+        // reveal must still land on the Edit page after the draft guard.
+        let editorStack = try widget("library-editor-stack", in: window)
+        let inspectorStack = try widget("library-inspector-stack", in: window)
+        g_action_group_activate_action(mp_window_action_group(window), "fields", nil)
+        XCTAssertEqual(page(inspectorStack), "fields")
         replace(try widget("library-source", in: window), with: "Draft alpha")
         try select("folder/b.md", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.pendingDecision != nil })
@@ -1074,7 +1097,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isVisible })
         environment.pickerModel.setQuery("Beta")
         environment.pickerModel.editSelected()
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .closed && gtk_notebook_get_current_page(mp_notebook(tabs)) == 0 })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .closed && self.page(editorStack) == "edit" })
         XCTAssertTrue(environment.editorModel.state.queuedActions.isEmpty)
         try respond(.decision(.discard))
         XCTAssertTrue(GTKTestSupport.spin { self.environment.editorModel.state.source == "Beta" })
@@ -1090,8 +1113,8 @@ final class LinuxLibraryEditorTests: XCTestCase {
         browser.selectSection(.folder("Work/Drafts"))
         browser.setFilter("no such prompt")
         drain()
-        let tabs = try widget("library-editor-tabs", in: window)
-        gtk_notebook_set_current_page(mp_notebook(tabs), 1)
+        let stack = try widget("library-editor-stack", in: window)
+        g_action_group_activate_action(mp_window_action_group(window), "preview", nil)
         try click("library-new-prompt", in: window)
         XCTAssertTrue(GTKTestSupport.spin { self.dialog != nil })
         let alert = try XCTUnwrap(dialog)
@@ -1121,7 +1144,7 @@ final class LinuxLibraryEditorTests: XCTestCase {
         XCTAssertEqual(browser.selectedSection, .folder("Work/Drafts"))
         XCTAssertEqual(browser.selection, environment.editorModel.state.prompt)
         XCTAssertTrue(browser.rows.contains { $0.relativePath.string == path })
-        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(tabs)), 0)
+        XCTAssertEqual(page(stack), "edit")
         XCTAssertEqual(gtk_window_get_focus(mp_window(window)), try widget("library-source", in: window))
         XCTAssertFalse(environment.panel.isVisible)
     }
@@ -1337,9 +1360,28 @@ final class LinuxLibraryEditorTests: XCTestCase {
         }
         return nil
     }
+    // Removed command buttons now live in the header bar's action menus; keep
+    // their old names here so call sites keep intent through the action map.
+    private static let commandActions = [
+        "library-save": "save", "library-save-copy": "duplicate", "library-revert": "revert",
+        "library-rename": "rename", "library-move": "move", "library-delete": "delete",
+        "library-assistant": "assistant", "library-open-folder": "show-files",
+        "library-favorite": "favorite", "library-new-prompt": "new-prompt",
+    ]
+    private func actionEnabled(_ action: String, in window: GTK.Widget) -> Bool {
+        g_action_group_get_action_enabled(mp_window_action_group(window), action) != 0
+    }
     private func click(_ name: String, in window: GTK.Widget) throws {
         drain()
+        if let action = Self.commandActions[name] {
+            XCTAssertTrue(actionEnabled(action, in: window), "win.\(action) stays disabled")
+            g_action_group_activate_action(mp_window_action_group(window), action, nil)
+            return
+        }
         XCTAssertNotEqual(gtk_widget_activate(try widget(name, in: window)), 0)
+    }
+    private func page(_ stack: GTK.Widget) -> String? {
+        gtk_stack_get_visible_child_name(mp_stack(stack)).map { String(cString: $0) }
     }
     private func buffer(_ widget: GTK.Widget) -> UnsafeMutablePointer<GtkTextBuffer> { gtk_text_view_get_buffer(mp_text_view(widget))! }
     private func contents(_ widget: GTK.Widget) -> String {

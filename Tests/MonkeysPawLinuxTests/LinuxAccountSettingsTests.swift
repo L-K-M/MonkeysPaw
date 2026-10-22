@@ -330,7 +330,7 @@ final class LinuxAccountSettingsTests: XCTestCase {
         model.onChange = { notifications += 1 }
         try show()
         try input("password", "tab-secret")
-        gtk_notebook_set_current_page(mp_notebook(try settingsWidget("settings-tabs", in: window)), 0)
+        gtk_stack_set_visible_child_name(mp_stack(try settingsWidget("settings-stack", in: window)), "general")
         XCTAssertTrue(GTKTestSupport.spin { (try? self.inputText("password")) == "" })
         let before = notifications
         view.hide()
@@ -355,7 +355,7 @@ final class LinuxAccountSettingsTests: XCTestCase {
         drainUI()
         XCTAssertEqual(bindings, 1)
         try input("password", "tab-input")
-        gtk_notebook_set_current_page(mp_notebook(try settingsWidget("settings-tabs", in: window)), 0)
+        gtk_stack_set_visible_child_name(mp_stack(try settingsWidget("settings-stack", in: window)), "general")
         drainUI()
         XCTAssertTrue(try inputText("password").isEmpty)
         try selectAccountTab()
@@ -474,11 +474,10 @@ final class LinuxAccountSettingsTests: XCTestCase {
     }
 
     private func selectAccountTab() throws {
-        let notebook = try settingsWidget("settings-tabs", in: window)
+        let stack = try settingsWidget("settings-stack", in: window)
         let page = try control("page")
-        let index = gtk_notebook_page_num(mp_notebook(notebook), page)
-        XCTAssertGreaterThanOrEqual(index, 0)
-        gtk_notebook_set_current_page(mp_notebook(notebook), index)
+        XCTAssertNotNil(gtk_stack_get_page(mp_stack(stack), page))
+        gtk_stack_set_visible_child(mp_stack(stack), page)
     }
 
     private func loginInputs(password: String) throws {

@@ -33,11 +33,28 @@ final class LinuxSyncStatusView {
         detailsScroll = surface == .library ? gtk_scrolled_window_new() : nil
         let prefix = surface == .picker ? "picker-sync" : "library-sync"
         gtk_widget_set_name(widget, prefix)
+        let footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!
+        let menu = gtk_menu_button_new()!
+        gtk_menu_button_set_icon_name(mp_menu_button(menu), "view-more-symbolic")
+        mp_accessible_label(menu, LinuxSyncStatusStrings.actions)
+        gtk_widget_add_css_class(menu, "flat")
+        let popover = gtk_popover_new()!
+        let contents = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
+        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
+                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(contents, 8) }
+        gtk_popover_set_child(mp_popover(popover), contents)
+        gtk_menu_button_set_popover(mp_menu_button(menu), popover)
+        gtk_widget_add_css_class(summary, "dim-label")
+        gtk_widget_add_css_class(summary, "caption")
+        gtk_widget_set_hexpand(summary, 1)
+        gtk_box_append(mp_box(footer), summary)
+        gtk_box_append(mp_box(footer), menu)
+        gtk_box_append(mp_box(widget), footer)
         for (child, suffix) in [(summary, "summary"), (lastSuccess, "last-success"), (message, "message")] {
             gtk_widget_set_name(child, prefix + "-" + suffix)
-            gtk_box_append(mp_box(widget), child)
+            if child != summary { gtk_box_append(mp_box(contents), child) }
         }
-        let actions = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
+        let actions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4)!
         for (button, suffix) in [(primary, "action"), (syncNow, "now"), (errors, "errors"), (conflicts, "conflicts")] {
             gtk_widget_set_name(button, prefix + "-" + suffix)
             gtk_box_append(mp_box(actions), button)
@@ -49,7 +66,7 @@ final class LinuxSyncStatusView {
         GTK.onSignal(syncNow, "clicked") { [weak self] in self?.perform(.syncNow) }
         GTK.onSignal(errors, "clicked") { [weak self] in self?.perform(.errors) }
         GTK.onSignal(conflicts, "clicked") { [weak self] in self?.perform(.conflicts) }
-        gtk_box_append(mp_box(widget), actions)
+        gtk_box_append(mp_box(contents), actions)
         if let details, let detailsScroll {
             gtk_widget_set_name(details, prefix + "-file-errors")
             gtk_scrolled_window_set_policy(mp_scrolled_window(detailsScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)

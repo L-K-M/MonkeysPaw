@@ -6,6 +6,8 @@ import XCTest
 @testable import MonkeysPawLinux
 
 final class LinuxSyncStatusViewTests: XCTestCase {
+    private static let syncIOTimeout: Duration = .seconds(15)
+
     private var application: UnsafeMutablePointer<GtkApplication>!
     private var tools: FakeLinuxTools!
     private var environment: LinuxEnvironment!
@@ -41,7 +43,7 @@ final class LinuxSyncStatusViewTests: XCTestCase {
             environment.shutdown()
             let done = StatusViewFlag()
             Task.detached { await environment.drainSync(); done.set() }
-            XCTAssertTrue(GTKTestSupport.spin { done.value })
+            XCTAssertTrue(GTKTestSupport.spin(until: { done.value }, timeout: Self.syncIOTimeout))
         }
         model?.retire()
         if let application { GTKTestSupport.destroy(application) }
@@ -61,7 +63,9 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         try bindStatus()
         environment.panel.show()
         try assertMatrix(in: environment.panel.clipboardOwner, prefix: "picker-sync")
-        XCTAssertTrue(try label("picker-hint", in: environment.panel.clipboardOwner).contains("terminal paste"))
+        let hint = try settingsWidget("picker-hint", in: environment.panel.clipboardOwner)
+        let tooltip = try XCTUnwrap(gtk_widget_get_tooltip_text(hint))
+        XCTAssertEqual(String(cString: tooltip), LinuxStrings.pickerHint)
         XCTAssertTrue(labels(environment.panel.clipboardOwner).contains(LinuxStrings.pickerSession(.otherX11)))
     }
 
@@ -257,10 +261,16 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         XCTAssertEqual(fill.preferredMode, .paste(.terminal))
         mp_entry_set_text(try settingsWidget("fill-field-topic", in: window), "offline work")
         XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
-        XCTAssertTrue(try label("picker-hint", in: window).contains("terminal paste"))
+        let fillHint = try XCTUnwrap(gtk_widget_get_tooltip_text(try settingsWidget("picker-hint", in: window)))
+        XCTAssertEqual(String(cString: fillHint), LinuxStrings.fillHint)
         try click("picker-use", in: window)
-        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.pasted(.xdotool)) })
-        XCTAssertEqual(tools.arguments.last, ["key", "--clearmodifiers", "ctrl+shift+v"])
+        let pasteKeys = ["key", "--clearmodifiers", "ctrl+shift+v"]
+        XCTAssertTrue(GTKTestSupport.spin { self.tools.arguments.last == pasteKeys })
+        // Delivery precedes durable remembered-values, usage and repeat writes.
+        // Keep the paste response check separate from that learning I/O.
+        XCTAssertTrue(GTKTestSupport.spin(until: {
+            self.environment.pickerModel.state == .done(.pasted(.xdotool))
+        }, timeout: Self.syncIOTimeout))
         let clipboard = StatusViewClipboard()
         GTKClipboard(owner: window).readText { clipboard.set($0) }
         XCTAssertTrue(GTKTestSupport.spin { clipboard.value == "Hello offline work" })
@@ -468,6 +478,14 @@ final class LinuxSyncStatusViewTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !account.state.isBusy })
         var password = "test-password"
         account.login(server: "https://sync.example.test", username: "person", password: &password, deviceName: "Linux")
+        XCTAssertTrue(GTKTestSupport.spin {
+            account.state.operation == .signingIn || account.state.enabled || account.state.error != nil
+        })
+        // Login durably stores account state before publishing on GLib. Wait
+        // for that worker rather than timing disk I/O as a native UI response.
+        let done = StatusViewFlag()
+        Task.detached { await account.drain(); done.set() }
+        XCTAssertTrue(GTKTestSupport.spin(until: { done.value }, timeout: Self.syncIOTimeout))
         XCTAssertTrue(GTKTestSupport.spin { account.state.enabled })
     }
 
@@ -479,10 +497,10 @@ final class LinuxSyncStatusViewTests: XCTestCase {
 
     private func assertAccountSelected(in window: GTK.Widget) throws {
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) != 0 })
-        let notebook = try settingsWidget("settings-tabs", in: window)
+        let stack = try settingsWidget("settings-stack", in: window)
         let account = try settingsWidget("settings-account-page", in: window)
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_mapped(account) != 0 })
-        XCTAssertEqual(gtk_notebook_get_current_page(mp_notebook(notebook)), gtk_notebook_page_num(mp_notebook(notebook), account))
+        XCTAssertEqual(gtk_stack_get_visible_child(mp_stack(stack)), account)
     }
 
     private func enabledReport() -> SyncReport { var value = SyncReport(); value.enabled = true; return value }

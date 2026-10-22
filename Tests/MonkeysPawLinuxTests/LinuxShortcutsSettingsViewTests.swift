@@ -48,7 +48,7 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
         let raw = try XCTUnwrap(windows.pointee.data)
         window = mp_window_widget(raw.assumingMemoryBound(to: GtkWindow.self))
         XCTAssertEqual(String(cString: gtk_window_get_title(mp_window(window))), LinuxStrings.settings)
-        gtk_notebook_set_current_page(mp_notebook(try widget("settings-tabs")), 1)
+        gtk_stack_set_visible_child_name(mp_stack(try widget("settings-stack")), "shortcuts")
     }
 
     override func tearDown() {
@@ -212,8 +212,8 @@ final class LinuxShortcutsSettingsViewTests: XCTestCase {
             }
             return false
         }
-        let tabs = try widget("settings-tabs")
-        let shortcutsPage = try XCTUnwrap(gtk_notebook_get_nth_page(mp_notebook(tabs), 1))
+        let stack = try widget("settings-stack")
+        let shortcutsPage = try XCTUnwrap(gtk_stack_get_child_by_name(mp_stack(stack), "shortcuts"))
         XCTAssertFalse(containsEntry(shortcutsPage))
         XCTAssertTrue(probe.fixes.isEmpty)
     }

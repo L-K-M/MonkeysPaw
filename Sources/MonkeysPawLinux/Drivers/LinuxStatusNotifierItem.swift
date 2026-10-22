@@ -5,17 +5,20 @@ import MonkeysPawCore
 
 /// A flat tray menu supplied by composition. Zero is reserved for its root.
 struct StatusNotifierEntry {
+    enum Kind { case item, separator }
     let id: Int32
     let label: String
     let enabled: Bool
     let onActivate: (() -> Void)?
+    let kind: Kind
 
-    init(id: Int32, label: String, enabled: Bool = true, onActivate: (() -> Void)? = nil) {
+    init(id: Int32, label: String, enabled: Bool = true, kind: Kind = .item, onActivate: (() -> Void)? = nil) {
         precondition(id > 0 && !label.utf8.contains(0))
         self.id = id
         self.label = label
         self.enabled = enabled
         self.onActivate = onActivate
+        self.kind = kind
     }
 }
 
@@ -159,7 +162,7 @@ final class LinuxStatusNotifierItem {
             g_variant_new_uint32(revision), g_variant_new_int32(0)]), on: connection)
         let changed = entries.filter {
             guard let old = previous[$0.id] else { return false }
-            return old.label != $0.label || old.enabled != $0.enabled
+            return old.label != $0.label || old.enabled != $0.enabled || old.kind != $0.kind
         }
         guard !changed.isEmpty else { return }
         emit("ItemsPropertiesUpdated", StatusNotifierWire.tuple([

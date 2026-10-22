@@ -3,9 +3,8 @@ import CGtk
 import Foundation
 import MonkeysPawCore
 
-/// The header forms collect input; Core owns the guard and stamped writes.
+/// Menus collect intent; Core owns the guard and stamped writes.
 final class LinuxLibraryCommands {
-    let widget = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
     var onChange: (() -> Void)?
     private(set) var message: String?
     var hasDialog: Bool { dialog != nil }
@@ -19,7 +18,6 @@ final class LinuxLibraryCommands {
     private var previousState: EditorState?
     private var dialog: LinuxLibraryFileCommandDialog?
     private var dialogPrompt: LibraryPromptSelection?
-    private var buttons: [GTK.Widget] = []
     private var dragEpoch = UUID()
     private var pendingDrop: (selection: LibraryPromptSelection, section: LibrarySectionID)?
     private var dropOpenApproved = false
@@ -32,19 +30,6 @@ final class LinuxLibraryCommands {
 
     init(parent: GTK.Widget) {
         self.parent = parent
-        for command in LinuxLibraryFileCommand.allCases {
-            let button = GTK.button(command.label) { [weak self] in self?.request(command) }
-            let name: String
-            switch command {
-            case .rename: name = "library-rename"
-            case .move: name = "library-move"
-            case .delete: name = "library-delete"
-            }
-            gtk_widget_set_name(button, name)
-            mp_accessible_label(button, command.label)
-            buttons.append(button)
-            gtk_box_append(mp_box(widget), button)
-        }
     }
 
     func bind(editor: EditorModel, browser: LibraryBrowserModel) {
@@ -81,7 +66,6 @@ final class LinuxLibraryCommands {
         }
         previousState = state
         if hasDialog, dialogPrompt != state.prompt || !canRun { cancelDialog() }
-        for button in buttons { gtk_widget_set_sensitive(button, canRun && !hasDialog ? 1 : 0) }
         finishDrop()
     }
 
@@ -201,7 +185,7 @@ final class LinuxLibraryCommands {
         editor.restore(revision, completion: completion(success: LinuxEditorStrings.restored))
     }
 
-    private func request(_ command: LinuxLibraryFileCommand) {
+    func request(_ command: LinuxLibraryFileCommand) {
         guard canRun, !hasDialog, gtk_widget_get_visible(parent) != 0,
               let prompt = editor?.state.prompt else { return }
         let folders = browser?.sections.compactMap { section -> String? in

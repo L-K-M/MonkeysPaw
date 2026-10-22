@@ -44,13 +44,22 @@ final class LinuxSettingsWindowTests: XCTestCase {
         let general = environment.generalSettingsModel
         let shortcuts = environment.shortcutsSettingsModel
         let rememberedValues = environment.rememberedValuesSettingsModel
-        let tabs = try settingsWidget("settings-tabs", in: window)
-        let titles = [LinuxStrings.generalTab, LinuxStrings.shortcutsTab,
-                      LinuxAssistantSettingsStrings.tab, DeliverySettingsStrings.title, LinuxAccountSettingsStrings.tab]
-        XCTAssertEqual(gtk_notebook_get_n_pages(mp_notebook(tabs)), Int32(titles.count))
-        for (index, title) in titles.enumerated() {
-            let page = try XCTUnwrap(gtk_notebook_get_nth_page(mp_notebook(tabs), Int32(index)))
-            XCTAssertEqual(String(cString: gtk_notebook_get_tab_label_text(mp_notebook(tabs), page)), title)
+        let stack = try settingsWidget("settings-stack", in: window)
+        let pages: [(name: String, title: String)] = [
+            ("general", LinuxStrings.generalTab), ("shortcuts", LinuxStrings.shortcutsTab),
+            ("delivery", DeliverySettingsStrings.title), ("assistant", LinuxAssistantSettingsStrings.tab),
+            ("account", LinuxAccountSettingsStrings.tab)]
+        var children: [GTK.Widget] = []
+        var child = gtk_widget_get_first_child(stack)
+        while let current = child {
+            children.append(current)
+            child = gtk_widget_get_next_sibling(current)
+        }
+        XCTAssertEqual(children.count, pages.count)
+        for (page, expected) in zip(children, pages) {
+            let stackPage = try XCTUnwrap(gtk_stack_get_page(mp_stack(stack), page))
+            XCTAssertEqual(gtk_stack_page_get_name(stackPage).map { String(cString: $0) }, expected.name)
+            XCTAssertEqual(gtk_stack_page_get_title(stackPage).map { String(cString: $0) }, expected.title)
         }
         XCTAssertEqual(gtk_window_get_hide_on_close(mp_window(window)), 1)
         XCTAssertEqual(try openSettingsAction(), window)
@@ -83,7 +92,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
         try assertPickerSettingsAccess {
             let button = try settingsWidget("picker-settings", in: self.environment.panel.clipboardOwner)
             XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), "Settings…")
-            XCTAssertNotEqual(gtk_widget_activate(button), 0)
+            XCTAssertNotEqual(GTKTestSupport.activate(button), 0)
         }
     }
 
@@ -109,13 +118,13 @@ final class LinuxSettingsWindowTests: XCTestCase {
         environment.settingsModel.markSeedsOffered()
         gtk_window_close(mp_window(setupWindow))
         let settingsWindow = try openSettingsAction()
-        let tabs = try settingsWidget("settings-tabs", in: settingsWindow)
-        gtk_notebook_set_current_page(mp_notebook(tabs), 1)
+        let stack = try settingsWidget("settings-stack", in: settingsWindow)
+        gtk_stack_set_visible_child_name(mp_stack(stack), "shortcuts")
         let button = try settingsWidget("settings-open-setup", in: settingsWindow)
         XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), "Open Setup…")
 
         for _ in 0..<2 {
-            XCTAssertNotEqual(gtk_widget_activate(button), 0)
+            XCTAssertNotEqual(GTKTestSupport.activate(button), 0)
             XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(setupWindow) != 0 })
             XCTAssertEqual(setupWindows, [setupWindow])
             XCTAssertEqual(settingsWindows, [settingsWindow])
@@ -372,7 +381,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
         gtk_window_destroy(mp_window(window))
         environment.showSettings() // Recreate without touching the destroyed GTK window.
         completion(second.path)
-        _ = gtk_widget_activate(reveal)
+        _ = GTKTestSupport.activate(reveal)
         drainUI()
         XCTAssertEqual(environment.generalSettingsModel.state.activeLibraryPath, defaultFolder.path)
         XCTAssertTrue(launched.isEmpty)
@@ -544,7 +553,7 @@ final class LinuxSettingsWindowTests: XCTestCase {
     }
 
     private func click(_ name: String, in window: GTK.Widget) throws {
-        XCTAssertNotEqual(gtk_widget_activate(try settingsWidget(name, in: window)), 0)
+        XCTAssertNotEqual(GTKTestSupport.activate(try settingsWidget(name, in: window)), 0)
     }
 
     private func labelText(_ widget: GTK.Widget) -> String { String(cString: gtk_label_get_text(mp_label(widget))) }

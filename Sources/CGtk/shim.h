@@ -75,6 +75,7 @@ static inline GtkButton    *mp_button(GtkWidget *w)  { return GTK_BUTTON(w); }
 static inline GtkBox       *mp_box(GtkWidget *w)       { return GTK_BOX(w); }
 static inline GtkLabel     *mp_label(GtkWidget *w)     { return GTK_LABEL(w); }
 static inline GtkEntry     *mp_entry(GtkWidget *w)     { return GTK_ENTRY(w); }
+static inline GtkEditable  *mp_editable(GtkWidget *w)  { return GTK_EDITABLE(w); }
 static inline GtkWidget    *mp_entry_text_delegate(GtkWidget *w) {
     GtkEditable *delegate = gtk_editable_get_delegate(GTK_EDITABLE(w));
     return delegate != NULL ? GTK_WIDGET(delegate) : NULL;
@@ -87,6 +88,27 @@ static inline GtkComboBox  *mp_combo_box(GtkWidget *w) { return GTK_COMBO_BOX(w)
 static inline GtkComboBoxText *mp_combo_box_text(GtkWidget *w) { return GTK_COMBO_BOX_TEXT(w); }
 static inline GtkStack     *mp_stack(GtkWidget *w) { return GTK_STACK(w); }
 static inline GtkNotebook  *mp_notebook(GtkWidget *w) { return GTK_NOTEBOOK(w); }
+static inline GtkHeaderBar *mp_header_bar(GtkWidget *w) { return GTK_HEADER_BAR(w); }
+static inline GtkSearchBar *mp_search_bar(GtkWidget *w) { return GTK_SEARCH_BAR(w); }
+static inline GtkPaned *mp_paned(GtkWidget *w) { return GTK_PANED(w); }
+static inline GtkStackSwitcher *mp_stack_switcher(GtkWidget *w) { return GTK_STACK_SWITCHER(w); }
+static inline GtkToggleButton *mp_toggle_button(GtkWidget *w) { return GTK_TOGGLE_BUTTON(w); }
+static inline GtkMenuButton *mp_menu_button(GtkWidget *w) { return GTK_MENU_BUTTON(w); }
+static inline GtkPopover *mp_popover(GtkWidget *w) { return GTK_POPOVER(w); }
+static inline GtkPopoverMenu *mp_popover_menu(GtkWidget *w) { return GTK_POPOVER_MENU(w); }
+static inline GtkOverlay *mp_overlay(GtkWidget *w) { return GTK_OVERLAY(w); }
+static inline GtkWidget *mp_row_widget(GtkListBoxRow *row) { return GTK_WIDGET(row); }
+static inline GObject *mp_object(GtkWidget *w) { return G_OBJECT(w); }
+static inline GtkRevealer *mp_revealer(GtkWidget *w) { return GTK_REVEALER(w); }
+static inline GtkInfoBar *mp_info_bar(GtkWidget *w) { return GTK_INFO_BAR(w); }
+static inline GtkExpander *mp_expander(GtkWidget *w) { return GTK_EXPANDER(w); }
+static inline GtkAboutDialog *mp_about_dialog(GtkWidget *w) { return GTK_ABOUT_DIALOG(w); }
+static inline GtkActionable *mp_actionable(GtkWidget *w) { return GTK_ACTIONABLE(w); }
+static inline GActionMap *mp_window_action_map(GtkWidget *w) { return G_ACTION_MAP(w); }
+static inline GActionGroup *mp_window_action_group(GtkWidget *w) { return G_ACTION_GROUP(w); }
+static inline GMenuModel *mp_menu_model(GMenu *menu) { return G_MENU_MODEL(menu); }
+static inline GtkGestureSingle *mp_gesture_single(GtkGesture *g) { return GTK_GESTURE_SINGLE(g); }
+static inline GtkEventController *mp_gesture_controller(GtkGesture *g) { return GTK_EVENT_CONTROLLER(g); }
 static inline GtkNativeDialog *mp_native_dialog(GtkFileChooserNative *d) { return GTK_NATIVE_DIALOG(d); }
 static inline GtkFileChooser *mp_file_chooser(GtkFileChooserNative *d) { return GTK_FILE_CHOOSER(d); }
 static inline GApplication *mp_gapp(GtkApplication *a) { return G_APPLICATION(a); }
