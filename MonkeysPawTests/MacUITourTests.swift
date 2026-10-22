@@ -284,6 +284,7 @@ final class MacUITourTests: XCTestCase {
             windowNotes.append("\(name): no visible panel")
             return
         }
+        XCTAssertFalse(originalWindows.contains(ObjectIdentifier(panel)), "Capture the tour's own panel: \(name)")
         capture(panel, as: name)
     }
 

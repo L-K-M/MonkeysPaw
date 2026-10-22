@@ -249,6 +249,23 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertEqual(window.contentRect(forFrameRect: window.frame).height, 720, accuracy: 0.5)
     }
 
+    func testSettingsPanesStayInsideTheVisibleScreen() throws {
+        try start()
+        delegate.showSettings()
+        let controller = try settings()
+        let window = try XCTUnwrap(controller.window)
+        let visibleFrame = try XCTUnwrap(window.screen ?? NSScreen.main).visibleFrame
+        window.close()
+
+        for pane in SettingsViewState.Tab.allCases {
+            controller.presentation.selectedTab = pane
+            XCTAssertGreaterThanOrEqual(window.frame.minX, visibleFrame.minX - 0.5, pane.title)
+            XCTAssertGreaterThanOrEqual(window.frame.minY, visibleFrame.minY - 0.5, pane.title)
+            XCTAssertLessThanOrEqual(window.frame.maxX, visibleFrame.maxX + 0.5, pane.title)
+            XCTAssertLessThanOrEqual(window.frame.maxY, visibleFrame.maxY + 0.5, pane.title)
+        }
+    }
+
     func testHostedCompositionReadsSavedTierOnlyThroughInjectedSecrets() throws {
         let secrets = SettingsAssistantSecrets()
         let profile = try installSavedSecretProfile(secrets: secrets)
