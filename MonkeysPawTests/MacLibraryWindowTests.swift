@@ -715,6 +715,23 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(search.stringValue, "")
     }
 
+    func testModelFilterReachesSearchBeforeAppKitCanEchoIt() throws {
+        try put("Kept", at: "kept.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let search = try XCTUnwrap(controller.searchItem?.searchField)
+        for query in ["Kept", ""] {
+            controller.presentation.setFilter(query)
+            XCTAssertEqual(search.stringValue, query, "No run-loop turn is needed to bind the query")
+            search.sendAction(search.action, to: search.target)
+            XCTAssertEqual(controller.presentation.snapshot.filter, query, "Native feedback retains the new query")
+        }
+        search.stringValue = "Typed"
+        search.sendAction(search.action, to: search.target)
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Typed")
+    }
+
     func testFindWithoutAnOpenEditorFocusesLibrarySearch() throws {
         try start()
         delegate.showLibrary()

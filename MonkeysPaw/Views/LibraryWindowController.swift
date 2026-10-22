@@ -22,6 +22,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private(set) var inspectorItem: NSSplitViewItem?
     private var inspectorObservation: NSKeyValueObservation?
     private var presentationObservation: AnyCancellable?
+    private var filterObservation: AnyCancellable?
     private var presentationUpdatePending = false
     private var appliedSearchFocusRevision: UInt64 = 0
     private var searchPresentationDepth = 0
@@ -62,6 +63,18 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         presentationObservation = presentation.objectWillChange.sink { [weak self] _ in
             self?.schedulePresentationUpdate()
         }
+        // Query edits must reach AppKit before it can echo an old field value.
+        // The other window chrome can keep its coalesced run-loop refresh.
+        filterObservation = presentation.$snapshot.map(\.filter)
+            .removeDuplicates { $0.utf8.elementsEqual($1.utf8) }
+            .sink { [weak self] query in
+                guard let self, !self.isTornDown else { return }
+                self.synchronizeSearch {
+                    guard let field = self.searchItem?.searchField,
+                          (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+                    if !field.stringValue.utf8.elementsEqual(query.utf8) { field.stringValue = query }
+                }
+            }
     }
 
     @available(*, unavailable)

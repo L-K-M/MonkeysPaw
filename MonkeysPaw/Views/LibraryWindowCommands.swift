@@ -182,14 +182,13 @@ extension LibraryWindowController: NSMenuItemValidation {
     @objc func searchLibrary(_ sender: Any?) {
         guard commandsAvailable(in: window), presentation.canFocusFilter, let toolbar = window?.toolbar else { return }
         synchronizeSearch {
-            let query = presentation.snapshot.filter
             if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
             toolbar.isVisible = true
-            if let field = searchItem?.searchField { field.stringValue = query }
+            if let field = searchItem?.searchField { field.stringValue = presentation.snapshot.filter }
             searchItem?.beginSearchInteraction()
             // Beginning interaction can recreate the native field editor.
             if let field = searchItem?.searchField {
-                field.stringValue = query
+                field.stringValue = presentation.snapshot.filter
                 window?.makeFirstResponder(field)
             }
         }
