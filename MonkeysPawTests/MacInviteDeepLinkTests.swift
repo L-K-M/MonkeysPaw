@@ -257,7 +257,7 @@ final class MacInviteDeepLinkTests: XCTestCase {
         XCTAssertTrue(String(decoding: try files.read(at: "prior.md"), as: UTF8.self).contains("Prior account bytes"))
         XCTAssertFalse(transport.registerHadAuthorization)
         XCTAssertFalse(transport.foreignAuthorization)
-        XCTAssertEqual(transport.putCount, 0)
+        XCTAssertEqual(transport.putCount, 0, "Unexpected PUT hosts: \(transport.putHosts)")
         try assertPrivate([token, password])
     }
 
@@ -818,6 +818,7 @@ private final class MacInviteHTTP: HTTPTransporting, @unchecked Sendable {
     private var storedUser = MacInviteHTTP.userID
     private var paths: [String] = []
     private var puts = 0
+    private var putDestinations: [String] = []
     private var joined = false
     private var offMain = true
     private var registerAuth = false
@@ -836,6 +837,7 @@ private final class MacInviteHTTP: HTTPTransporting, @unchecked Sendable {
     var joinCount: Int { locked { paths.filter { $0.hasSuffix("/groups/join") }.count } }
     var redemptions: Int { registerCount + joinCount }
     var putCount: Int { locked { puts } }
+    var putHosts: [String] { locked { putDestinations } }
     var heldCount: Int { locked { held.count } }
     var registerHadAuthorization: Bool { locked { registerAuth } }
     var joinHadAuthorization: Bool { locked { joinAuth } }
@@ -847,7 +849,10 @@ private final class MacInviteHTTP: HTTPTransporting, @unchecked Sendable {
             offMain = offMain && !Thread.isMainThread
             let path = request.url.path
             paths.append(path)
-            if request.method == .put { puts += 1 }
+            if request.method == .put {
+                puts += 1
+                putDestinations.append(request.url.host ?? "<no host>")
+            }
             let authorized = request.headers.keys.contains { $0.lowercased() == "authorization" }
             let bearer = request.headers.first { $0.key.lowercased() == "authorization" }?.value
             foreignAuth = foreignAuth || (bearer == "Bearer " + deviceToken && request.url.host != "example.test")
