@@ -280,8 +280,11 @@ final class MacUITourTests: XCTestCase {
     }
 
     private func capturePanel(as name: String) {
-        guard let panel = NSApp.windows.first(where: { $0 is PromptPanel && $0.isVisible }) else {
+        guard let panel = NSApp.windows.first(where: {
+            $0 is PromptPanel && $0.isVisible && !originalWindows.contains(ObjectIdentifier($0))
+        }) else {
             windowNotes.append("\(name): no visible panel")
+            XCTFail("The tour's picker is not visible: \(name)")
             return
         }
         XCTAssertFalse(originalWindows.contains(ObjectIdentifier(panel)), "Capture the tour's own panel: \(name)")

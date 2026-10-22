@@ -38,6 +38,24 @@ Service, a read-only environment override or the labelled **unencrypted**
 fallback when `secret-tool` is absent. A failing installed service does not
 authorize a new plaintext save. See [credential tiers](SECURITY.md#credentials).
 
+## Library
+
+The header bar provides New, Edit/Preview, Favourite, Search and Inspector.
+The sidebar groups folders, tags, favourites and recent prompts. The inspector
+contains Fields, History and Assistant; opening it keeps the window's width.
+
+- **Ctrl+N** creates a prompt; **Ctrl+S** saves; **Ctrl+Shift+S** duplicates.
+- **Ctrl+F** searches the list; **Ctrl+1 / Ctrl+2** selects Edit or Preview.
+- **F9** toggles the sidebar; **F2** renames the selected prompt.
+- The primary menu and prompt context menu offer file commands.
+- **Ctrl+W** closes Library, asking about unsaved edits. Escape dismisses a
+  dialog or clears focused search; it keeps the Library window open.
+
+Saving is explicit and creates a history revision. Settings uses five panes:
+General, Shortcuts, Delivery, Assistant and Account. See
+[desktop verification](docs/platform/native-desktop.md) for build commands
+and checks.
+
 ## First hotkey and desktop actions
 
 Open Setup and assign/verify the picker action. Ctrl+Alt+P is the suggestion;

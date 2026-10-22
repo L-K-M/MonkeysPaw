@@ -246,7 +246,10 @@ final class MacSettingsWindowTests: XCTestCase {
         XCTAssertGreaterThan(window.frame.height, shortFrame.height)
         XCTAssertEqual(window.frame.minX, frame.minX, accuracy: 0.5)
         XCTAssertEqual(window.frame.maxY, frame.maxY, accuracy: 0.5)
-        XCTAssertEqual(window.contentRect(forFrameRect: window.frame).height, 720, accuracy: 0.5)
+        let chrome = window.frame.height - window.contentRect(forFrameRect: window.frame).height
+        let available = try XCTUnwrap(window.screen ?? NSScreen.main).visibleFrame.height - chrome
+        XCTAssertEqual(window.contentRect(forFrameRect: window.frame).height,
+            min(SettingsViewState.Tab.assistant.contentSize.height, available), accuracy: 0.5)
     }
 
     func testSettingsPanesStayInsideTheVisibleScreen() throws {

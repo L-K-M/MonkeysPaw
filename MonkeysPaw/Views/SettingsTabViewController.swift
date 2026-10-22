@@ -118,9 +118,16 @@ final class SettingsTabViewController: NSTabViewController {
         title = pane.title
         guard isViewLoaded, let window = view.window else { return }
         window.title = pane.title
-        let size = window.frameRect(forContentRect: NSRect(origin: .zero, size: pane.contentSize)).size
+        let screen = window.screen ?? NSScreen.main
+        var size = window.frameRect(forContentRect: NSRect(origin: .zero, size: pane.contentSize)).size
+        // Include toolbar chrome when fitting small displays; forms can scroll.
+        if let visible = screen?.visibleFrame {
+            size.width = min(size.width, visible.width)
+            size.height = min(size.height, visible.height)
+        }
         let previous = previousFrame ?? window.frame
-        let frame = NSRect(x: previous.minX, y: previous.maxY - size.height, width: size.width, height: size.height)
+        let proposed = NSRect(x: previous.minX, y: previous.maxY - size.height, width: size.width, height: size.height)
+        let frame = window.constrainFrameRect(proposed, to: screen)
         guard frame != window.frame else { return }
         window.setFrame(frame, display: true,
             animate: window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)

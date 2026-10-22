@@ -116,9 +116,9 @@ Last Prompt, Library, Settings… ⌘,, Setup…, About and Quit.
 
 - **Settings** is an `NSTabViewController` with toolbar tabs: General,
   Shortcuts, Delivery, Assistant, Account. The window is not resizable,
-  is titled after the pane, resizes its height to the pane and remembers
-  the last pane. Panes are grouped forms with labelled rows and section
-  footers for explanations.
+  is titled after the pane, resizes its height within the screen's visible
+  frame and remembers the last pane. Panes are grouped forms with labelled
+  rows and section footers for explanations.
 - **Picker.** A rounded panel with the system popover material, a large
   borderless search field with a magnifying-glass symbol, result rows with
   a symbol, title and folder/tags, the preview, and a footer bar with the
