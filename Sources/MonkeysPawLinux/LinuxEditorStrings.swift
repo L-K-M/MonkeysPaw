@@ -13,6 +13,14 @@ enum LinuxEditorStrings {
     }
 
     static let source = "Prompt source"
+    static let promptBody = "Prompt body"
+    static let description = "Description"
+    static let addTag = "Add"
+    static let newTag = "New tag"
+    static func removeTag(_ tag: String) -> String { "Remove tag “" + tag + "”" }
+    static let privateToggle = "Private"
+    static let privateHint = "Private prompts are never sent to the assistant."
+    static let formUnavailable = "The front matter can't be parsed, so the form is unavailable. Edit the full source below."
     static let save = "Save"
     static let revert = "Revert"
     static let saveAsCopy = "Save as Copy"

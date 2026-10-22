@@ -37,6 +37,7 @@ final class LinuxLibraryWindow {
     private var previousPrompt: LibraryPromptSelection?
     private var copySelection: LibraryPromptSelection?
     private var revealAfterOpen: [LibraryPromptSelection] = []
+    private var focusAfterOpen: LibraryPromptSelection?
     private var closeRequested = false
     private var available = true
     private var activeDialog: LinuxEditorDialogState?
@@ -79,6 +80,7 @@ final class LinuxLibraryWindow {
     private let sidebarPane = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
     private let editToggle = gtk_toggle_button_new_with_label(LinuxStrings.edit)!
     private let previewToggle = gtk_toggle_button_new_with_label(LinuxStrings.preview)!
+    private let sourceToggle = gtk_toggle_button_new_with_label(LinuxStrings.source)!
     private let inspectorToggle = gtk_toggle_button_new()!
     private let searchToggle = gtk_toggle_button_new()!
     private let issuesRevealer = gtk_revealer_new()!
@@ -88,7 +90,24 @@ final class LinuxLibraryWindow {
     private var contextModel: OpaquePointer?
     private var contextFavorite: Bool?
     private var contextSelection: LibraryPromptSelection?
+    private enum EditorMode { case edit, preview, source }
+    private var mode: EditorMode = .edit
     private let source = LinuxLibrarySourceEditor()
+    private let body = LinuxLibrarySourceEditor(kind: .body)
+    private let formBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+    private let titleEntry = gtk_entry_new()!
+    private let descriptionEntry = gtk_entry_new()!
+    private let tagsFlow = gtk_flow_box_new()!
+    private let tagEntry = gtk_entry_new()!
+    private let tagAdd = gtk_button_new_with_label(LinuxEditorStrings.addTag)!
+    private let privateToggle = gtk_check_button_new_with_label(LinuxEditorStrings.privateToggle)!
+    private let privateHint = GTK.label(LinuxEditorStrings.privateHint)
+    private let fallbackBar = gtk_info_bar_new()!
+    private let fallback = GTK.label(LinuxEditorStrings.formUnavailable)
+    private var isUpdatingForm = false
+    private var formPreedit = false
+    private var renderedTags: [String] = []
+    private var renderedTagsRevision: UInt64?
     private let readOnly = GTK.label("")
     private let readOnlyBar = gtk_info_bar_new()!
     private let validation = GTK.label("")
@@ -296,7 +315,8 @@ final class LinuxLibraryWindow {
         let modes = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0)!
         gtk_widget_add_css_class(modes, "linked")
         for (button, name, action) in [(editToggle, "library-mode-edit", LinuxLibraryAction.edit),
-                                       (previewToggle, "library-mode-preview", .preview)] {
+                                       (previewToggle, "library-mode-preview", .preview),
+                                       (sourceToggle, "library-mode-source", .source)] {
             gtk_widget_set_name(button, name)
             gtk_actionable_set_action_name(mp_actionable(button), "win." + action.rawValue)
             gtk_box_append(mp_box(modes), button)
@@ -411,14 +431,41 @@ final class LinuxLibraryWindow {
         updateActions()
     }
 
-    private func setMode(_ page: String) {
-        gtk_stack_set_visible_child_name(mp_stack(editorStack), page)
+    private func setMode(_ mode: EditorMode) {
+        self.mode = mode
+        applyEditorMode()
         updateActions()
+    }
+
+    /// The form mirrors a parsed document only. Malformed headers and
+    /// read-only files show the full source in Edit with an explanation.
+    /// A loading document has no form yet; that is not a fallback.
+    private var formIsVisible: Bool {
+        let state = editor?.state
+        return state?.prompt == nil || state?.source == nil || state?.form != nil
+    }
+
+    private func applyEditorMode() {
+        let page = mode == .preview ? "preview" : (mode == .edit && formIsVisible) ? "edit" : "source"
+        gtk_stack_set_visible_child_name(mp_stack(editorStack), page)
+        gtk_widget_set_visible(fallbackBar, mode == .edit && !formIsVisible
+            && editor?.state.readOnlyReason == nil ? 1 : 0)
+    }
+
+    /// Commands and reveals focus the editor the user actually sees.
+    private var visibleEditor: GTK.Widget {
+        switch mode {
+        case .source: return source.widget
+        case .preview: return preview
+        case .edit: return formIsVisible ? body.widget : source.widget
+        }
     }
 
     private var focusedHasPreedit: Bool {
         (filterPreedit && containsFocus(filter)) || (source.hasPreedit && containsFocus(source.widget))
-            || assistantPanel.hasPreedit
+            || (body.hasPreedit && containsFocus(body.widget))
+            || (formPreedit && (containsFocus(titleEntry) || containsFocus(descriptionEntry)
+                || containsFocus(tagEntry))) || assistantPanel.hasPreedit
     }
 
     private var commandsAvailable: Bool {
@@ -443,7 +490,7 @@ final class LinuxLibraryWindow {
         for command in LinuxLibraryAction.allCases {
             let action: OpaquePointer
             switch command {
-            case .sidebar, .inspector, .favorite, .edit, .preview:
+            case .sidebar, .inspector, .favorite, .edit, .preview, .source:
                 action = g_simple_action_new_stateful(command.rawValue, nil, g_variant_new_boolean(0))!
             default: action = g_simple_action_new(command.rawValue, nil)!
             }
@@ -492,7 +539,7 @@ final class LinuxLibraryWindow {
         case .improve: return editorAvailable && assistantProvider() != nil && assistantPanel.canStart(.improve)
         case .importFiles, .importFolder: return importView?.canImport == true
         case .showFiles: return available && state.prompt != nil
-        case .edit, .preview: return state.prompt != nil
+        case .edit, .preview, .source: return state.prompt != nil
         default: return true
         }
     }
@@ -501,11 +548,11 @@ final class LinuxLibraryWindow {
         guard !isDestroyed else { return }
         for (command, action) in actions { g_simple_action_set_enabled(action, isEnabled(command) ? 1 : 0) }
         gtk_widget_set_sensitive(searchToggle, isEnabled(.search) ? 1 : 0)
-        let mode = gtk_stack_get_visible_child_name(mp_stack(editorStack)).map { String(cString: $0) }
         for (command, selected) in [(LinuxLibraryAction.sidebar, gtk_widget_get_visible(sidebarPane) != 0),
                                      (.inspector, gtk_widget_get_visible(inspectorPane) != 0),
                                      (.favorite, browser?.state.selectedPrompt?.favorite == true),
-                                     (.edit, mode == "edit"), (.preview, mode == "preview")] {
+                                     (.edit, mode == .edit), (.preview, mode == .preview),
+                                     (.source, mode == .source)] {
             if let action = actions[command] { g_simple_action_set_state(action, g_variant_new_boolean(selected ? 1 : 0)) }
         }
     }
@@ -522,8 +569,9 @@ final class LinuxLibraryWindow {
         case .move: commands.request(.move)
         case .delete: commands.request(.delete)
         case .favorite: return toggleFavorite()
-        case .edit: setMode("edit"); gtk_widget_grab_focus(source.widget)
-        case .preview: setMode("preview")
+        case .edit: setMode(.edit); gtk_widget_grab_focus(visibleEditor)
+        case .preview: setMode(.preview)
+        case .source: setMode(.source); gtk_widget_grab_focus(source.widget)
         case .search:
             gtk_search_bar_set_search_mode(mp_search_bar(searchBar), 1)
             gtk_widget_grab_focus(filter)
@@ -600,9 +648,10 @@ final class LinuxLibraryWindow {
         previousPrompt = nil
         copySelection = nil
         revealAfterOpen = []
+        focusAfterOpen = nil
         closeRequested = false
         dismissedConflict = nil
-        setMode("edit")
+        setMode(.edit)
         filterPreedit = false
         message = nil
         messageSelection = nil
@@ -649,7 +698,7 @@ final class LinuxLibraryWindow {
         gtk_window_present(mp_window(window))
         if editor?.state.prompt == nil, let selection = browser?.selection { selectPrompt(selection) }
         updateDialog()
-        gtk_widget_grab_focus(editor?.state.prompt == nil ? list : source.widget)
+        gtk_widget_grab_focus(editor?.state.prompt == nil ? list : visibleEditor)
     }
 
     func hide() { requestClose() }
@@ -686,7 +735,7 @@ final class LinuxLibraryWindow {
     /// Picker opens reveal hidden rows only after the draft guard approves.
     func openPrompt(_ selection: LibraryPromptSelection) {
         guard !isDestroyed, available else { return }
-        setMode("edit")
+        setMode(.edit)
         if !revealAfterOpen.contains(selection) { revealAfterOpen.append(selection) }
         selectPrompt(selection)
     }
@@ -758,14 +807,15 @@ final class LinuxLibraryWindow {
                 }
                 return
             }
-            self.setMode("edit")
+            self.setMode(.edit)
             self.browser?.setFilter("")
             if self.browser?.selectedSection != .all,
                self.browser.flatMap({ $0.moveDestination(for: $0.selectedSection) }) != request.folder {
                 self.browser?.selectSection(.all)
             }
             self.selectPrompt(selection, context: .creation)
-            gtk_widget_grab_focus(self.source.widget)
+            // The form's availability is known only once the prompt loads.
+            self.focusAfterOpen = selection
         }
     }
 
@@ -785,7 +835,7 @@ final class LinuxLibraryWindow {
                 self.copySelection = context == .creation ? selection : nil
                 self.browser?.selectPrompt(self.editor?.state.prompt)
                 self.selectAdoptedCopy()
-                if reveal { gtk_widget_grab_focus(self.source.widget) }
+                if reveal { self.focusAfterOpen = selection }
             }
             self.render() // Cancel restores the native row to Core's selection.
         }
@@ -862,20 +912,187 @@ final class LinuxLibraryWindow {
         updateActions()
     }
 
+    /// Edit is a structured form over the same draft: native entries for
+    /// title and description, removable chips for tags, the private toggle
+    /// and the shared native text view for the body. Views never parse or
+    /// serialize; every change goes through EditorModel.edit.
+    private func configureForm() {
+        gtk_widget_set_name(formBox, "library-form")
+        gtk_widget_set_vexpand(formBox, 1)
+        for edge in [gtk_widget_set_margin_start, gtk_widget_set_margin_end,
+                     gtk_widget_set_margin_top, gtk_widget_set_margin_bottom] { edge(formBox, 12) }
+        for (label, entry, name) in [(LinuxStrings.promptTitle, titleEntry, "library-form-title"),
+                                     (LinuxEditorStrings.description, descriptionEntry,
+                                      "library-form-description")] {
+            let heading = GTK.label(label)
+            gtk_widget_add_css_class(heading, "heading")
+            gtk_label_set_xalign(mp_label(heading), 0)
+            gtk_box_append(mp_box(formBox), heading)
+            gtk_widget_set_name(entry, name)
+            mp_accessible_label(entry, label)
+            gtk_widget_set_hexpand(entry, 1)
+            GTK.onSignal(entry, "changed") { [weak self] in
+                guard let self, !self.isUpdatingForm else { return }
+                let text = String(cString: mp_entry_text(entry))
+                if entry == self.titleEntry { self.formEdit(.title(text)) }
+                else { self.formEdit(.description(text)) }
+            }
+            gtk_box_append(mp_box(formBox), entry)
+        }
+        let tagsHeading = GTK.label(LinuxLibraryStrings.tags)
+        gtk_widget_add_css_class(tagsHeading, "heading")
+        gtk_label_set_xalign(mp_label(tagsHeading), 0)
+        gtk_box_append(mp_box(formBox), tagsHeading)
+        gtk_widget_set_name(tagsFlow, "library-form-tags")
+        gtk_flow_box_set_selection_mode(flowBox(), GTK_SELECTION_NONE)
+        gtk_flow_box_set_column_spacing(flowBox(), 6)
+        gtk_flow_box_set_row_spacing(flowBox(), 6)
+        gtk_widget_set_hexpand(tagsFlow, 1)
+        gtk_box_append(mp_box(formBox), tagsFlow)
+        let addRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6)!
+        gtk_widget_set_name(tagEntry, "library-form-tag-entry")
+        gtk_entry_set_placeholder_text(mp_entry(tagEntry), LinuxEditorStrings.newTag)
+        mp_accessible_label(tagEntry, LinuxEditorStrings.newTag)
+        gtk_widget_set_hexpand(tagEntry, 1)
+        GTK.onSignal(tagEntry, "activate") { [weak self] in self?.addTagFromEntry() }
+        gtk_widget_set_name(tagAdd, "library-form-tag-add")
+        GTK.onSignal(tagAdd, "clicked") { [weak self] in self?.addTagFromEntry() }
+        gtk_box_append(mp_box(addRow), tagEntry)
+        gtk_box_append(mp_box(addRow), tagAdd)
+        gtk_box_append(mp_box(formBox), addRow)
+        let privateRow = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+        gtk_widget_set_name(privateToggle, "library-form-private")
+        GTK.onSignal(privateToggle, "toggled") { [weak self] in
+            guard let self, !self.isUpdatingForm else { return }
+            self.formEdit(.isPrivate(gtk_check_button_get_active(mp_check_button(self.privateToggle)) != 0))
+        }
+        gtk_widget_set_name(privateHint, "library-form-private-hint")
+        gtk_widget_add_css_class(privateHint, "caption")
+        gtk_label_set_xalign(mp_label(privateHint), 0)
+        gtk_widget_set_valign(privateHint, GTK_ALIGN_CENTER)
+        gtk_label_set_wrap(mp_label(privateHint), 1)
+        gtk_box_append(mp_box(privateRow), privateToggle)
+        gtk_box_append(mp_box(privateRow), privateHint)
+        gtk_box_append(mp_box(formBox), privateRow)
+        let bodyHeading = GTK.label(LinuxEditorStrings.promptBody)
+        gtk_widget_add_css_class(bodyHeading, "heading")
+        gtk_label_set_xalign(mp_label(bodyHeading), 0)
+        gtk_box_append(mp_box(formBox), bodyHeading)
+        gtk_box_append(mp_box(formBox), scrolled(body.widget, width: 200))
+    }
+
+    /// GtkFlowBox is opaque to Swift; the pointer is the same widget.
+    private func flowBox() -> OpaquePointer { OpaquePointer(tagsFlow) }
+
+    /// Structured edits join the same draft as source edits: one shared
+    /// history, save and guard path, with assistant context revoked.
+    private func formEdit(_ change: PromptEdit) {
+        guard available, !conflictView.isResolving else { return }
+        assistantMessage = nil
+        editor?.edit(change)
+        assistantProvider()?.contextChanged()
+    }
+
+    private func addTagFromEntry() {
+        guard !isUpdatingForm, let tags = editor?.state.form?.tags else { return }
+        let tag = String(cString: mp_entry_text(tagEntry)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty else { return }
+        formEdit(.tags(tags + [tag]))
+        mp_entry_set_text(tagEntry, "")
+    }
+
+    private func removeTag(_ tag: String, at index: Int) {
+        guard var tags = editor?.state.form?.tags, tags.indices.contains(index),
+              tags[index].utf8.elementsEqual(tag.utf8) else { return }
+        tags.remove(at: index)
+        formEdit(.tags(tags))
+    }
+
+    private func setFormEntry(_ entry: GTK.Widget, _ text: String) {
+        if !String(cString: mp_entry_text(entry)).utf8.elementsEqual(text.utf8) {
+            mp_entry_set_text(entry, text)
+        }
+    }
+
+    /// Chips map one-to-one to the tag array; values are never split.
+    private func updateTags(_ tags: [String], editable: Bool) {
+        let unchanged = renderedTags.count == tags.count
+            && zip(renderedTags, tags).allSatisfy { $0.utf8.elementsEqual($1.utf8) }
+        guard renderedTagsRevision != sourceRevision || !unchanged else { return }
+        renderedTags = tags
+        renderedTagsRevision = sourceRevision
+        let revision = sourceRevision
+        while let child = gtk_widget_get_first_child(tagsFlow) { gtk_flow_box_remove(flowBox(), child) }
+        for (index, tag) in tags.enumerated() {
+            let chip = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4)!
+            gtk_widget_set_name(chip, "library-tag-chip")
+            gtk_widget_add_css_class(chip, "mp-tag-chip")
+            gtk_box_append(mp_box(chip), GTK.label(tag))
+            let remove = gtk_button_new_from_icon_name("window-close-symbolic")!
+            gtk_widget_set_name(remove, "library-tag-remove")
+            gtk_widget_add_css_class(remove, "flat")
+            gtk_widget_add_css_class(remove, "circular")
+            let removeLabel = LinuxEditorStrings.removeTag(tag)
+            mp_accessible_label(remove, removeLabel)
+            gtk_widget_set_tooltip_text(remove, removeLabel)
+            gtk_widget_set_sensitive(remove, editable ? 1 : 0)
+            GTK.onSignal(remove, "clicked") { [weak self] in
+                guard let self, self.sourceRevision == revision else { return }
+                self.removeTag(tag, at: index)
+            }
+            gtk_box_append(mp_box(chip), remove)
+            gtk_flow_box_insert(flowBox(), chip, -1)
+        }
+    }
+
+    /// Programmatic control refreshes must not feed back into Core edits.
+    /// Controls update in place so the focused entry keeps its composition.
+    private func updateForm(_ state: EditorState, editable: Bool) {
+        let form = state.form
+        let sensitive = editable && form != nil
+        isUpdatingForm = true
+        defer { isUpdatingForm = false }
+        // An entry with an active composition owns its text until commit.
+        if !(formPreedit && containsFocus(titleEntry)) { setFormEntry(titleEntry, form?.title ?? "") }
+        if !(formPreedit && containsFocus(descriptionEntry)) { setFormEntry(descriptionEntry, form?.description ?? "") }
+        updateTags(form?.tags ?? [], editable: sensitive)
+        let active: Int32 = form?.isPrivate == true ? 1 : 0
+        if gtk_check_button_get_active(mp_check_button(privateToggle)) != active {
+            gtk_check_button_set_active(mp_check_button(privateToggle), active)
+        }
+        for control in [titleEntry, descriptionEntry, tagEntry, tagAdd, privateToggle] {
+            gtk_widget_set_sensitive(control, sensitive ? 1 : 0)
+        }
+        for index in 0..<(form?.tags.count ?? 0) {
+            guard let child = gtk_flow_box_get_child_at_index(flowBox(), Int32(index)),
+                  let chip = gtk_flow_box_child_get_child(child),
+                  let remove = gtk_widget_get_last_child(chip) else { continue }
+            gtk_widget_set_sensitive(remove, sensitive ? 1 : 0)
+        }
+    }
+
     private func configureEditor(in detail: GTK.Widget) {
         gtk_widget_set_name(readOnly, "library-read-only")
         gtk_info_bar_set_message_type(mp_info_bar(readOnlyBar), GTK_MESSAGE_INFO)
         gtk_info_bar_add_child(mp_info_bar(readOnlyBar), readOnly)
         gtk_box_append(mp_box(detail), readOnlyBar)
         gtk_box_append(mp_box(detail), conflictView.widget)
+        configureForm()
         let editPage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
         let overlay = gtk_overlay_new()!
-        gtk_overlay_set_child(mp_overlay(overlay), scrolled(source.widget, width: 200))
+        gtk_overlay_set_child(mp_overlay(overlay), formBox)
         gtk_widget_set_halign(editorEmpty, GTK_ALIGN_CENTER)
         gtk_widget_set_valign(editorEmpty, GTK_ALIGN_CENTER)
         gtk_widget_add_css_class(editorEmpty, "dim-label")
         gtk_overlay_add_overlay(mp_overlay(overlay), editorEmpty)
         gtk_box_append(mp_box(editPage), overlay)
+        let sourcePage = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+        gtk_widget_set_name(fallbackBar, "library-form-fallback")
+        gtk_info_bar_set_message_type(mp_info_bar(fallbackBar), GTK_MESSAGE_WARNING)
+        gtk_info_bar_add_child(mp_info_bar(fallbackBar), fallback)
+        gtk_widget_set_visible(fallbackBar, 0)
+        gtk_box_append(mp_box(sourcePage), fallbackBar)
+        gtk_box_append(mp_box(sourcePage), scrolled(source.widget, width: 200))
         gtk_widget_set_name(validation, "library-validation")
         gtk_label_set_selectable(mp_label(validation), 1)
         let issuesScroll = gtk_scrolled_window_new()!
@@ -883,7 +1100,6 @@ final class LinuxLibraryWindow {
         gtk_scrolled_window_set_propagate_natural_height(mp_scrolled_window(issuesScroll), 1)
         gtk_scrolled_window_set_child(mp_scrolled_window(issuesScroll), validation)
         gtk_revealer_set_child(mp_revealer(issuesRevealer), issuesScroll)
-        gtk_box_append(mp_box(editPage), issuesRevealer)
         gtk_widget_set_name(preview, "library-preview")
         mp_accessible_label(preview, LinuxStrings.preview)
         gtk_text_view_set_editable(mp_text_view(preview), 0)
@@ -892,10 +1108,12 @@ final class LinuxLibraryWindow {
         gtk_widget_set_name(editorStack, "library-editor-stack")
         gtk_stack_add_named(mp_stack(editorStack), editPage, "edit")
         gtk_stack_add_named(mp_stack(editorStack), scrolled(preview, width: 200), "preview")
+        gtk_stack_add_named(mp_stack(editorStack), sourcePage, "source")
         gtk_widget_set_vexpand(editorStack, 1)
         gtk_stack_set_hhomogeneous(mp_stack(editorStack), 0)
         gtk_stack_set_vhomogeneous(mp_stack(editorStack), 0)
         gtk_box_append(mp_box(detail), editorStack)
+        gtk_box_append(mp_box(detail), issuesRevealer)
         gtk_box_append(mp_box(detail), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL))
         let bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
         gtk_widget_add_css_class(bar, "toolbar")
@@ -903,7 +1121,7 @@ final class LinuxLibraryWindow {
         gtk_widget_add_css_class(validationSummary, "flat")
         GTK.onSignal(validationSummary, "clicked") { [weak self] in
             guard let self else { return }
-            self.setMode("edit")
+            self.setMode(.edit)
             gtk_revealer_set_reveal_child(mp_revealer(self.issuesRevealer),
                 gtk_revealer_get_reveal_child(mp_revealer(self.issuesRevealer)) == 0 ? 1 : 0)
         }
@@ -915,7 +1133,8 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(detail), bar)
         assistantPanel.onHighlight = { [weak self] range in
             guard let self, !self.isDestroyed else { return }
-            if range != nil { self.setMode("edit") }
+            // Quote ranges are byte offsets into the complete source file.
+            if range != nil { self.setMode(.source) }
             self.source.highlight(range)
         }
         assistantPanel.onAvailabilityChange = { [weak self] in self?.updateActions() }
@@ -926,8 +1145,22 @@ final class LinuxLibraryWindow {
             // Revoke acceptance at each native edit before another event can run.
             self.assistantProvider()?.contextChanged()
         }
+        body.onEdit = { [weak self] text in
+            guard let self, !self.isDestroyed else { return }
+            self.formEdit(.body(text))
+        }
         source.onCompositionEnded = { [weak self] in self?.render() }
         source.onCompositionChanged = { [weak self] in self?.updateActions() }
+        body.onCompositionEnded = { [weak self] in self?.render() }
+        body.onCompositionChanged = { [weak self] in self?.updateActions() }
+        for entry in [titleEntry, descriptionEntry, tagEntry] {
+            if let text = mp_entry_text_delegate(entry) {
+                GTK.onPreeditChanged(text) { [weak self] active in
+                    self?.formPreedit = active
+                    self?.updateActions()
+                }
+            }
+        }
     }
 
     private func configureInspector() {
@@ -986,7 +1219,10 @@ final class LinuxLibraryWindow {
         let editorAvailable = available && !conflictView.isResolving
         gtk_widget_set_visible(editorEmpty, state.prompt == nil ? 1 : 0)
         assistantPanel.bind(model: assistantProvider(), editor: editor, available: editorAvailable)
+        applyEditorMode()
+        updateForm(state, editable: editorAvailable && state.canEdit)
         source.update(state, revision: sourceRevision, available: editorAvailable)
+        body.update(state, revision: sourceRevision, available: editorAvailable)
         gtk_label_set_text(mp_label(readOnly), state.readOnlyReason.map(LinuxEditorStrings.readOnly) ?? "")
         gtk_widget_set_visible(readOnly, state.readOnlyReason == nil ? 0 : 1)
         gtk_widget_set_visible(readOnlyBar, state.readOnlyReason == nil ? 0 : 1)
@@ -1032,6 +1268,16 @@ final class LinuxLibraryWindow {
             status += (status.isEmpty ? "" : " ") + LinuxEditorStrings.provenanceWarning
         }
         gtk_label_set_text(mp_label(editorStatus), status)
+        // Focus waits for the loaded document: which native editor is visible
+        // depends on whether its front matter parsed.
+        if let pending = focusAfterOpen {
+            if state.prompt == pending && state.source != nil && state.status != .loading {
+                focusAfterOpen = nil
+                gtk_widget_grab_focus(visibleEditor)
+            } else if state.prompt != pending && state.status != .loading {
+                focusAfterOpen = nil
+            }
+        }
         if state.prompt == nil { historyPrompt = nil }
         if isHistorySelected, state.prompt != historyPrompt { loadHistory() }
     }
@@ -1266,6 +1512,7 @@ final class LinuxLibraryWindow {
                 action = .search
             case UInt32(GDK_KEY_1): action = .edit
             case UInt32(GDK_KEY_2): action = .preview
+            case UInt32(GDK_KEY_3): action = .source
             case UInt32(GDK_KEY_w), UInt32(GDK_KEY_W): action = .close
             case UInt32(GDK_KEY_r), UInt32(GDK_KEY_R): action = .review
             case UInt32(GDK_KEY_i), UInt32(GDK_KEY_I): action = .improve

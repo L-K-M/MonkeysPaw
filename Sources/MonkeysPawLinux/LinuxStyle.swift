@@ -52,6 +52,17 @@ enum LinuxStyle {
         list.boxed-list > row:last-child {
             border-bottom: none;
         }
+        .mp-tag-chip {
+            border: 1px solid alpha(currentColor, .16);
+            border-radius: 12px;
+            padding-left: 8px;
+            padding-right: 4px;
+        }
+        .mp-tag-chip button {
+            min-width: 16px;
+            min-height: 16px;
+            padding: 0;
+        }
         """
 }
 #endif
