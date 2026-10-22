@@ -14,7 +14,8 @@ extension LibraryWindowController: NSMenuItemValidation {
         guard let window, candidate === window, window.isVisible,
               context == .explicitWindow || window.isKeyWindow,
               window.attachedSheet == nil, presentation.libraryAvailable,
-              presentation.fileCommandRequest == nil, !presentation.isScopeDropPending,
+              presentation.fileCommandRequest == nil, presentation.newPromptRequest == nil,
+              !presentation.isScopeDropPending,
               presentation.editorState.status != .commandRunning,
               presentation.editorState.pendingDecision == nil,
               presentation.editorState.queuedActions.isEmpty,
@@ -32,6 +33,7 @@ extension LibraryWindowController: NSMenuItemValidation {
         updateCommandTitle(item)
         guard commandsAvailable(in: candidate, context: context) else { return false }
         switch item.action {
+        case #selector(newDocument(_:)): return presentation.canCreatePrompt
         case #selector(saveDocument(_:)): return presentation.canSave || presentation.canShowConflict
         case #selector(duplicateDocument(_:)): return presentation.canSaveAsCopy
         case #selector(renameDocument(_:)), #selector(moveDocument(_:)), #selector(deleteLibraryPrompt(_:)):
@@ -81,6 +83,12 @@ extension LibraryWindowController: NSMenuItemValidation {
         }
     }
 
+    /// File ▸ New Prompt asks for a title, then creates the prompt in the
+    /// selected folder (§11.7).
+    @objc func newDocument(_ sender: Any?) {
+        guard commandsAvailable(in: window), presentation.canCreatePrompt else { return }
+        presentation.requestNewPrompt()
+    }
     @objc func saveDocument(_ sender: Any?) {
         guard commandsAvailable(in: window) else { return }
         presentation.save()

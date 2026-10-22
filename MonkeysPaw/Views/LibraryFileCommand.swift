@@ -3,6 +3,12 @@ import MonkeysPawCore
 
 enum LibraryFileCommand: Equatable { case rename, move, delete }
 
+/// Keep the destination shown in the sheet even if the sidebar later changes.
+struct LibraryNewPromptRequest: Equatable {
+    let id = UUID()
+    let folder: RelativePath
+}
+
 /// Binds a native form to the prompt that was open when it was requested.
 struct LibraryFileCommandRequest: Equatable {
     // Callback ownership is separate from the form's value equality.

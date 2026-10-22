@@ -1,6 +1,7 @@
 import AppKit
 
 extension NSToolbarItem.Identifier {
+    static let libraryNewPrompt = Self("LibraryNewPrompt")
     static let libraryListSeparator = Self("LibraryListSeparator")
     static let libraryEditorMode = Self("LibraryEditorMode")
     static let libraryFavorite = Self("LibraryFavorite")
@@ -22,7 +23,8 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .libraryListSeparator,
+        // New Prompt sits over the prompt list, as Compose does in Mail and Notes.
+        [.toggleSidebar, .sidebarTrackingSeparator, .flexibleSpace, .libraryNewPrompt, .libraryListSeparator,
          .libraryEditorMode, .flexibleSpace, .libraryFavorite, .libraryAssistant, .librarySearch,
          .inspectorTrackingSeparator, .toggleInspector]
     }
@@ -74,6 +76,11 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
         let item = NSToolbarItem(itemIdentifier: identifier)
         let symbol: String
         switch identifier {
+        case .libraryNewPrompt:
+            item.label = LibraryNativeStrings.newPromptToolbar
+            item.toolTip = LibraryCommandStrings.newPrompt
+            symbol = "square.and.pencil"
+            item.action = #selector(newDocument(_:))
         case .libraryFavorite:
             item.label = LibraryStrings.favourite
             item.toolTip = presentation.openPromptRow?.favorite == true ? LibraryStrings.removeFavorite : LibraryStrings.addFavorite

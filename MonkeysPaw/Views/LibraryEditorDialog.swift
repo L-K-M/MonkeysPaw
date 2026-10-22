@@ -8,6 +8,7 @@ enum LibraryEditorDialog: Equatable {
                   style: LibraryDecisionStyle = .save)
     case conflict(EditorConflict, status: EditorStatus, title: String = LibraryStrings.title)
     case fileCommand(LibraryFileCommandRequest)
+    case newPrompt(LibraryNewPromptRequest)
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
@@ -19,6 +20,7 @@ enum LibraryEditorDialog: Equatable {
         case (.fileCommand(let left), .fileCommand(let right)):
             // Reopened forms must replace their native sheet and callback token.
             return left.id == right.id && left == right
+        case (.newPrompt(let left), .newPrompt(let right)): return left == right
         default: return false
         }
     }
@@ -30,6 +32,7 @@ enum LibraryEditorDialog: Equatable {
         case .conflict(let conflict, _, let title):
             return LibraryDialogStrings.conflictTitle(title, kind: conflict.kind)
         case .fileCommand(let request): return request.title
+        case .newPrompt: return LibraryCommandStrings.newPromptTitle
         }
     }
 
@@ -44,6 +47,7 @@ enum LibraryEditorDialog: Equatable {
             if let reason = conflict.readOnlyReason { text += " " + EditorStrings.readOnly(reason) }
             return text + failureMessage(status)
         case .fileCommand(let request): return request.message
+        case .newPrompt(let request): return LibraryCommandStrings.newPromptHint(request.folder)
         }
     }
 
@@ -55,6 +59,7 @@ enum LibraryEditorDialog: Equatable {
         case .conflict(let conflict, _, _):
             return conflict.choices.map(LibraryEditorResponse.conflict) + [.dismissConflict]
         case .fileCommand(let request): return request.responses
+        case .newPrompt: return [.createPrompt(LibraryStrings.newPromptDefaultTitle), .cancelFileCommand]
         }
     }
 
@@ -63,6 +68,7 @@ enum LibraryEditorDialog: Equatable {
         switch (self, response) {
         case (.fileCommand(let request), .rename): return request.command == .rename
         case (.fileCommand(let request), .move): return request.command == .move
+        case (.newPrompt, .createPrompt): return true
         default: return responses.contains(response)
         }
     }
@@ -79,6 +85,7 @@ enum LibraryEditorResponse: Equatable {
     /// Native dismissal leaves Core's conflict and draft available for repair.
     case dismissConflict
     case rename(String), move(String), delete, cancelFileCommand
+    case createPrompt(String)
 
     var title: String {
         switch self {
@@ -93,6 +100,7 @@ enum LibraryEditorResponse: Equatable {
         case .move: return LibraryCommandStrings.moveButton
         case .delete: return LibraryCommandStrings.deleteButton
         case .cancelFileCommand: return LibraryCommandStrings.cancel
+        case .createPrompt: return LibraryCommandStrings.create
         }
     }
 }

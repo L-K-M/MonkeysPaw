@@ -5,7 +5,7 @@ import XCTest
 final class EditorGuardTests: XCTestCase {
     private func actions(_ e: EditorHarness) throws -> [EditorDiscardAction] {
         let other = try e.put("Other", at: "b.md")
-        return [.open(other), .close, .rename, .move, .delete, .librarySwitch, .quit, .revert]
+        return [.open(other), .close, .rename, .move, .delete, .create, .librarySwitch, .quit, .revert]
     }
 
     func testEveryDiscardTriggerPublishesDecisionAndCancelKeepsDraft() throws {
@@ -56,7 +56,7 @@ final class EditorGuardTests: XCTestCase {
             XCTAssertFalse(e.model.state.isDirty)
             XCTAssertEqual(try e.h.files.text(at: "a.md"), "Original")
             switch action {
-            case .rename, .move, .delete, .quit, .revert:
+            case .rename, .move, .delete, .create, .quit, .revert:
                 XCTAssertEqual(e.model.state.prompt, original)
                 XCTAssertEqual(e.model.state.source, "Original")
             case .open(let selection):

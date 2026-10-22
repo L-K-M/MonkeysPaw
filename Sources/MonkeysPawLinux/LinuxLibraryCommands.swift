@@ -9,6 +9,7 @@ final class LinuxLibraryCommands {
     var onChange: (() -> Void)?
     private(set) var message: String?
     var hasDialog: Bool { dialog != nil }
+    var isScopeDropPending: Bool { pendingDrop != nil }
 
     private let parent: GTK.Widget
     private weak var editor: EditorModel?
@@ -120,7 +121,12 @@ final class LinuxLibraryCommands {
         let revision = self.revision
         editor.request(.open(row.selection)) { [weak self] result in
             guard let self, self.revision == revision else { return }
-            guard result == .allowed else { self.pendingDrop = nil; return }
+            guard result == .allowed else {
+                self.pendingDrop = nil
+                // The editor published before this callback cleared the drop gate.
+                self.onChange?()
+                return
+            }
             self.browser?.selectPrompt(row.selection)
             self.dropOpenApproved = true
             self.finishDrop()

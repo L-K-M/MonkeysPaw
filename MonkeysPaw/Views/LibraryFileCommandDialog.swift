@@ -1,6 +1,22 @@
 import AppKit
 
 extension LibraryWindowController {
+    /// The title field starts with the default title selected, so typing replaces it.
+    static func configureNewPromptAlert(_ alert: NSAlert) {
+        let label = LibraryCommandStrings.promptTitle
+        let input = NSTextField(string: LibraryStrings.newPromptDefaultTitle)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 54))
+        let caption = NSTextField(labelWithString: label)
+        caption.frame = NSRect(x: 0, y: 32, width: 320, height: 20)
+        input.frame = NSRect(x: 0, y: 0, width: 320, height: 26)
+        input.setAccessibilityLabel(label)
+        input.setAccessibilityIdentifier("library-new-prompt-title")
+        container.addSubview(caption)
+        container.addSubview(input)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = input
+    }
+
     static func configureFileCommandAlert(_ alert: NSAlert, request: LibraryFileCommandRequest) {
         let input: NSTextField
         let label: String
@@ -38,6 +54,7 @@ extension LibraryWindowController {
         switch response {
         case .rename: return .rename(text)
         case .move: return .move(text)
+        case .createPrompt: return .createPrompt(text)
         default: return response
         }
     }

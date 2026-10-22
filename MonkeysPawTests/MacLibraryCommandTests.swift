@@ -808,7 +808,7 @@ final class MacLibraryCommandTests: XCTestCase {
         delegate.installMainMenu()
         let main = try XCTUnwrap(NSApp.mainMenu)
         let menu = try XCTUnwrap(main.items.first { $0.title == LibraryCommandStrings.fileMenu }?.submenu)
-        let actions = [#selector(LibraryWindowController.saveDocument(_:)),
+        let actions = [#selector(LibraryWindowController.newDocument(_:)), #selector(LibraryWindowController.saveDocument(_:)),
             #selector(LibraryWindowController.duplicateDocument(_:)), #selector(LibraryWindowController.renameDocument(_:)),
             #selector(LibraryWindowController.moveDocument(_:)), #selector(LibraryWindowController.revertDocumentToSaved(_:)),
             #selector(LibraryWindowController.showInFinder(_:)), #selector(LibraryWindowController.deleteLibraryPrompt(_:))]
@@ -857,6 +857,7 @@ final class MacLibraryCommandTests: XCTestCase {
             let item = try XCTUnwrap(menu.items.first { $0.action == action })
             XCTAssertFalse(delegate.validateLibraryFileMenuItem(item, in: try window()))
         }
+        XCTAssertFalse(delegate.validateLibraryFileMenuItem(menu.items[0], in: try window()))
         let dismissed = dialogs.count
         presentation.save()
         XCTAssertEqual(dialogs.count, dismissed + 1)
@@ -866,6 +867,67 @@ final class MacLibraryCommandTests: XCTestCase {
         XCTAssertTrue(presentation.editorState.isDirty)
         XCTAssertEqual(try files.read(at: "one.md"), Data(external.utf8))
         try respond(.dismissConflict)
+    }
+
+    func testNewPromptFormUsesTitleAndDestinationWithReturnAndEscapeButtons() throws {
+        let request = LibraryNewPromptRequest(folder: "Work/Drafts")
+        let dialog = LibraryEditorDialog.newPrompt(request)
+        let alert = LibraryWindowController.makeEditorAlert(for: dialog)
+        XCTAssertEqual(alert.messageText, LibraryCommandStrings.newPromptTitle)
+        XCTAssertEqual(alert.informativeText, "Creates the prompt in Work/Drafts.")
+        let input = try XCTUnwrap(alert.window.initialFirstResponder as? NSTextField)
+        XCTAssertEqual(input.stringValue, LibraryStrings.newPromptDefaultTitle)
+        XCTAssertEqual(input.accessibilityLabel(), LibraryCommandStrings.promptTitle)
+        XCTAssertEqual(alert.buttons.map(\.title), [LibraryCommandStrings.create, LibraryCommandStrings.cancel])
+        XCTAssertEqual(alert.buttons.map(\.keyEquivalent), ["\r", "\u{1b}"])
+        input.stringValue = "  Exact/title  "
+        XCTAssertEqual(LibraryWindowController.fileCommandResponse(.createPrompt(""), alert: alert), .createPrompt("  Exact/title  "))
+        XCTAssertTrue(dialog.accepts(.createPrompt("Different title")))
+        XCTAssertTrue(dialog.accepts(.cancelFileCommand))
+        XCTAssertFalse(dialog.accepts(.rename("other.md")))
+    }
+
+    func testNewPromptFailureSurvivesQueuedEditorPublicationsInLibrary() throws {
+        let native = try open()
+        let main = CommandTestMainThread()
+        var attempts = 0
+        let presentation = LibraryViewState(model: native.model, editor: native.editor,
+            libraryPath: root.path, available: true, mainThread: main,
+            createPrompt: { _, _ in attempts += 1; return nil }, revealLibrary: {})
+        defer { presentation.deactivate() }
+        presentation.didShow()
+        let pickerStatus = delegate.pickerPresentation?.status
+        presentation.requestNewPrompt()
+        let request = try XCTUnwrap(presentation.newPromptRequest)
+        main.queuesWork = true
+        presentation.resolveNewPrompt(.createPrompt("Failure"), id: request.id)
+        work.drain()
+        main.drain()
+        work.drain()
+        main.drain()
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(presentation.commandMessage, Strings.createPromptFailed)
+        XCTAssertEqual(delegate.pickerPresentation?.status, pickerStatus)
+        XCTAssertNil(try files.stamp(at: "Failure.md"))
+    }
+
+    func testNativeNewPromptSelectsTitleAndNonButtonDismissalWritesNothing() throws {
+        let completed = expectation(description: "Title sheet cancels")
+        let presentation = try open(presenter: { window, dialog, done in
+            LibraryWindowController.presentEditorDialog(in: window, dialog: dialog) { response in
+                done(response)
+                completed.fulfill()
+            }
+        })
+        presentation.requestNewPrompt()
+        let sheet = try XCTUnwrap(try window().attachedSheet)
+        let input = try XCTUnwrap(sheet.initialFirstResponder as? NSTextField)
+        let fieldEditor = try XCTUnwrap(input.currentEditor() as? NSTextView)
+        XCTAssertEqual(fieldEditor.selectedRange(), NSRange(location: 0, length: LibraryStrings.newPromptDefaultTitle.utf16.count))
+        try window().endSheet(sheet, returnCode: .cancel)
+        wait(for: [completed], timeout: 2)
+        XCTAssertNil(presentation.newPromptRequest)
+        XCTAssertNil(try files.stamp(at: "New prompt.md"))
     }
 
     func testNativeRenameUsesEditedTextAndNonButtonDismissalCancelsForms() throws {

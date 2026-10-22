@@ -34,7 +34,17 @@ enum LinuxStrings {
     static let removeFavorite = "Remove from Favourites"
     static let readOnly = "Read-only"
     static let invalidPrompt = "Invalid"
-    static let libraryHint = "Ctrl+S: save · Ctrl+D: toggle favourite · Ctrl+W: close · Esc: clear filter, then close"
+    static let libraryHint = "Ctrl+N: new prompt · Ctrl+S: save · Ctrl+D: toggle favourite · Ctrl+W: close · Esc: clear filter, then close"
+    static let newPrompt = "New prompt…"
+    static let newPromptTitle = "New prompt"
+    static let newPromptDefaultTitle = "New prompt"
+    static let newPromptCreate = "Create"
+    static let promptTitle = "Title"
+
+    static func newPromptHint(_ folder: RelativePath) -> String {
+        folder.string.isEmpty ? "Creates the prompt in the library root."
+            : "Creates the prompt in \(folder.string)."
+    }
 
     static func lastUsed(_ date: Date) -> String {
         "Last used: " + DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)

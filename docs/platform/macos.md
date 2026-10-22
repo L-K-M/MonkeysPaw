@@ -479,6 +479,7 @@ not record prompt text, field values or clipboard contents in this checklist.
 | Settings Choose Folder/Use Default refuse a dirty draft or a pending save with the editor-specific message and keep the existing library; saving/discarding clears that message in an already-open Settings window; a later switch retires old worker replies, native input and sheet callbacks | NOT RUN | |
 | Menu Quit and ⌘Q defer termination while dirty/saving; Cancel stays resident, Don't Save quits without writing and Save quits only after a successful save; failed saves keep Library open | NOT RUN | |
 | Picker Edit/⌘Return and no-match create open the selected/new prompt in Library's Edit mode, including with a prior hidden row/filter; Show in Finder reveals the prompt file | NOT RUN | |
+| Library New Prompt (toolbar item, File ▸ New Prompt… and ⌘N) shares enablement; the selected default title and destination message precede Save/Don't Save/Cancel; both cancellations write nothing; folder/editable-group placement, viewer/root fallback, collision names, Edit selection, filter reveal, editor focus and the Library failure message work; dialogs, busy work and IME composition disable ⌘N | NOT RUN | |
 | With a real Japanese/Chinese IME, Return/Escape during marked text go to the input method; typing/state refresh preserves composition, and document/library replacement never commits the old composition into the new draft | NOT RUN | |
 | VoiceOver identifies source, Edit/Preview modes, inspector panes, field headings, Save/Revert/Duplicate menu commands, validation/status messages and all sheet choices; Tab/Shift+Tab show visible focus | NOT RUN | |
 | A conflict or decision published while Library is minimized or the app hidden appears on restore/unhide; minimized Library is restored for a quit decision; full-screen Spaces, repeated openings and simultaneous Settings/Library windows preserve activation and Dock policy | NOT RUN | |
@@ -789,3 +790,29 @@ in this checklist, screenshots or logs.
 | Paste a link or enter a bare token with an explicit server; verify the HTTP warning, current-account join and new-account registration, wrong-server/account refusal, one-use failure and visible partial cleanup | NOT RUN | |
 | Close, minimize, hide the app or leave Account; secure inputs and staged links clear, late replies stay hidden, and reopening requires a fresh invite | NOT RUN | |
 | Onboarding's Join with an invite opens the same Account window; VoiceOver and Tab/Shift+Tab reach destination, secure inputs and both explicit accept actions | NOT RUN | |
+
+## Sync sign-in crash: 2026-10-21
+
+Owner reproduced on macOS 26.7.1, Apple Silicon, with a universal Release
+app built by Xcode 27. Launching the installed executable from Terminal and
+signing into the sync server produced:
+
+```text
+MonkeysPawCore/SecretTypes.swift:34: Fatal error: 'try!' expression unexpectedly raised an error: MonkeysPawCore.SecretStoreError.invalidAccount
+```
+
+The owner's standalone `swift -O` probe accepted `device` and a generated
+UUID with both bound-method and explicit-closure CharacterSet checks.
+That probe does not reproduce the compiled app's failure.
+
+The fix removes forced validation from the typed UUID factories. Why the
+original validator rejected the UUID in the installed app remains unconfirmed;
+passing automated tests alone does not establish owner acceptance.
+
+- [x] Before the fix (`5b1eee0f`), the Core Release tests passed on Linux
+      Swift 6.4 and Xcode 26 CI (run `39667130574`, job `119455091349`).
+      Neither reproduced the owner's Xcode 27 app failure.
+- [ ] Rebuild and install from the fixed main commit, retry Sign In, then
+      quit/reopen and confirm the saved connection resumes without a crash.
+- [ ] Confirm a failed sign-in remains an error in Account, without exposing
+      credentials in logs or this record.

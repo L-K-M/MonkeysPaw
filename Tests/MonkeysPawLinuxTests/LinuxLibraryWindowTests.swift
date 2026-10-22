@@ -165,6 +165,7 @@ final class LinuxLibraryWindowTests: XCTestCase {
         let text = try XCTUnwrap(mp_entry_text_delegate(filter))
         mp_test_emit_preedit_changed(text, "かな")
         XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
         XCTAssertEqual(environment.libraryBrowserModel.filter, "Alpha")
         mp_test_emit_preedit_changed(text, "")
         XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_Escape), GdkModifierType(rawValue: 0)), 0)
@@ -279,6 +280,36 @@ final class LinuxLibraryWindowTests: XCTestCase {
         drain()
         XCTAssertFalse(view.isVisible)
         XCTAssertTrue(libraryWindows.isEmpty)
+    }
+
+    func testNewPromptToolbarOrderAndShortcutUseDialogAndAvailabilityGate() throws {
+        let window = try openLibrary()
+        let filter = try settingsWidget("library-filter", in: window)
+        let button = try settingsWidget("library-new-prompt", in: window)
+        XCTAssertEqual(gtk_widget_get_next_sibling(filter), button)
+        XCTAssertEqual(gtk_widget_get_next_sibling(button), try settingsWidget("library-favorite", in: window))
+        XCTAssertEqual(String(cString: gtk_button_get_label(mp_button(button))), LinuxStrings.newPrompt)
+        XCTAssertTrue(labels(in: window).contains(LinuxStrings.libraryHint))
+        XCTAssertNotEqual(gtk_widget_get_sensitive(button), 0)
+        XCTAssertNotEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        drain()
+        XCTAssertEqual(gtk_widget_get_sensitive(button), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0,
+            "A second shortcut must not open another title dialog")
+        gtk_window_close(mp_window(window))
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_visible(window) == 0 })
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
+        XCTAssertEqual(try openLibrary(), window)
+
+        // Exercise the same window gate directly without relying on permission bits.
+        let isolated = LinuxLibraryWindow(application: application, browser: environment.libraryBrowserModel,
+            editor: environment.editorModel, openFolder: {})
+        defer { isolated.tearDown() }
+        isolated.show()
+        let unavailable = try XCTUnwrap(libraryWindows.first { $0 != window })
+        isolated.setLibraryAvailable(false)
+        XCTAssertEqual(gtk_widget_get_sensitive(try settingsWidget("library-new-prompt", in: unavailable)), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(unavailable, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
     }
 
     private func openLibrary() throws -> GTK.Widget {

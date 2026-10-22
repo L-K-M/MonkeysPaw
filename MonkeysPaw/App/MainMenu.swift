@@ -82,7 +82,7 @@ enum MainMenu {
 
     private static func fileMenu() -> NSMenu {
         let menu = NSMenu(title: MainMenuStrings.file)
-        // The New Prompt branch adds its ⌘N item ahead of Import.
+        add(menu, MainMenuStrings.newPrompt, #selector(LibraryWindowController.newDocument(_:)), "n")
         add(menu, MainMenuStrings.importPrompts,
             #selector(LibraryWindowController.importFromMenu), "i", [.command, .shift])
         menu.addItem(.separator())

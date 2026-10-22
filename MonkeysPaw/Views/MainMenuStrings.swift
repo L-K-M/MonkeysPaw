@@ -15,6 +15,7 @@ enum MainMenuStrings {
     static let quit = "Quit \(AppIdentity.displayName)"
 
     static let file = LibraryCommandStrings.fileMenu
+    static let newPrompt = LibraryCommandStrings.newPrompt
     static let importPrompts = ImportStrings.action
     static let close = "Close"
     static let save = EditorStrings.save

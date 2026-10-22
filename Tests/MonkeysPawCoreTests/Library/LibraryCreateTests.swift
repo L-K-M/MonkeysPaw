@@ -150,6 +150,69 @@ final class LibraryCreateTests: XCTestCase {
         XCTAssertTrue(try data.listFiles().isEmpty)
     }
 
+    func testTitleCreationIntoANestedFolderKeepsBytesAndIdentity() throws {
+        let entry = try service.createPrompt(titled: "New", body: "Nested body\r\n", in: "one/two")
+
+        XCTAssertEqual(entry.relativePath, "one/two/New.md")
+        XCTAssertEqual(entry.document.frontMatter.title, "New")
+        XCTAssertEqual(entry.document.body, "Nested body\r\n")
+        XCTAssertNotNil(entry.document.frontMatter.id)
+        XCTAssertEqual(try files.text(at: "one/two/New.md"), try PromptCodec.write(entry.document))
+        XCTAssertTrue(try service.history(for: entry.identity).isEmpty)
+        XCTAssertTrue(try data.listFiles().isEmpty)
+    }
+
+    func testTitleCreationCollisionsStayInsideTheRequestedFolder() throws {
+        try files.put("Folder original", at: "one/New.md")
+        try files.put("Root original", at: "New.md")
+
+        let entry = try service.createPrompt(titled: "New", body: "Body", in: "one")
+
+        XCTAssertEqual(entry.relativePath, "one/New 2.md")
+        XCTAssertEqual(try files.text(at: "one/New.md"), "Folder original")
+        XCTAssertEqual(try files.text(at: "New.md"), "Root original")
+        XCTAssertTrue(try data.listFiles().isEmpty)
+    }
+
+    func testTitleCreationWithAnEmptyFolderMatchesThePickerDefault() throws {
+        let entry = try service.createPrompt(titled: "New", body: "Body", in: RelativePath(""))
+
+        XCTAssertEqual(entry.relativePath, "New.md")
+        XCTAssertEqual(try files.text(at: "New.md"), try PromptCodec.write(entry.document))
+        XCTAssertTrue(try data.listFiles().isEmpty)
+    }
+
+    func testTitleCreationRejectsAnInvalidFolderPath() throws {
+        for folder in ["../outside", "one//two", "/absolute"] {
+            XCTAssertThrowsError(try service.createPrompt(titled: "New", body: "Body", in: RelativePath(folder))) {
+                XCTAssertEqual($0 as? FileStoreError, .invalidPath, folder)
+            }
+        }
+        XCTAssertTrue(try files.listFiles().isEmpty)
+        XCTAssertTrue(entropy.requests.isEmpty)
+    }
+
+    func testTitleCreationIntoAnEditableGroupUsesItsManagedFolder() throws {
+        let rig = try GroupCreateRig(role: .editor)
+
+        let entry = try rig.base.library.createPrompt(titled: "New", body: "Body", in: "Groups/Team")
+
+        XCTAssertEqual(entry.relativePath, "Groups/Team/New.md")
+        XCTAssertEqual(entry.access, .group(try XCTUnwrap(rig.access.snapshot.groups[SyncTestValues.group])))
+        XCTAssertEqual(entry.document.frontMatter.title, "New")
+        XCTAssertEqual(try rig.base.files.text(at: "Groups/Team/New.md"), try PromptCodec.write(entry.document))
+        XCTAssertTrue(try rig.base.library.history(for: entry.identity).isEmpty)
+    }
+
+    func testTitleCreationIntoAViewerGroupIsRefusedBeforeAnyWrite() throws {
+        let rig = try GroupCreateRig(role: .viewer)
+
+        XCTAssertThrowsError(try rig.base.library.createPrompt(titled: "New", body: "Body", in: "Groups/Team")) {
+            XCTAssertEqual($0 as? LibraryError, .accessDenied)
+        }
+        XCTAssertTrue(try rig.base.files.listFiles().isEmpty)
+    }
+
     func testCreateIsARealSaveWithIdentityMigrationAndExactBodyButNoSnapshot() throws {
         let path = "nested/new.md"
         let local = PromptIdentity(path: path, id: nil)
@@ -241,5 +304,21 @@ final class LibraryCreateTests: XCTestCase {
         }
         XCTAssertTrue(try files.listFiles().isEmpty)
         XCTAssertTrue(entropy.requests.isEmpty)
+    }
+}
+
+/// A bound group-access service turns the folder's path checks into role checks.
+private final class GroupCreateRig {
+    let base: SyncApplyTestRig
+    let access: GroupAccessService
+
+    init(role: SyncAPI.Role) throws {
+        base = try SyncApplyTestRig()
+        try base.states.update(for: base.binding) {
+            $0.groups[SyncTestValues.group] = try SyncGroupState(name: "Team", folder: "Team", role: role)
+        }
+        let accounts = SyncAccountStore(files: base.data, operations: base.dataOperations)
+        access = try GroupAccessService(library: base.library, states: base.states,
+            accounts: accounts, libraryRoot: base.binding.root.path)
     }
 }

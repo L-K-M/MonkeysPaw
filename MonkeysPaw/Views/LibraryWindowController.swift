@@ -41,6 +41,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
          syncStatus: SyncStatusViewState? = nil,
          importChooser: @escaping ImportChooser = MacImportChooser.choose,
          revealPrompt: @escaping (RelativePath) -> Void = { _ in },
+         createPrompt: @escaping (String, RelativePath) -> LibraryPromptSelection? = { _, _ in nil },
          revealLibrary: @escaping () -> Void) {
         self.mainThread = mainThread
         self.activation = activation
@@ -49,7 +50,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         presentation = LibraryViewState(model: model, editor: editor, libraryPath: libraryPath, available: available,
             mainThread: mainThread, imports: imports, makeAssistant: makeAssistant, scheduler: scheduler,
             conflictProvider: conflictProvider, syncStatus: syncStatus,
-            revealPrompt: revealPrompt, revealLibrary: revealLibrary)
+            revealPrompt: revealPrompt, createPrompt: createPrompt, revealLibrary: revealLibrary)
         super.init(window: nil)
         connectImportChooser()
         presentation.onEditorChange = { [weak self] in self?.updateDialog() }
@@ -166,6 +167,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                 desired = .decision(decision, status: state.status, title: self.presentation.displayTitle, style: style)
             }
             else if let request = self.presentation.fileCommandRequest { desired = .fileCommand(request) }
+            else if let request = self.presentation.newPromptRequest { desired = .newPrompt(request) }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
             self.endDialog()
@@ -192,6 +194,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                         }
                     case (.fileCommand(let request), _):
                         self.presentation.resolveFileCommand(response, id: request.id)
+                    case (.newPrompt(let request), _):
+                        self.presentation.resolveNewPrompt(response, id: request.id)
                     default: break
                     }
                 }
@@ -273,7 +277,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             let title = isRevert && response == .decision(.discard) ? EditorStrings.revert : response.title
             let button = alert.addButton(withTitle: title)
             switch response {
-            case .decision(.save), .rename, .move:
+            case .decision(.save), .rename, .move, .createPrompt:
                 button.keyEquivalent = "\r"
             case .decision(.cancel), .dismissConflict, .cancelFileCommand:
                 button.keyEquivalent = "\u{1b}"
@@ -286,6 +290,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             button.hasDestructiveAction = response == .decision(.discard) || response == .conflict(.discard) || response == .delete
         }
         if case .fileCommand(let request) = dialog { configureFileCommandAlert(alert, request: request) }
+        if case .newPrompt = dialog { configureNewPromptAlert(alert) }
         // Removing the key equivalent alone must not leave AppKit's first
         // button as an implicit Return target for a destructive choice.
         switch dialog {
@@ -314,8 +319,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             switch dialog {
             case .decision: done(.decision(.cancel))
             case .conflict: done(.dismissConflict)
-            case .fileCommand: done(.cancelFileCommand)
+            case .fileCommand, .newPrompt: done(.cancelFileCommand)
             }
+        }
+        if case .newPrompt = dialog {
+            (alert.window.initialFirstResponder as? NSTextField)?.selectText(nil)
         }
         return {
             guard alert.window.sheetParent === window else { return }

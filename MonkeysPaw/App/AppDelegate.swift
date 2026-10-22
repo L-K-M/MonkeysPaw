@@ -844,7 +844,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     relativePath: RelativePath(entry.relativePath)))
                 return true
             })
-        imports.onAvailabilityChange = { [weak self] in self?.updateLibraryMenuItems() }
+        imports.onAvailabilityChange = { [weak self] in
+            guard isCurrent(), let self else { return }
+            // Toolbar command gates also depend on the nested chooser state.
+            self.libraryWindow?.presentation.objectWillChange.send()
+            self.updateLibraryMenuItems()
+        }
         var previousEditorStatus = editor.state.status
         editor.onChange = { [weak self, weak editor] in
             guard isCurrent(), let self, let editor else { return }
@@ -961,6 +966,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let self, (try? FileStorePath.validate(path.string)) != nil else { return }
                     self.revealLibraryURI(self.libraryDirectory.appendingPathComponent(path.string))
                 },
+                createPrompt: { [weak self] title, folder in self?.createPrompt(titled: title, in: folder) },
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
         updateLibraryMenuItems()
@@ -1186,17 +1192,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func createPrompt(titled title: String) {
-        guard pickerModel?.libraryAvailable == true, let library, let index else { return }
+        guard pickerModel?.libraryAvailable == true else { return }
+        guard let selection = createPrompt(titled: title, in: RelativePath("")) else {
+            pickerPresentation?.showStatus(Strings.createPromptFailed)
+            return
+        }
+        handle(.edit(identity: selection.identity, relativePath: selection.relativePath.string))
+    }
+
+    private func createPrompt(titled title: String, in folder: RelativePath) -> LibraryPromptSelection? {
+        guard pickerModel?.libraryAvailable == true, let library, let index else { return nil }
         do {
-            let entry = try library.createPrompt(titled: title, body: Strings.newPromptBody)
+            let entry = try library.createPrompt(titled: title, body: Strings.newPromptBody, in: folder)
             let path = entry.relativePath
             syncComposition?.sync.localSave()
             do { try index.apply(LibraryChangeSet(created: [RelativePath(path)]), origin: .local) }
             catch { log?.write(.warning, "Prompt saved; immediate index refresh failed") }
-            handle(.edit(identity: entry.identity, relativePath: path))
+            return LibraryPromptSelection(identity: entry.identity, relativePath: RelativePath(path))
         } catch {
-            pickerPresentation?.showStatus(Strings.createPromptFailed)
             log?.write(.warning, "Could not create a prompt; check library and app-data permissions")
+            return nil
         }
     }
 

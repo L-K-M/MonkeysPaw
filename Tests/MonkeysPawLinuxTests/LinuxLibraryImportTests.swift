@@ -199,8 +199,11 @@ final class LinuxLibraryImportTests: XCTestCase {
         let window = try openLibrary()
         try click("library-import", in: window)
         XCTAssertEqual(chooser.requests.last?.mode, .files)
+        XCTAssertEqual(gtk_widget_get_sensitive(try settingsWidget("library-new-prompt", in: window)), 0)
+        XCTAssertEqual(mp_test_emit_key_pressed(window, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
         chooser.requests.last?.done([folder, large, plain, prompty, invalid, dot, text])
         finishImport()
+        XCTAssertNotEqual(gtk_widget_get_sensitive(try settingsWidget("library-new-prompt", in: window)), 0)
         let state = environment.libraryImportState
         XCTAssertEqual(state.createdCount, 4)
         XCTAssertEqual(state.skippedCount, 4)

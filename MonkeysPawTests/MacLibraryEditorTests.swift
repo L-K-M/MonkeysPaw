@@ -88,7 +88,7 @@ final class MacLibraryEditorTests: XCTestCase {
 
     private func respond(_ response: LibraryEditorResponse) throws {
         let request = try dialog()
-        guard request.dialog.responses.contains(response) else {
+        guard request.dialog.accepts(response) else {
             XCTFail("Dialog offered \(request.dialog.responses), expected \(response)")
             return
         }
@@ -879,6 +879,146 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(presentation.editorMode, .edit)
         XCTAssertTrue(try window().isVisible)
         XCTAssertTrue(launched.isEmpty)
+    }
+
+    func testLibraryNewPromptInFolderOpensSelectedEditAndKeepsWindowFocus() throws {
+        try put("Original", at: "Folder/one.md")
+        start()
+        delegate.showLibrary()
+        let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
+        presentation.selectPath("Folder/one.md")
+        work.drain()
+        presentation.selectSection(.folder("Folder"))
+        presentation.setFilter("no matching prompt")
+        presentation.editorMode = .preview
+        let native = try window()
+        let focusRevision = presentation.focusRevision
+        let editorFocus = presentation.editorFocusRevision
+        XCTAssertTrue(presentation.canCreatePrompt)
+        presentation.requestNewPrompt()
+        guard case .newPrompt(let request) = try dialog().dialog else { return XCTFail("Expected title sheet") }
+        XCTAssertEqual(request.folder, "Folder")
+        XCTAssertEqual(try dialog().dialog.message, "Creates the prompt in Folder.")
+        XCTAssertFalse(presentation.canCreatePrompt)
+        try respond(.createPrompt("Title"))
+        work.drain()
+        let document = PromptCodec.parseFile(try files.read(at: "Folder/Title.md"), filename: "Title.md")
+        XCTAssertEqual(document.frontMatter.title, "Title")
+        XCTAssertEqual(document.body, Strings.newPromptBody)
+        XCTAssertNotNil(document.frontMatter.id)
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "Folder/Title.md")
+        XCTAssertEqual(presentation.snapshot.selection, presentation.editorState.prompt)
+        XCTAssertTrue(presentation.snapshot.rows.contains { $0.relativePath == "Folder/Title.md" })
+        XCTAssertEqual(presentation.snapshot.selectedSection, .folder("Folder"))
+        XCTAssertEqual(presentation.snapshot.filter, "")
+        XCTAssertEqual(presentation.editorMode, .edit)
+        XCTAssertEqual(presentation.focusRevision, focusRevision, "Creation never moves focus to Search")
+        XCTAssertGreaterThan(presentation.editorFocusRevision, editorFocus, "The new prompt's editor takes focus")
+        XCTAssertTrue(try window() === native)
+        XCTAssertTrue(native.isVisible)
+        XCTAssertTrue(launched.isEmpty)
+    }
+
+    func testLibraryNewPromptTitleCancelDoesNotAskGuardOrWrite() throws {
+        let presentation = try open()
+        presentation.edit("Draft")
+        let paths = try files.listFiles().map(\.relativePath).sorted()
+        presentation.requestNewPrompt()
+        XCTAssertNil(presentation.editorState.pendingDecision)
+        XCTAssertEqual(try dialog().dialog.message, "Creates the prompt in the library root.")
+        try respond(.cancelFileCommand)
+        work.drain()
+        XCTAssertNil(presentation.newPromptRequest)
+        XCTAssertNil(presentation.editorState.pendingDecision)
+        XCTAssertEqual(presentation.editorState.source, "Draft")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(try files.listFiles().map(\.relativePath).sorted(), paths)
+    }
+
+    func testLibraryNewPromptGuardCancelPreservesDirtyDraftAndWritesNothing() throws {
+        let presentation = try open()
+        presentation.edit("Draft")
+        presentation.requestNewPrompt()
+        XCTAssertNil(presentation.editorState.pendingDecision)
+        try respond(.createPrompt("Cancelled"))
+        XCTAssertEqual(presentation.editorState.pendingDecision?.action, .create)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        XCTAssertNil(try files.stamp(at: "Cancelled.md"))
+        try respond(.decision(.cancel))
+        work.drain()
+        XCTAssertNil(try files.stamp(at: "Cancelled.md"))
+        XCTAssertEqual(try body(), "Original")
+        XCTAssertEqual(presentation.editorState.source, "Draft")
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "one.md")
+    }
+
+    func testLibraryNewPromptSaveAndDiscardCompleteBeforeCreation() throws {
+        let presentation = try open()
+        for choice in [EditorDecision.save, .discard] {
+            let oldPath = try XCTUnwrap(presentation.editorState.prompt?.relativePath.string)
+            let before = try files.read(at: oldPath)
+            presentation.edit("Draft")
+            presentation.requestNewPrompt()
+            let title = choice == .save ? "After save" : "After discard"
+            try respond(.createPrompt(title))
+            XCTAssertEqual(presentation.editorState.pendingDecision?.action, .create)
+            try respond(.decision(choice))
+            work.drain()
+            if choice == .save { XCTAssertEqual(try body(at: oldPath), "Draft") }
+            else { XCTAssertEqual(try files.read(at: oldPath), before) }
+            XCTAssertEqual(presentation.editorState.prompt?.relativePath.string, title + ".md")
+            XCTAssertEqual(presentation.snapshot.selection, presentation.editorState.prompt)
+            XCTAssertEqual(presentation.editorMode, .edit)
+            XCTAssertFalse(presentation.editorState.isDirty)
+        }
+    }
+
+    func testLibraryNewPromptDefaultsCollisionExactTitleAndHiddenSectionReveal() throws {
+        let presentation = try open()
+        for (index, input) in ["", " \t\n", "  Exact/title  "].enumerated() {
+            presentation.selectSection(.favourites)
+            presentation.setFilter("hidden")
+            presentation.requestNewPrompt()
+            try respond(.createPrompt(input))
+            work.drain()
+            let path = ["New prompt.md", "New prompt 2.md", "Exact title.md"][index]
+            let document = PromptCodec.parseFile(try files.read(at: path), filename: path)
+            XCTAssertEqual(document.frontMatter.title, index < 2 ? LibraryStrings.newPromptDefaultTitle : input)
+            XCTAssertEqual(document.body, Strings.newPromptBody)
+            XCTAssertNotNil(document.frontMatter.id)
+            XCTAssertEqual(presentation.editorState.prompt?.relativePath.string, path)
+            XCTAssertEqual(presentation.snapshot.selection, presentation.editorState.prompt)
+            XCTAssertEqual(presentation.snapshot.selectedSection, .all)
+            XCTAssertEqual(presentation.snapshot.filter, "")
+        }
+    }
+
+    func testLibraryNewPromptDisabledDuringSaveLoadCommandAndUnavailableLibrary() throws {
+        let presentation = try open()
+        presentation.edit("Saved")
+        presentation.save()
+        XCTAssertEqual(presentation.editorState.status, .saving)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        presentation.requestNewPrompt()
+        XCTAssertNil(presentation.newPromptRequest)
+        work.drain()
+        presentation.revert()
+        XCTAssertEqual(presentation.editorState.status, .loading)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        work.drain()
+        presentation.requestFileCommand(.rename)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        let form = try XCTUnwrap(presentation.fileCommandRequest)
+        presentation.resolveFileCommand(.rename("renamed.md"), id: form.id)
+        XCTAssertEqual(presentation.editorState.status, .commandRunning)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        work.drain()
+        XCTAssertTrue(presentation.canCreatePrompt)
+        presentation.setLibraryAvailable(false)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        presentation.requestNewPrompt()
+        XCTAssertNil(presentation.newPromptRequest)
     }
 
     func testReadOnlySourcesCannotBeEditedOrSaved() throws {

@@ -17,7 +17,7 @@ final class LibraryViewState: ObservableObject {
     enum Direction { case up, down }
     enum EditorMode: Hashable { case edit, preview }
     enum InspectorPane: Hashable { case fields, history, assistant }
-    private enum OpenContext { case library, picker }
+    private enum OpenContext { case library, picker, creation }
     private struct ScopeDrop {
         let selection: LibraryPromptSelection
         let section: LibrarySectionID
@@ -40,6 +40,7 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var isInspectorVisible = false
     @Published private(set) var editorFocusRevision: UInt64 = 0
     @Published private(set) var fileCommandRequest: LibraryFileCommandRequest?
+    @Published private(set) var newPromptRequest: LibraryNewPromptRequest?
     @Published private(set) var commandMessage: String?
     @Published private(set) var assistant: LibraryAssistantViewState?
     @Published private(set) var assistantSaveMessage: String?
@@ -55,6 +56,7 @@ final class LibraryViewState: ObservableObject {
     private let mainThread: MainThread
     private let revealLibrary: () -> Void
     private let revealPromptAction: (RelativePath) -> Void
+    private let createPrompt: (String, RelativePath) -> LibraryPromptSelection?
     private var makeAssistant: AssistantFactory?
     private var conflictProvider: ConflictProvider?
     private let scheduler: MonkeysPawCore.Scheduler?
@@ -72,6 +74,7 @@ final class LibraryViewState: ObservableObject {
     private var scopeDrop: ScopeDrop?
     private var scopeDropRequest: UUID?
     private var scopeDropLoad: Progress?
+    private var focusAfterCreation: LibraryPromptSelection?
     private enum RevertToSaved { case none, requested, presented }
     private var revertToSaved = RevertToSaved.none
 
@@ -81,6 +84,7 @@ final class LibraryViewState: ObservableObject {
          conflictProvider: ConflictProvider? = nil,
          syncStatus: SyncStatusViewState? = nil,
          revealPrompt: @escaping (RelativePath) -> Void = { _ in },
+         createPrompt: @escaping (String, RelativePath) -> LibraryPromptSelection? = { _, _ in nil },
          revealLibrary: @escaping () -> Void) {
         self.model = model
         self.editor = editor
@@ -93,6 +97,7 @@ final class LibraryViewState: ObservableObject {
         self.mainThread = mainThread
         self.revealLibrary = revealLibrary
         self.revealPromptAction = revealPrompt
+        self.createPrompt = createPrompt
         self.makeAssistant = makeAssistant
         self.conflictProvider = conflictProvider
         self.syncStatus = syncStatus
@@ -255,8 +260,9 @@ final class LibraryViewState: ObservableObject {
 
     var canRunFileCommand: Bool {
         canRevert && editorState.canEdit && editorState.stamp != nil && !isScopeDropPending
-            && editorState.queuedActions.isEmpty
+            && editorState.queuedActions.isEmpty && newPromptRequest == nil
     }
+    var canCreatePrompt: Bool { scopeDragReady && !isScopeDropPending }
     var canLoadHistory: Bool {
         isActive && libraryAvailable && !isResolvingConflict && editorState.prompt != nil && editorState.status != .commandRunning
     }
@@ -305,8 +311,10 @@ final class LibraryViewState: ObservableObject {
         editorState = editor.state
         editorMode = .edit
         fileCommandRequest = nil
+        newPromptRequest = nil
         commandMessage = nil
         revertToSaved = .none
+        focusAfterCreation = nil
         copySelection = nil
         isClosingEditor = false
         lastClosedPromptPath = nil
@@ -335,6 +343,7 @@ final class LibraryViewState: ObservableObject {
         libraryAvailable = false
         favoriteOutcome = nil
         fileCommandRequest = nil
+        newPromptRequest = nil
         commandMessage = nil
         onEditorChange = nil
         onConflictRequested = nil
@@ -348,7 +357,7 @@ final class LibraryViewState: ObservableObject {
         imports?.setLibraryAvailable(available)
         assistant?.editorChanged(available: available && !isResolvingConflict)
         updateConflict()
-        if !available { fileCommandRequest = nil; retireScopeDrags() }
+        if !available { fileCommandRequest = nil; newPromptRequest = nil; retireScopeDrags() }
         if becameAvailable, isInspectorVisible && inspectorPane == .history { loadHistory() }
         onEditorChange?()
     }
@@ -365,6 +374,7 @@ final class LibraryViewState: ObservableObject {
 
     func didHide() {
         isPresented = false
+        newPromptRequest = nil
         syncStatus?.hide()
         retireScopeDrags()
         retireConflict()
@@ -421,8 +431,10 @@ final class LibraryViewState: ObservableObject {
                 self.model.setFilter("")
                 self.model.selectSection(.all)
             }
-            self.copySelection = nil
+            // Creation can finish before the browser receives its index update.
+            self.copySelection = context == .creation ? selection : nil
             self.model.selectPrompt(self.editor.state.prompt)
+            if self.model.selection == selection { self.copySelection = nil }
         }
     }
 
@@ -481,6 +493,49 @@ final class LibraryViewState: ObservableObject {
         }
         fileCommandRequest = LibraryFileCommandRequest(command: command, prompt: prompt, folders: folders)
         onEditorChange?()
+    }
+
+    func requestNewPrompt() {
+        guard canCreatePrompt, let folder = model.newPromptDestination() else { return }
+        commandMessage = nil
+        newPromptRequest = LibraryNewPromptRequest(folder: folder)
+        onEditorChange?()
+    }
+
+    func resolveNewPrompt(_ response: LibraryEditorResponse, id: UUID) {
+        guard let request = newPromptRequest, request.id == id,
+              LibraryEditorDialog.newPrompt(request).accepts(response) else { return }
+        newPromptRequest = nil
+        onEditorChange?()
+        guard case .createPrompt(let input) = response, canCreatePrompt else { return }
+        let title = input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? LibraryStrings.newPromptDefaultTitle : input
+        let revision = bindingRevision
+        // Ask for the title first; only an approved draft guard may write a file.
+        editor.request(.create) { [weak self] result in
+            // A close, open or hide during the guard's save supersedes creation.
+            guard let self, self.isActive, self.bindingRevision == revision,
+                  result == .allowed, self.canCreatePrompt else { return }
+            guard let selection = self.createPrompt(title, request.folder) else {
+                // Match commandCompletion's ordering after editor publications.
+                self.mainThread.run { [weak self] in
+                    guard let self, self.isActive, self.bindingRevision == revision else { return }
+                    self.commandMessage = Strings.createPromptFailed
+                }
+                return
+            }
+            self.editorMode = .edit
+            self.model.setFilter("")
+            if self.model.selectedSection != .all,
+               self.model.moveDestination(for: self.model.selectedSection) != request.folder {
+                self.model.selectSection(.all)
+            }
+            // Stay in this window and start typing in the new prompt once it
+            // loads, as a new note does in Notes. The picker path shows the
+            // window and focuses search instead.
+            self.focusAfterCreation = selection
+            self.select(selection, context: .creation)
+        }
     }
 
     func resolveFileCommand(_ response: LibraryEditorResponse, id: UUID) {
@@ -603,6 +658,11 @@ final class LibraryViewState: ObservableObject {
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
                 self.updateRevertToSaved(state)
+                if let created = self.focusAfterCreation, state.prompt?.relativePath == created.relativePath,
+                   state.status != .loading, state.source != nil {
+                    self.focusAfterCreation = nil
+                    self.focusEditor()
+                }
                 self.updateConflict()
                 self.updateAssistantSession()
                 if let request = self.fileCommandRequest,
@@ -635,7 +695,7 @@ final class LibraryViewState: ObservableObject {
     private var scopeDragReady: Bool {
         let state = editor.state
         return isActive && isPresented && libraryAvailable && !isClosingEditor && !isResolvingConflict
-            && fileCommandRequest == nil && imports?.isChoosing != true
+            && fileCommandRequest == nil && newPromptRequest == nil && imports?.isChoosing != true
             && state.pendingDecision == nil && state.conflict == nil && state.queuedActions.isEmpty
             && state.status != .loading && state.status != .saving && state.status != .commandRunning
     }

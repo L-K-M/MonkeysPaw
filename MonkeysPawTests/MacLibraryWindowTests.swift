@@ -405,7 +405,12 @@ final class MacLibraryWindowTests: XCTestCase {
             replacementRange: NSRange(location: NSNotFound, length: 0))
         XCTAssertTrue(input.hasMarkedText())
         XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        let newPrompt = NSMenuItem(title: LibraryCommandStrings.newPrompt,
+            action: #selector(LibraryWindowController.newDocument(_:)), keyEquivalent: "n")
+        XCTAssertFalse(controller.validateLibraryMenuItem(newPrompt, in: window))
         controller.toggleFavorite(nil)
+        controller.newDocument(nil)
+        XCTAssertNil(presentation.newPromptRequest, "Marked text keeps New Prompt from opening its sheet")
         XCTAssertEqual(presentation.snapshot.selectedPrompt?.favorite, false)
         input.unmarkText()
         XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
@@ -464,7 +469,7 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertTrue(controller.validateLibraryMenuItem(toolbarCommand, in: window))
         XCTAssertEqual(toolbarCommand.title, "Hide Toolbar")
         XCTAssertEqual(controller.toolbarDefaultItemIdentifiers(toolbar), [.toggleSidebar, .sidebarTrackingSeparator,
-            .flexibleSpace, .libraryListSeparator, .libraryEditorMode, .flexibleSpace, .libraryFavorite,
+            .flexibleSpace, .libraryNewPrompt, .libraryListSeparator, .libraryEditorMode, .flexibleSpace, .libraryFavorite,
             .libraryAssistant, .librarySearch, .inspectorTrackingSeparator, .toggleInspector])
         for id in [NSToolbarItem.Identifier.libraryReveal, .libraryImport, .libraryDelete, .space] {
             XCTAssertTrue(controller.toolbarAllowedItemIdentifiers(toolbar).contains(id))
@@ -665,6 +670,59 @@ final class MacLibraryWindowTests: XCTestCase {
         let search = try XCTUnwrap(controller.searchItem?.searchField)
         let responder = try window().firstResponder
         XCTAssertTrue(responder === search.currentEditor() || responder === search)
+    }
+
+    func testNewPromptCommandUsesSharedGateAndRefusesOtherWindowsAndDialogs() throws {
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let presentation = try presentation()
+        let window = try window()
+        let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        defer { other.close() }
+        let item = NSMenuItem(title: LibraryCommandStrings.newPrompt,
+            action: #selector(LibraryWindowController.newDocument(_:)), keyEquivalent: "n")
+        XCTAssertTrue(presentation.canCreatePrompt, "An empty library can create its first prompt")
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: other))
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        controller.newDocument(nil)
+        let request = try XCTUnwrap(presentation.newPromptRequest)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        controller.newDocument(nil)
+        XCTAssertEqual(presentation.newPromptRequest?.id, request.id)
+        presentation.resolveNewPrompt(.cancelFileCommand, id: request.id)
+        XCTAssertTrue(presentation.canCreatePrompt)
+        presentation.setLibraryAvailable(false)
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+        controller.newDocument(nil)
+        XCTAssertNil(presentation.newPromptRequest)
+        presentation.setLibraryAvailable(true)
+        presentation.didHide()
+        XCTAssertFalse(presentation.canCreatePrompt)
+    }
+
+    func testImportChooserPublishesNewPromptToolbarGateChanges() throws {
+        try start()
+        delegate.showLibrary()
+        let presentation = try presentation()
+        let imports = try XCTUnwrap(presentation.imports)
+        var finishChoosing: (([URL]) -> Void)?
+        imports.onChoose = { done in finishChoosing = done; return {} }
+        var publications = 0
+        let subscription = presentation.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+        XCTAssertTrue(presentation.canCreatePrompt)
+        imports.choose()
+        XCTAssertGreaterThan(publications, 0)
+        XCTAssertFalse(presentation.canCreatePrompt)
+        presentation.requestNewPrompt()
+        XCTAssertNil(presentation.newPromptRequest)
+        let choosingPublications = publications
+        try XCTUnwrap(finishChoosing)([])
+        XCTAssertGreaterThan(publications, choosingPublications)
+        XCTAssertTrue(presentation.canCreatePrompt)
     }
 
     func testLibrarySwitchRebindsExistingWindowAndRetiresOldBrowserAndCallbacks() throws {

@@ -4,6 +4,7 @@ import MonkeysPawCore
 /// Chrome strings introduced by the native split-view Library redesign.
 /// Existing copy stays in the feature Strings files it was shared with.
 enum LibraryNativeStrings {
+    static let newPromptToolbar = "New Prompt"
     static let noFields = "No Fields"
     static let noPromptSelected = "No Prompt Selected"
     static let compare = "Compare"

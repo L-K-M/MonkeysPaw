@@ -425,6 +425,17 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   including for viewers and dirty open editors. The toggle never edits their
   source, mode or history; sidebar counts and picker ranking refresh from the
   same effective value. Private-scope favourites keep the file-key behavior.
+- **New prompt.** The toolbar's New Prompt item and ⌘/Ctrl+N (also File →
+  New Prompt… on macOS) ask for a title, initially selected as `New prompt`.
+  The dialog names the destination captured from the sidebar: the selected
+  folder or editable group's `Groups/<folder>`, otherwise the library root,
+  including for viewer groups. Create keeps the exact title, using
+  `New prompt` for blank input, then asks Save/Don't Save/Cancel for an open
+  dirty draft before writing. Cancelling either dialog writes nothing.
+  Creation uses the usual exclusive filename and collision suffix rules,
+  clears the filter, and opens Edit in the same window with the new prompt
+  selected and the editor focused; keep the containing sidebar section,
+  otherwise select All.
 - **Edit · Preview · Fields · History.** Edit and Preview are the editor's
   modes; Fields, History and the Assistant are inspector panes (§24.3).
   Edit shows the raw file, front matter and body, with live validation from the same codec and validator as
@@ -463,8 +474,8 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   created copy before verification, the editor reports a copy failure and
   keeps the original session, draft, conflict and pending decision. The app
   never merges.
-- **Unsaved edits.** Changing selection, closing the window, renaming,
-  moving, deleting, reverting, or quitting asks Save /
+- **Unsaved edits.** Creating a new prompt, changing selection, closing the
+  window, renaming, moving, deleting, reverting, or quitting asks Save /
   Discard / Cancel. Core's `EditorModel` publishes a tokenized pending
   decision for these discard requests; the view resolves it, and file-command
   callers proceed only after an allowed result through `MainThread`.

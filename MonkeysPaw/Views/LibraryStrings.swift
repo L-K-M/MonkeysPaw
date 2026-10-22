@@ -14,6 +14,7 @@ enum LibraryStrings {
     static let invalid = "Invalid"
     static let noSelection = "Select a prompt to edit it."
     static let noRows = "No prompts in this view."
+    static let newPromptDefaultTitle = "New prompt"
     static let addFavorite = "Add to Favourites"
     static let removeFavorite = "Remove from Favourites"
 

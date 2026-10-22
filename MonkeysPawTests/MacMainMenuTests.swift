@@ -94,10 +94,11 @@ final class MacMainMenuTests: XCTestCase {
 
     func testFileMenuItemsCarryLibraryDocumentActions() throws {
         let menu = try submenu(MainMenu.make(), MainMenuStrings.file)
-        XCTAssertEqual(titles(menu), [MainMenuStrings.importPrompts, "-", MainMenuStrings.close,
+        XCTAssertEqual(titles(menu), [MainMenuStrings.newPrompt, MainMenuStrings.importPrompts, "-", MainMenuStrings.close,
             MainMenuStrings.save, MainMenuStrings.duplicate, MainMenuStrings.rename,
             MainMenuStrings.moveTo, MainMenuStrings.revertToSaved, "-",
             MainMenuStrings.showInFinder, "-", MainMenuStrings.deletePrompt])
+        try check(row(menu, MainMenuStrings.newPrompt), action: "newDocument:", key: "n", modifiers: .command)
         try check(row(menu, MainMenuStrings.importPrompts), action: "importFromMenu",
                   key: "i", modifiers: [.command, .shift])
         try check(row(menu, MainMenuStrings.close), action: "performClose:", key: "w", modifiers: .command)
