@@ -131,7 +131,7 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
         return validateMenuItem(menuItem)
     }
 
-    @objc func filterSearch(_ sender: NSSearchField) { presentation.setFilter(sender.stringValue) }
+    @objc func filterSearch(_ sender: NSSearchField) { publishSearch(sender) }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard let field = control as? NSSearchField, field === searchItem?.searchField,

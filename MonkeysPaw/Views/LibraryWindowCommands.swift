@@ -181,12 +181,18 @@ extension LibraryWindowController: NSMenuItemValidation {
     }
     @objc func searchLibrary(_ sender: Any?) {
         guard commandsAvailable(in: window), presentation.canFocusFilter, let toolbar = window?.toolbar else { return }
-        if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
-        toolbar.isVisible = true
-        // A model publication may still be waiting for its native-control update.
-        if let field = searchItem?.searchField { field.stringValue = presentation.snapshot.filter }
-        searchItem?.beginSearchInteraction()
-        if let field = searchItem?.searchField { window?.makeFirstResponder(field) }
+        synchronizeSearch {
+            let query = presentation.snapshot.filter
+            if searchItem == nil { toolbar.insertItem(withItemIdentifier: .librarySearch, at: toolbar.items.count) }
+            toolbar.isVisible = true
+            if let field = searchItem?.searchField { field.stringValue = query }
+            searchItem?.beginSearchInteraction()
+            // Beginning interaction can recreate the native field editor.
+            if let field = searchItem?.searchField {
+                field.stringValue = query
+                window?.makeFirstResponder(field)
+            }
+        }
     }
 
     // A menu action reaches the controller only when no focused text view

@@ -687,6 +687,10 @@ final class MacLibraryWindowTests: XCTestCase {
         search.stringValue = ""
         search.delegate?.searchFieldDidEndSearching?(search)
         XCTAssertEqual(controller.presentation.snapshot.filter, "Kept")
+        controller.synchronizeSearch {
+            search.sendAction(search.action, to: search.target)
+        }
+        XCTAssertEqual(controller.presentation.snapshot.filter, "Kept", "Presentation actions are not query edits")
         controller.refreshWindowPresentation()
         XCTAssertEqual(search.stringValue, "Kept")
         search.stringValue = ""

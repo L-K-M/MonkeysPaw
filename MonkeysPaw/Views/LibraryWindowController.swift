@@ -24,6 +24,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private var presentationObservation: AnyCancellable?
     private var presentationUpdatePending = false
     private var appliedSearchFocusRevision: UInt64 = 0
+    private var searchPresentationDepth = 0
     var searchItem: NSSearchToolbarItem? {
         window?.toolbar?.items.first { $0.itemIdentifier == .librarySearch } as? NSSearchToolbarItem
     }
@@ -93,6 +94,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     func show() {
         mainThread.run { [weak self] in
             guard let self, !self.isTornDown else { return }
+            self.searchPresentationDepth += 1
+            defer { self.searchPresentationDepth -= 1 }
             self.presentation.didShow()
             let window = self.window ?? self.makeWindow()
             self.window = window
@@ -234,6 +237,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     func refreshWindowPresentation() {
         guard !isTornDown, let window else { return }
+        searchPresentationDepth += 1
+        defer { searchPresentationDepth -= 1 }
         let state = presentation.editorState
         if let prompt = state.prompt {
             window.title = presentation.displayTitle
@@ -263,6 +268,20 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             appliedSearchFocusRevision = presentation.focusRevision
             if searchItem != nil, window.toolbar?.isVisible == true { searchLibrary(nil) }
         }
+    }
+
+    /// Native toolbar transitions can emit search actions while rebuilding the
+    /// field editor. Those events must not overwrite the model's retained query.
+    func synchronizeSearch(_ update: () -> Void) {
+        searchPresentationDepth += 1
+        defer { searchPresentationDepth -= 1 }
+        update()
+    }
+
+    func publishSearch(_ field: NSSearchField) {
+        guard searchPresentationDepth == 0, presentation.canFocusFilter,
+              field === searchItem?.searchField else { return }
+        presentation.setFilter(field.stringValue)
     }
 
     static func makeEditorAlert(for dialog: LibraryEditorDialog) -> NSAlert {
