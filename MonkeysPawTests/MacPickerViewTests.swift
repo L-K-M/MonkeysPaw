@@ -113,11 +113,16 @@ final class MacPickerViewTests: XCTestCase {
             XCTAssertTrue(spin { self.controller.isActiveAndVisible })
             let before = clipboard.writes.count
             try pressPickerAction(identifier)
-            // Without paste backends both footer actions end with the text on
-            // the clipboard and the picker closed.
-            XCTAssertTrue(spin { picker.state == .closed && clipboard.writes.count > before },
+            // Delivery retains its outcome after hiding the panel.
+            XCTAssertTrue(spin {
+                guard case .done(.copiedOnly(_)) = picker.state else { return false }
+                return !self.controller.isVisible && clipboard.writes.count > before
+            },
                 "\(identifier): state=\(picker.state) writes=\(clipboard.writes.count - before)")
             XCTAssertEqual(clipboard.writes.last, "Footer delivery")
+            if identifier == "picker-copy" {
+                XCTAssertEqual(picker.state, .done(.copiedOnly(.requested)))
+            }
         }
     }
 
