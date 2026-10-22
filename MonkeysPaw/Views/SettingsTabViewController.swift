@@ -61,7 +61,7 @@ final class SettingsTabViewController: NSTabViewController {
             let content = NSHostingController(rootView: SettingsView(presentation: presentation, pane: pane))
             content.sizingOptions = []
             content.title = pane.title
-            content.preferredContentSize = pane.contentSize
+            // The window owns sizing; child preferences start a second native resize.
             let item = NSTabViewItem(viewController: content)
             item.label = pane.title
             item.image = NSImage(systemSymbolName: pane.symbol, accessibilityDescription: pane.title)
