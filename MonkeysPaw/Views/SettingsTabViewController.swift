@@ -132,6 +132,14 @@ final class SettingsTabViewController: NSTabViewController {
             frame.origin.x = min(max(frame.minX, visible.minX), visible.maxX - frame.width)
             frame.origin.y = min(max(frame.minY, visible.minY), visible.maxY - frame.height)
         }
+
+        // AppKit's deferred tab resize must use the same bounded geometry.
+        let preferred = window.contentRect(forFrameRect: frame).size
+        if let child = tabViewItems[pane.rawValue].viewController, child.preferredContentSize != preferred {
+            child.preferredContentSize = preferred
+        }
+        if preferredContentSize != preferred { preferredContentSize = preferred }
+
         guard frame != window.frame else { return }
         window.setFrame(frame, display: true,
             animate: window.isVisible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
