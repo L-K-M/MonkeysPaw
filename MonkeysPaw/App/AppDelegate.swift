@@ -414,6 +414,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showSetup()
             return false
         }
+        // A Dock click resumes visible windows through AppKit, without opening
+        // a picker over the Library or Settings and taking keyboard focus.
+        if flag { return true }
         // A minimized Library or Settings keeps the Dock icon; clicking it
         // brings that window back, as in any Mac app.
         if !flag, libraryWindow?.window?.isMiniaturized == true {

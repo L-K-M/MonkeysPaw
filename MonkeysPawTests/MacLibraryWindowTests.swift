@@ -570,6 +570,30 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(revealed, [root.appendingPathComponent("folder/one.md")])
     }
 
+    func testInspectorAtMinimumWidthKeepsTheWindowFrameAndRestoresTheSidebar() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let window = try window()
+        controller.presentation.selectPath("one.md")
+        let sidebar = try XCTUnwrap(controller.splitController?.splitViewItems.first)
+        sidebar.isCollapsed = false
+        window.setContentSize(NSSize(width: 820, height: 480))
+        let frame = window.frame
+        controller.presentation.showInspector(.fields)
+        controller.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertEqual(window.frame, frame, "Opening an inspector must not widen a compact window")
+        XCTAssertFalse(try XCTUnwrap(controller.inspectorItem).isCollapsed)
+        XCTAssertTrue(sidebar.isCollapsed, "The sidebar yields space to the selected-content inspector")
+        controller.presentation.setInspectorVisible(false)
+        controller.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertEqual(window.frame, frame)
+        XCTAssertFalse(sidebar.isCollapsed, "Closing the inspector restores the previous navigation layout")
+    }
+
     func testDetailsCommandPreservesTheDraftAndReturnsToEdit() throws {
         let source = "---\ntitle: Note\ndescription: Summary\n---\nBody"
         try put(source, at: "one.md")

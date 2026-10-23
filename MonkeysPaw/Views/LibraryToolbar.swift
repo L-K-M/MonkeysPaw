@@ -148,12 +148,31 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard let field = control as? NSSearchField, field === searchItem?.searchField,
-              field.currentEditor() === textView, window?.firstResponder === textView,
-              commandSelector == #selector(NSResponder.cancelOperation(_:)), !textView.hasMarkedText() else { return false }
-        // Consume the clear once; a second Escape can end native search editing.
-        if textView.string.isEmpty { searchItem?.endSearchInteraction() }
-        else { clearSearch(field) }
-        return true
+               field.currentEditor() === textView, window?.firstResponder === textView,
+               !textView.hasMarkedText() else { return false }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            // Consume the clear once; a second Escape ends native search editing.
+            if textView.string.isEmpty { searchItem?.endSearchInteraction() }
+            else { clearSearch(field) }
+            return true
+        }
+        guard commandsAvailable(in: window), presentation.canFocusFilter else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.moveDown(_:)), #selector(NSResponder.moveUp(_:)):
+            presentation.moveSelection(commandSelector == #selector(NSResponder.moveDown(_:)) ? .down : .up)
+            if let table = promptList?.tableView, table.selectedRow >= 0 { table.scrollRowToVisible(table.selectedRow) }
+            return true
+        case #selector(NSResponder.insertNewline(_:)):
+            if !presentation.snapshot.rows.contains(where: { $0.selection == presentation.snapshot.selection }) {
+                presentation.moveSelection(.down)
+            }
+            guard presentation.snapshot.rows.contains(where: { $0.selection == presentation.editorState.prompt }),
+                  presentation.editorState.pendingDecision == nil else { return true }
+            window?.makeFirstResponder(nil)
+            presentation.focusEditor()
+            return true
+        default: return false
+        }
     }
 
     func controlTextDidChange(_ notification: Notification) {

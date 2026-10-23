@@ -77,6 +77,12 @@ struct LibraryPromptForm: View {
                 label: LibraryFormStrings.title, identifier: "library-prompt-title",
                 wantsFocus: false, focusRevision: 0,
                 onChange: { presentation.edit(.title($0)) })
+            if presentation.editorState.isPrivate {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.secondary)
+                    .help(LibraryFormStrings.privacyHint)
+                    .accessibilityLabel(LibraryFormStrings.isPrivate)
+            }
             Button { presentation.toggleDetails() } label: {
                 Label(LibraryFormStrings.details,
                     systemImage: presentation.isDetailsVisible ? "chevron.up" : "chevron.down")
