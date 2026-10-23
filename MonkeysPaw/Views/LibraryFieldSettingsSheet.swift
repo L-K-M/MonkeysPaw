@@ -70,6 +70,11 @@ final class LibraryFieldSettingsDraft: ObservableObject, Identifiable {
     var issue: PromptFieldSettingsIssue? { staged.validationIssue }
     var issueMessage: String? { issue.map(LibraryFieldStrings.issue) }
 
+    func removeOption(at index: Int) {
+        guard settings.options.indices.contains(index) else { return }
+        settings.options.remove(at: index)
+    }
+
     func isStale(prompt: LibraryPromptSelection?, source: String?, sourceRevision: UInt64) -> Bool {
         self.prompt != prompt || self.sourceRevision != sourceRevision
             || !Self.sameSource(self.source, source)
@@ -200,7 +205,7 @@ struct LibraryFieldSettingsSheet: View {
             TextField(LibraryFieldStrings.choiceValue, text: choiceBinding(index, \.value), axis: .vertical)
                 .lineLimit(1...4)
                 .accessibilityIdentifier("library-field-choice-value-\(index)")
-            Button { draft.settings.options.remove(at: index) } label: {
+            Button { draft.removeOption(at: index) } label: {
                 Image(systemName: "minus.circle.fill")
             }
             .buttonStyle(.borderless)
@@ -209,7 +214,7 @@ struct LibraryFieldSettingsSheet: View {
         }
     }
 
-    private func choiceBinding(_ index: Int,
+    func choiceBinding(_ index: Int,
                                _ key: WritableKeyPath<PromptFieldOptionSettings, String>) -> Binding<String> {
         Binding(
             get: { draft.settings.options.indices.contains(index) ? draft.settings.options[index][keyPath: key] : "" },

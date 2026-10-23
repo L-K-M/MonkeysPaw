@@ -1211,6 +1211,21 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(Data(try XCTUnwrap(presentation.editorState.fields.first?.description).utf8), Data("e\u{301}".utf8))
     }
 
+    func testChoiceBindingsKeepTheirOptionAfterAnEarlierRowIsRemoved() throws {
+        let presentation = try open("---\nfields:\n  tone: {type: choice, options: [A, B, C]}\n---\n{{tone}}")
+        presentation.requestFieldSettings(try XCTUnwrap(presentation.editorState.form?.fieldSettings.first))
+        let draft = try XCTUnwrap(presentation.fieldSettingsDraft)
+        let sheet = LibraryFieldSettingsSheet(draft: draft, onCancel: {}, onApply: {})
+        let bindingB = sheet.choiceBinding(1, \.label)
+        let removedBinding = sheet.choiceBinding(0, \.label)
+        draft.removeOption(at: 0)
+        bindingB.wrappedValue = "Edited B"
+        XCTAssertEqual(draft.staged.options.map(\.label), ["Edited B", "C"])
+        XCTAssertEqual(draft.staged.options.map(\.value), ["B", "C"])
+        removedBinding.wrappedValue = "Late edit to removed A"
+        XCTAssertEqual(draft.staged.options.map(\.label), ["Edited B", "C"])
+    }
+
     func testFieldSettingsCancelAndUnchangedApplyWriteNothing() throws {
         let source = "---\nfields:\n  tone: {default: brief}\n---\n{{tone}} {{implicit}}"
         let presentation = try open(source)
