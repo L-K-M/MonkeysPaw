@@ -67,6 +67,7 @@ struct LibraryPromptForm: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .disabled(!isVisible)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library-prompt-form")
         .onChange(of: presentation.sourceRevision) { _ in newTag = "" }
     }

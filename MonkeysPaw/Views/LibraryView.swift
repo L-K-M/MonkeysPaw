@@ -249,6 +249,7 @@ struct LibraryEditorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library-editor")
         .onChange(of: presentation.editorState.prompt) { _ in showsIssues = false }
         .sheet(item: $presentation.fieldSettingsDraft) { draft in

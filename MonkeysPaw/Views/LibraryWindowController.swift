@@ -4,6 +4,7 @@ import MonkeysPawCore
 import SwiftUI
 
 final class LibraryWindowController: NSWindowController, NSWindowDelegate {
+    private static let automaticSidebarKey = "LibrarySidebarCollapsedForInspector"
     typealias DialogPresenter = (NSWindow, LibraryEditorDialog, @escaping (LibraryEditorResponse) -> Void) -> (() -> Void)
     typealias ImportChooser = (NSWindow, @escaping ([URL]) -> Void) -> (() -> Void)
     let presentation: LibraryViewState
@@ -22,7 +23,13 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private(set) var inspectorItem: NSSplitViewItem?
     private var inspectorObservation: NSKeyValueObservation?
     private var sidebarObservation: NSKeyValueObservation?
-    private var restoresSidebarAfterInspector = false
+    private var restoresSidebarAfterInspector = false {
+        didSet {
+            // Native split autosave includes temporary collapses. Keep their
+            // origin so reopening never mistakes them for your sidebar choice.
+            UserDefaults.standard.set(restoresSidebarAfterInspector, forKey: Self.automaticSidebarKey)
+        }
+    }
     private var isAdaptingColumns = false
     private var presentationObservation: AnyCancellable?
     private var filterObservation: AnyCancellable?
@@ -461,6 +468,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func makeWindow() -> NSWindow {
+        let wasAutomaticallyCollapsed = UserDefaults.standard.bool(forKey: Self.automaticSidebarKey)
         let window = LibraryWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 680),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false)
@@ -537,6 +545,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         window.toolbar = makeToolbar()
         if !window.setFrameUsingName("Library") { window.center() }
         window.setFrameAutosaveName("Library")
+        window.contentView?.layoutSubtreeIfNeeded()
+        restoresSidebarAfterInspector = restoresSidebarAfterInspector || wasAutomaticallyCollapsed
         return window
     }
 }
