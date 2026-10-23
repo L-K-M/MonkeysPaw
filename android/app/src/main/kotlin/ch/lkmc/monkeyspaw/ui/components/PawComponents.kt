@@ -29,6 +29,7 @@ import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 
 internal enum class PawScreenStyle { STANDARD, OVERVIEW }
+internal enum class PawContentDensity { COMFORTABLE, COMPACT }
 
 /** Activity insets are consumed by the host; nested app bars add no second inset. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -114,7 +115,17 @@ internal fun PawSectionHeading(title: String, supportingText: String? = null, mo
 }
 
 @Composable
-internal fun PawLoading(label: String, modifier: Modifier = Modifier) {
+internal fun PawLoading(label: String, modifier: Modifier = Modifier,
+    density: PawContentDensity = PawContentDensity.COMFORTABLE) {
+    if (density == PawContentDensity.COMPACT) {
+        Row(modifier.fillMaxWidth().padding(PawSpacing.large).semantics { liveRegion = LiveRegionMode.Polite },
+            horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f))
+        }
+        return
+    }
     Column(modifier.fillMaxWidth().padding(PawSpacing.page).semantics { liveRegion = LiveRegionMode.Polite },
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PawSpacing.large)) {
         CircularProgressIndicator(Modifier.size(32.dp), strokeWidth = 3.dp)
@@ -126,7 +137,20 @@ internal fun PawLoading(label: String, modifier: Modifier = Modifier) {
 internal fun PawEmptyState(
     title: String, body: String, icon: ImageVector, modifier: Modifier = Modifier,
     actionLabel: String? = null, onAction: (() -> Unit)? = null,
+    density: PawContentDensity = PawContentDensity.COMFORTABLE,
 ) {
+    if (density == PawContentDensity.COMPACT) {
+        Column(modifier.fillMaxWidth().padding(PawSpacing.large), verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).semantics { heading() })
+            }
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (actionLabel != null && onAction != null) TextButton(onClick = onAction,
+                modifier = Modifier.align(Alignment.End).heightIn(min = PawLayout.touchTarget)) { Text(actionLabel) }
+        }
+        return
+    }
     Column(modifier.fillMaxWidth().padding(horizontal = PawSpacing.section, vertical = PawSpacing.page),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
         Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.secondaryContainer) {

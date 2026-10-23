@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Refresh
@@ -50,6 +51,8 @@ internal fun ImeScreen(
 ) {
     val configuration = LocalConfiguration.current
     val height = imePickerHeight(configuration.screenWidthDp, configuration.screenHeightDp, LocalDensity.current.fontScale).dp
+    val activeFill = fill?.takeIf { !state.password && !state.inFillActivity &&
+        it.phase != FillPhase.PICKING && it.phase != FillPhase.CLOSED }
     val notices = listOfNotNull(
         stringResource(R.string.ime_switch_unavailable).takeIf { state.switchUnavailable },
         stringResource(R.string.ime_handoff_failed).takeIf { state.handoffFailed },
@@ -60,7 +63,14 @@ internal fun ImeScreen(
         Column(Modifier.fillMaxWidth().height(height).navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.medium, vertical = PawSpacing.xs),
                 horizontalArrangement = Arrangement.spacedBy(PawSpacing.small), verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.ime_picker_title), style = MaterialTheme.typography.titleMedium,
+                activeFill?.let { form ->
+                    IconButton(onClick = onCancel, enabled = form.cancelEnabled) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(
+                            if (form.phase == FillPhase.DELIVERED) R.string.fill_done else R.string.ime_back_to_prompts))
+                    }
+                }
+                Text(activeFill?.title?.ifEmpty { stringResource(R.string.fill_title) }
+                    ?: stringResource(R.string.ime_picker_title), style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!state.password && !state.inFillActivity && library != null && (fill == null || fill.phase == FillPhase.PICKING)) {
                     IconButton(onClick = onRefresh, enabled = !library.refreshing) { Icon(Icons.Rounded.Refresh, stringResource(R.string.library_refresh)) }
@@ -70,7 +80,7 @@ internal fun ImeScreen(
                         Icon(Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.fill_in_app))
                     }
                 }
-                FilledIconButton(onClick = onSwitch) { Icon(Icons.Rounded.Language, stringResource(R.string.ime_switch_keyboard)) }
+                FilledTonalIconButton(onClick = onSwitch) { Icon(Icons.Rounded.Language, stringResource(R.string.ime_switch_keyboard)) }
             }
             if (state.password) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(PawSpacing.large),
@@ -93,7 +103,7 @@ internal fun ImeScreen(
                 LibraryScreen(library, onQuery, onFilter, onSelect, {}, onClearFilters, onRefresh,
                     Modifier.weight(1f), onOpen = onOpen, mode = LibraryMode.IME_PICKER,
                     notice = notices.takeIf { it.isNotEmpty() }?.joinToString("\n"))
-            } else PawLoading(stringResource(R.string.library_loading), Modifier.weight(1f))
+            } else PawLoading(stringResource(R.string.library_loading), Modifier.weight(1f), PawContentDensity.COMPACT)
         }
     }
 }

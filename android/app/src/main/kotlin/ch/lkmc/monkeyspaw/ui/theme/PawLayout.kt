@@ -17,6 +17,7 @@ internal object PawLayout {
     val pageGutter = 24.dp
     val iconWell = 40.dp
     val connectedGap = 2.dp
+    val filterLabelWidth = 200.dp
     val expandedBreakpoint = 840.dp
     val navigationWidth = 240.dp
     val readingWidth = 840.dp

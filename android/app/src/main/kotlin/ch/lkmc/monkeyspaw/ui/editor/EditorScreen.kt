@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
@@ -112,219 +114,220 @@ internal fun EditorScreen(
             }
         }
     }) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PawLayout.contentPadding,
-            verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
-                    state.relativePath?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    state.group?.let {
-                        Text(stringResource(R.string.library_group_role, it.name, it.role.wireValue),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (state.dirty) {
-                        Text(stringResource(R.string.editor_unsaved), style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.tertiary)
-                    }
+        Column(Modifier.fillMaxSize()) {
+            SecondaryScrollableTabRow(selectedTabIndex = state.tab.ordinal, modifier = Modifier.fillMaxWidth(),
+                edgePadding = PawSpacing.large) {
+                for (tab in EditorTab.entries) {
+                    Tab(selected = state.tab == tab, onClick = { onTab(tab) },
+                        text = { Text(stringResource(tabString(tab))) })
                 }
             }
-            if (state.writing || state.status == EditorStatus.LOADING) {
-                item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            }
-            state.readOnlyReason?.let { reason -> item {
-                PawMessage(stringResource(when (reason) {
-                    SourceReadOnlyReason.GROUP_VIEWER -> R.string.editor_group_viewer
-                    SourceReadOnlyReason.GROUP_UNAVAILABLE -> R.string.editor_group_unavailable
-                    else -> R.string.editor_read_only
-                }), tone = if (reason == SourceReadOnlyReason.GROUP_UNAVAILABLE) PawMessageTone.WARNING
-                    else PawMessageTone.INFO)
-            } }
-            if (state.isNew) item {
-                OutlinedTextField(value = state.relativePath.orEmpty(), onValueChange = onNewPath,
-                    label = { Text(stringResource(R.string.editor_path)) }, singleLine = true,
-                    enabled = !state.writing, modifier = Modifier.fillMaxWidth())
-            }
-            state.failure?.let { failure -> item {
-                Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-                    PawMessage(stringResource(failureString(failure)), tone = PawMessageTone.ERROR)
-                    for (issue in state.saveIssues.filterNot { state.tab == EditorTab.EDIT && it in state.issues }) {
-                        Text(issue.message, color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (!state.isNew) TextButton(onClick = onReload, enabled = !state.writing,
-                        modifier = Modifier.align(Alignment.End)) {
-                        Text(stringResource(R.string.editor_reload))
-                    }
-                }
-            } }
-            if (state.conflict?.presentation == EditorConflictPresentation.BANNER) item {
-                Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-                    PawMessage(stringResource(R.string.editor_conflict_help), tone = PawMessageTone.WARNING)
-                    TextButton(onClick = { onConflict(EditorConflictChoice.REVIEW) }, enabled = !state.writing,
-                        modifier = Modifier.align(Alignment.End)) {
-                        Text(stringResource(R.string.editor_review_conflict))
-                    }
-                }
-            }
-            if (state.historyMaintenanceFailed) item {
-                PawMessage(stringResource(R.string.editor_history_warning), tone = PawMessageTone.WARNING)
-            }
-            if (state.provenanceMaintenanceFailed) item {
-                PawMessage(stringResource(R.string.editor_provenance_warning), tone = PawMessageTone.WARNING)
-            }
-            item {
-                SecondaryScrollableTabRow(selectedTabIndex = state.tab.ordinal, modifier = Modifier.fillMaxWidth(),
-                    edgePadding = PawSpacing.large) {
-                    for (tab in EditorTab.entries) {
-                        Tab(selected = state.tab == tab, onClick = { onTab(tab) },
-                            text = { Text(stringResource(tabString(tab))) })
-                    }
-                }
-            }
-            when (state.tab) {
-                EditorTab.EDIT -> {
-                    // Put validation before the growing source canvas so recovery stays discoverable.
-                    items(state.issues) { issue ->
-                        PawMessage(listOfNotNull(issue.message, issue.location?.toString()).joinToString("\n"),
-                            tone = if (issue.severity == PromptIssueSeverity.ERROR) PawMessageTone.ERROR else PawMessageTone.WARNING,
-                            announcement = PawMessageAnnouncement.NONE)
-                    }
-                    item {
-                        when {
-                            state.status == EditorStatus.LOADING -> PawLoading(stringResource(R.string.editor_loading))
-                            state.source == null -> PawMessage(stringResource(R.string.editor_source_unavailable))
-                            else -> Column {
-                                EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)
-                                if (state.validating) Text(stringResource(R.string.editor_validating),
-                                    Modifier.padding(top = PawSpacing.small),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+            LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PawLayout.contentPadding,
+                verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
+                        state.relativePath?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        state.group?.let {
+                            Text(stringResource(R.string.library_group_role, it.name, it.role.wireValue),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (state.dirty) {
+                            Text(stringResource(R.string.editor_unsaved), style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.tertiary)
                         }
                     }
                 }
-                EditorTab.PREVIEW -> item {
-                    Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
-                        Text(stringResource(R.string.editor_preview_help), style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        when {
-                            state.validating -> PawLoading(stringResource(R.string.editor_validating))
-                            state.previewAvailable -> Surface(shape = MaterialTheme.shapes.medium,
-                                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                                modifier = Modifier.fillMaxWidth()) {
-                                SelectionContainer {
-                                    Text(state.preview, Modifier.padding(PawSpacing.large),
-                                        style = MaterialTheme.typography.bodyLarge)
-                                }
-                            }
-                            else -> PawMessage(stringResource(R.string.editor_preview_invalid))
+                if (state.writing || state.status == EditorStatus.LOADING) {
+                    item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                }
+                state.readOnlyReason?.let { reason -> item {
+                    PawMessage(stringResource(when (reason) {
+                        SourceReadOnlyReason.GROUP_VIEWER -> R.string.editor_group_viewer
+                        SourceReadOnlyReason.GROUP_UNAVAILABLE -> R.string.editor_group_unavailable
+                        else -> R.string.editor_read_only
+                    }), tone = if (reason == SourceReadOnlyReason.GROUP_UNAVAILABLE) PawMessageTone.WARNING
+                        else PawMessageTone.INFO)
+                } }
+                if (state.isNew) item {
+                    OutlinedTextField(value = state.relativePath.orEmpty(), onValueChange = onNewPath,
+                        label = { Text(stringResource(R.string.editor_path)) }, singleLine = true,
+                        enabled = !state.writing, modifier = Modifier.fillMaxWidth())
+                }
+                state.failure?.let { failure -> item {
+                    Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                        PawMessage(stringResource(failureString(failure)), tone = PawMessageTone.ERROR)
+                        for (issue in state.saveIssues.filterNot { state.tab == EditorTab.EDIT && it in state.issues }) {
+                            Text(issue.message, color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (!state.isNew) TextButton(onClick = onReload, enabled = !state.writing,
+                            modifier = Modifier.align(Alignment.End)) {
+                            Text(stringResource(R.string.editor_reload))
+                        }
+                    }
+                } }
+                if (state.conflict?.presentation == EditorConflictPresentation.BANNER) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                        PawMessage(stringResource(R.string.editor_conflict_help), tone = PawMessageTone.WARNING)
+                        TextButton(onClick = { onConflict(EditorConflictChoice.REVIEW) }, enabled = !state.writing,
+                            modifier = Modifier.align(Alignment.End)) {
+                            Text(stringResource(R.string.editor_review_conflict))
                         }
                     }
                 }
-                EditorTab.FIELDS -> {
-                    if (state.fields.isEmpty()) item {
-                        PawEmptyState(stringResource(R.string.editor_no_fields),
-                            stringResource(R.string.editor_no_fields_body), Icons.Rounded.TextFields)
-                    }
-                    // Invalid headers retain duplicate declarations for inspection.
-                    items(state.fields) { field ->
-                        Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
-                            color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                            Column(Modifier.padding(PawSpacing.large),
-                                verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
-                                Text(field.label, style = MaterialTheme.typography.titleMedium)
-                                Text(field.name + " · " + field.kind.rawValue,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary)
-                                if (field.isImplicit) Text(stringResource(R.string.editor_implicit),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.tertiary)
-                                field.description?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                                Text(stringResource(R.string.editor_field_default, field.defaultValue),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (field.options.isNotEmpty()) {
-                                    Text(field.options.joinToString("\n") { it.label + " · " + it.value },
+                if (state.historyMaintenanceFailed) item {
+                    PawMessage(stringResource(R.string.editor_history_warning), tone = PawMessageTone.WARNING)
+                }
+                if (state.provenanceMaintenanceFailed) item {
+                    PawMessage(stringResource(R.string.editor_provenance_warning), tone = PawMessageTone.WARNING)
+                }
+                when (state.tab) {
+                    EditorTab.EDIT -> {
+                        // Put validation before the growing source canvas so recovery stays discoverable.
+                        items(state.issues) { issue ->
+                            PawMessage(listOfNotNull(issue.message, issue.location?.toString()).joinToString("\n"),
+                                tone = if (issue.severity == PromptIssueSeverity.ERROR) PawMessageTone.ERROR else PawMessageTone.WARNING,
+                                announcement = PawMessageAnnouncement.NONE)
+                        }
+                        item {
+                            when {
+                                state.status == EditorStatus.LOADING -> PawLoading(stringResource(R.string.editor_loading))
+                                state.source == null -> PawMessage(stringResource(R.string.editor_source_unavailable))
+                                else -> Column {
+                                    EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)
+                                    if (state.validating) Text(stringResource(R.string.editor_validating),
+                                        Modifier.padding(top = PawSpacing.small),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                Text(stringResource(if (field.optional) R.string.editor_optional
-                                    else R.string.editor_required) + " · " +
-                                    stringResource(if (field.remember) R.string.editor_remembered
-                                        else R.string.editor_not_remembered),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                }
-                EditorTab.HISTORY -> {
-                    item {
+                    EditorTab.PREVIEW -> item {
                         Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
-                            OutlinedButton(onClick = onHistory,
-                                enabled = !state.writing && !state.history.loading && !state.isNew) {
-                                Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp))
-                                Spacer(Modifier.width(PawSpacing.small))
-                                Text(stringResource(R.string.editor_refresh_history))
-                            }
-                            if (state.history.loading) PawLoading(stringResource(R.string.editor_history_loading))
-                            if (state.history.failure != null) {
-                                PawMessage(stringResource(R.string.editor_history_failed), tone = PawMessageTone.ERROR)
-                            }
-                            if (!state.history.loading && state.history.failure == null && !state.isNew) {
-                                PawSectionHeading(stringResource(R.string.editor_current_revision))
-                                ProvenanceAttribution(state.history.currentProvenance)
-                            }
-                            if (!state.history.loading && state.history.revisions.isEmpty()) {
-                                PawEmptyState(stringResource(R.string.editor_no_history),
-                                    stringResource(R.string.editor_no_history_body), Icons.Rounded.History)
+                            Text(stringResource(R.string.editor_preview_help), style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            when {
+                                state.validating -> PawLoading(stringResource(R.string.editor_validating))
+                                state.previewAvailable -> Surface(shape = MaterialTheme.shapes.medium,
+                                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                    modifier = Modifier.fillMaxWidth()) {
+                                    SelectionContainer {
+                                        Text(state.preview, Modifier.padding(PawSpacing.large),
+                                            style = MaterialTheme.typography.bodyLarge)
+                                    }
+                                }
+                                else -> PawMessage(stringResource(R.string.editor_preview_invalid))
                             }
                         }
                     }
-                    items(state.history.revisions, key = { it.revision.filename }) { entry ->
-                        Surface(onClick = { onRevision(entry) }, modifier = Modifier.fillMaxWidth(),
-                            shape = MaterialTheme.shapes.medium,
-                            color = if (entry.revision == state.history.selected) MaterialTheme.colorScheme.secondaryContainer
-                                else MaterialTheme.colorScheme.surfaceContainerLow) {
-                            ListItem(headlineContent = { Text(entry.revision.timestamp.toString()) },
-                                supportingContent = {
-                                    Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
-                                        Text(stringResource(R.string.editor_revision_size, entry.byteCount))
-                                        Text(stringResource(if (entry.canRestore) R.string.editor_revision_valid
-                                            else R.string.editor_revision_forensic))
-                                        ProvenanceAttribution(entry.provenance)
-                                    }
-                                },
-                                trailingContent = {
-                                    if (entry.revision == state.history.selected) {
-                                        Icon(Icons.Rounded.CheckCircle, null, tint = MaterialTheme.colorScheme.primary)
-                                    }
-                                },
-                                colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                    EditorTab.FIELDS -> {
+                        if (state.fields.isEmpty()) item {
+                            PawEmptyState(stringResource(R.string.editor_no_fields),
+                                stringResource(R.string.editor_no_fields_body), Icons.Rounded.TextFields)
                         }
-                    }
-                    state.history.selectedRevision?.let { selected -> item {
-                        Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
-                            PawSectionHeading(stringResource(R.string.editor_revision_source))
-                            ProvenanceAttribution(selected.provenance)
-                            if (selected.source == null) {
-                                PawMessage(stringResource(R.string.editor_source_unavailable))
-                            } else Surface(shape = MaterialTheme.shapes.medium,
-                                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                                modifier = Modifier.fillMaxWidth()) {
-                                SelectionContainer {
-                                    Text(selected.source, Modifier.padding(PawSpacing.large),
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+                        // Invalid headers retain duplicate declarations for inspection.
+                        items(state.fields) { field ->
+                            Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                                Column(Modifier.padding(PawSpacing.large),
+                                    verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
+                                    Text(field.label, style = MaterialTheme.typography.titleMedium)
+                                    Text(field.name + " · " + field.kind.rawValue,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary)
+                                    if (field.isImplicit) Text(stringResource(R.string.editor_implicit),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.tertiary)
+                                    field.description?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                                    Text(stringResource(R.string.editor_field_default, field.defaultValue),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (field.options.isNotEmpty()) {
+                                        Text(field.options.joinToString("\n") { it.label + " · " + it.value },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(stringResource(if (field.optional) R.string.editor_optional
+                                        else R.string.editor_required) + " · " +
+                                        stringResource(if (field.remember) R.string.editor_remembered
+                                            else R.string.editor_not_remembered),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
-                            Button(onClick = { onRestore(selected) }, enabled = selected.canRestore && state.canCommand) {
-                                Text(stringResource(R.string.editor_restore))
+                        }
+                    }
+                    EditorTab.HISTORY -> {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
+                                OutlinedButton(onClick = onHistory,
+                                    enabled = !state.writing && !state.history.loading && !state.isNew) {
+                                    Icon(Icons.Rounded.Refresh, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(PawSpacing.small))
+                                    Text(stringResource(R.string.editor_refresh_history))
+                                }
+                                if (state.history.loading) PawLoading(stringResource(R.string.editor_history_loading))
+                                if (state.history.failure != null) {
+                                    PawMessage(stringResource(R.string.editor_history_failed), tone = PawMessageTone.ERROR)
+                                }
+                                if (!state.history.loading && state.history.failure == null && !state.isNew) {
+                                    PawSectionHeading(stringResource(R.string.editor_current_revision))
+                                    ProvenanceAttribution(state.history.currentProvenance)
+                                }
+                                if (!state.history.loading && state.history.revisions.isEmpty()) {
+                                    PawEmptyState(stringResource(R.string.editor_no_history),
+                                        stringResource(R.string.editor_no_history_body), Icons.Rounded.History)
+                                }
                             }
                         }
-                    } }
+                        items(state.history.revisions, key = { it.revision.filename }) { entry ->
+                            Surface(onClick = { onRevision(entry) }, modifier = Modifier.fillMaxWidth()
+                                .semantics { selected = entry.revision == state.history.selected },
+                                shape = MaterialTheme.shapes.medium,
+                                color = if (entry.revision == state.history.selected) MaterialTheme.colorScheme.secondaryContainer
+                                    else MaterialTheme.colorScheme.surfaceContainerLow) {
+                                ListItem(headlineContent = { Text(editorTimestamp(entry.revision.timestamp)) },
+                                    supportingContent = {
+                                        Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
+                                            Text(stringResource(R.string.editor_revision_size, entry.byteCount))
+                                            Text(stringResource(if (entry.canRestore) R.string.editor_revision_valid
+                                                else R.string.editor_revision_forensic))
+                                            ProvenanceAttribution(entry.provenance)
+                                        }
+                                    },
+                                    trailingContent = {
+                                        if (entry.revision == state.history.selected) {
+                                            Icon(Icons.Rounded.CheckCircle, null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    },
+                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+                            }
+                        }
+                        state.history.selectedRevision?.let { selected -> item {
+                            Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
+                                PawSectionHeading(stringResource(R.string.editor_revision_source))
+                                ProvenanceAttribution(selected.provenance)
+                                if (selected.source == null) {
+                                    PawMessage(stringResource(R.string.editor_source_unavailable))
+                                } else Surface(shape = MaterialTheme.shapes.medium,
+                                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                    modifier = Modifier.fillMaxWidth()) {
+                                    SelectionContainer {
+                                        Text(selected.source, Modifier.padding(PawSpacing.large),
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+                                    }
+                                }
+                                Button(onClick = { onRestore(selected) }, enabled = selected.canRestore && state.canCommand) {
+                                    Text(stringResource(R.string.editor_restore))
+                                }
+                            }
+                        } }
+                    }
                 }
             }
         }
@@ -448,7 +451,7 @@ private fun ProvenanceAttribution(provenance: PromptProvenance?) {
     }
     Text(stringResource(R.string.editor_provenance_llm, provenance.providerHost, provenance.model),
         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Text(provenance.timestamp.toString(), style = MaterialTheme.typography.bodySmall,
+    Text(editorTimestamp(provenance.timestamp), style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
     provenance.usage?.let { usage ->
         Text(stringResource(R.string.editor_provenance_usage, usage.inputTokens, usage.outputTokens),

@@ -25,6 +25,16 @@ internal sealed interface LibraryFilter {
 
 internal data class LibrarySection(val filter: LibraryFilter, val count: Int, val title: String = "", val group: GroupAccessGroup? = null)
 
+internal data class LibraryFilterSections(val quick: List<LibrarySection>, val browse: List<LibrarySection>)
+
+internal fun libraryFilterSections(sections: List<LibrarySection>): LibraryFilterSections {
+    val (quick, browse) = sections.partition {
+        it.filter == LibraryFilter.All || it.filter == LibraryFilter.Favourites || it.filter == LibraryFilter.Recent ||
+            it.filter == LibraryFilter.Conflicts && it.count > 0
+    }
+    return LibraryFilterSections(quick, browse)
+}
+
 /** Identity follows assigned renames; the exact path disambiguates duplicate identities. */
 internal data class LibrarySelection(val identity: PromptIdentity, val relativePath: String)
 

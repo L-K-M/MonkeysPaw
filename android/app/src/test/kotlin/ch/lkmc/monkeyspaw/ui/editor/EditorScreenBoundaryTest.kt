@@ -64,6 +64,19 @@ internal class EditorScreenBoundaryTest {
     }
 
     @Test
+    fun `history tab keeps navigation outside the scrollable body and localizes timestamps`() {
+        val screen = packageRoot.resolve("ui/editor/EditorScreen.kt").readText()
+        assertTrue(screen.indexOf("SecondaryScrollableTabRow(") in 0 until screen.indexOf("LazyColumn("),
+            "Tab navigation must compose before the body LazyColumn so it stays below the app bar")
+        assertTrue(screen.contains("editorTimestamp("))
+        assertFalse(screen.contains("timestamp.toString()"))
+        assertTrue(screen.contains("selected = entry.revision == state.history.selected"),
+            "The active revision row must carry selected semantics")
+        val state = packageRoot.resolve("ui/editor/EditorUiState.kt").readText()
+        assertTrue(state.contains("fun editorTimestamp("))
+    }
+
+    @Test
     fun `editor has no clipboard delivery learning automatic apply or network dependencies`() {
         val editor = packageRoot.resolve("ui/editor").walkTopDown().filter { it.extension == "kt" }.map { it.readText() }.joinToString("\n")
         val forbidden = Regex("\\b(?:Clipboard|FillService|writeText|readText|recordUse|recordCopy|URL|HttpTransport|AssistantClient)\\b")

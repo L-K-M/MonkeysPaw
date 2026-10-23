@@ -10,6 +10,7 @@ import ch.lkmc.monkeyspaw.ui.library.LibrarySelection
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.Locale
 
 internal enum class EditorTab { EDIT, PREVIEW, FIELDS, HISTORY }
@@ -104,6 +105,12 @@ internal data class EditorUiState(
 
 internal data class EditorDocumentState(val title: String, val issues: List<PromptIssue>,
     val fields: List<PromptField>, val preview: String, val previewAvailable: Boolean, val isPrivate: Boolean)
+
+/** History rows show a localized medium date with a short time instead of the raw ISO instant. */
+internal fun editorTimestamp(instant: Instant, locale: Locale = Locale.getDefault(),
+    zone: ZoneId = ZoneId.systemDefault()): String =
+    DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(locale)
+        .withZone(zone).format(instant)
 
 /** Editor preview uses tokens directly: absent defaults remain markers, including choice fields. */
 internal fun projectEditor(document: PromptDocument, now: Instant, zone: ZoneId): EditorDocumentState {
