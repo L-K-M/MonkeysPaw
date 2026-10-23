@@ -153,7 +153,7 @@ final class LinuxAssistantSettingsPage {
         gtk_box_append(mp_box(syncGroup), syncReveal)
         let syncList = LinuxSettingsLayout.list(in: syncGroup)
         syncEntry = Self.entryRow("settings-assistant-sync-entry",
-            title: LinuxAssistantSettingsStrings.syncEnter, in: syncList)
+            title: LinuxAssistantSettingsStrings.syncKeyField, in: syncList)
         gtk_entry_set_visibility(mp_entry(syncEntry), 0)
         gtk_entry_set_input_purpose(mp_entry(syncEntry), GTK_INPUT_PURPOSE_PASSWORD)
         gtk_entry_set_placeholder_text(mp_entry(syncEntry), LinuxAssistantSettingsStrings.syncEntryPlaceholder)
@@ -167,8 +167,10 @@ final class LinuxAssistantSettingsPage {
         gtk_box_append(mp_box(syncButtons), syncGenerate)
         syncEnter = GTK.button(LinuxAssistantSettingsStrings.syncEnter) { [weak self] in
             guard let self else { return }
-            self.model?.syncKey?.enterKey(String(cString: mp_entry_text(self.syncEntry))
-                .trimmingCharacters(in: .whitespacesAndNewlines))
+            let text = String(cString: mp_entry_text(self.syncEntry))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            mp_entry_set_text(self.syncEntry, "")
+            self.model?.syncKey?.enterKey(text)
         }
         gtk_widget_set_name(syncEnter, "settings-assistant-sync-enter")
         mp_accessible_label(syncEnter, LinuxAssistantSettingsStrings.syncEnter)
@@ -235,6 +237,7 @@ final class LinuxAssistantSettingsPage {
         model?.syncKey?.onChange = nil
         model?.cancelTest()
         model?.keepKey()
+        mp_entry_set_text(syncEntry, "")
         keyInputReset = nil
         pendingInputs.removeAll()
         if reason == .destroyed {

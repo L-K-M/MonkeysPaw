@@ -35,6 +35,7 @@ enum LinuxAssistantSettingsStrings {
     static let syncGenerate = "Generate key"
     static let syncEnter = "Enter key"
     static let syncEntryPlaceholder = "Paste the 43-character key from another device"
+    static let syncKeyField = "Sync key"
     static let syncRemove = "Remove key"
     static let syncDismissReveal = "Hide key"
     static let syncReveal = "Copy this key to your other devices. It is shown once and never uploaded."
