@@ -33,7 +33,15 @@ enum LibraryFieldStrings {
 final class LibraryFieldSettingsDraft: ObservableObject, Identifiable {
     let id = UUID()
     let fieldName: String
-    @Published var settings: PromptFieldSettings
+    @Published var settings: PromptFieldSettings {
+        didSet {
+            // Wholesale draft replacement keeps the row-identity array in step.
+            let difference = settings.options.count - optionIDs.count
+            if difference > 0 { optionIDs += (0..<difference).map { _ in UUID() } }
+            if difference < 0 { optionIDs.removeLast(-difference) }
+        }
+    }
+    @Published private(set) var optionIDs: [UUID]
     /// A nil default differs from an explicitly empty literal, so the toggle
     /// and its text stage separately instead of collapsing into one string.
     @Published var hasDefault: Bool
@@ -47,6 +55,7 @@ final class LibraryFieldSettingsDraft: ObservableObject, Identifiable {
          source: String?, sourceRevision: UInt64) {
         fieldName = field.name
         settings = field
+        optionIDs = field.options.map { _ in UUID() }
         hasDefault = field.defaultValue != nil
         defaultText = field.defaultValue ?? ""
         descriptionText = field.description ?? ""
@@ -71,8 +80,24 @@ final class LibraryFieldSettingsDraft: ObservableObject, Identifiable {
     var issueMessage: String? { issue.map(LibraryFieldStrings.issue) }
 
     func removeOption(at index: Int) {
-        guard settings.options.indices.contains(index) else { return }
+        guard settings.options.indices.contains(index), optionIDs.indices.contains(index) else { return }
+        optionIDs.remove(at: index)
         settings.options.remove(at: index)
+    }
+
+    func removeOption(id: UUID) {
+        guard let index = optionIndex(for: id) else { return }
+        removeOption(at: index)
+    }
+
+    func addOption() {
+        optionIDs.append(UUID())
+        settings.options.append(PromptFieldOptionSettings(label: "", value: ""))
+    }
+
+    func optionIndex(for id: UUID) -> Int? {
+        guard let index = optionIDs.firstIndex(of: id), settings.options.indices.contains(index) else { return nil }
+        return index
     }
 
     func isStale(prompt: LibraryPromptSelection?, source: String?, sourceRevision: UInt64) -> Bool {
@@ -187,40 +212,45 @@ struct LibraryFieldSettingsSheet: View {
                             Text("").frame(width: 16)
                         }
                         .font(.caption).foregroundStyle(.secondary)
-                        ForEach(Array(draft.settings.options.indices), id: \.self, content: choiceRow)
+                        ForEach(draft.optionIDs, id: \.self, content: choiceRow)
                     }
                 }
-                Button(LibraryFieldStrings.addChoice) {
-                    draft.settings.options.append(PromptFieldOptionSettings(label: "", value: ""))
-                }
+                Button(LibraryFieldStrings.addChoice, action: draft.addOption)
                 .accessibilityIdentifier("library-field-choice-add")
             }
         }
     }
 
-    private func choiceRow(_ index: Int) -> some View {
-        GridRow {
-            TextField(LibraryFieldStrings.choiceLabel, text: choiceBinding(index, \.label))
-                .accessibilityIdentifier("library-field-choice-label-\(index)")
-            TextField(LibraryFieldStrings.choiceValue, text: choiceBinding(index, \.value), axis: .vertical)
-                .lineLimit(1...4)
-                .accessibilityIdentifier("library-field-choice-value-\(index)")
-            Button { draft.removeOption(at: index) } label: {
-                Image(systemName: "minus.circle.fill")
+    @ViewBuilder
+    private func choiceRow(_ id: UUID) -> some View {
+        if let index = draft.optionIndex(for: id) {
+            GridRow {
+                TextField(LibraryFieldStrings.choiceLabel, text: choiceBinding(index, \.label))
+                    .accessibilityIdentifier("library-field-choice-label-\(index)")
+                TextField(LibraryFieldStrings.choiceValue, text: choiceBinding(index, \.value), axis: .vertical)
+                    .lineLimit(1...4)
+                    .accessibilityIdentifier("library-field-choice-value-\(index)")
+                Button { draft.removeOption(id: id) } label: {
+                    Image(systemName: "minus.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(LibraryFieldStrings.removeChoice(index))
+                .accessibilityIdentifier("library-field-choice-remove-\(index)")
             }
-            .buttonStyle(.borderless)
-            .accessibilityLabel(LibraryFieldStrings.removeChoice(index))
-            .accessibilityIdentifier("library-field-choice-remove-\(index)")
         }
     }
 
     func choiceBinding(_ index: Int,
-                               _ key: WritableKeyPath<PromptFieldOptionSettings, String>) -> Binding<String> {
-        Binding(
-            get: { draft.settings.options.indices.contains(index) ? draft.settings.options[index][keyPath: key] : "" },
-            set: { if draft.settings.options.indices.contains(index) {
-                draft.settings.options[index][keyPath: key] = $0
-            } })
+                       _ key: WritableKeyPath<PromptFieldOptionSettings, String>) -> Binding<String> {
+        let id = draft.optionIDs.indices.contains(index) ? draft.optionIDs[index] : nil
+        // A delayed field-editor commit must follow its choice, not its old row.
+        return Binding(get: {
+            guard let id, let current = draft.optionIndex(for: id) else { return "" }
+            return draft.settings.options[current][keyPath: key]
+        }, set: {
+            guard let id, let current = draft.optionIndex(for: id) else { return }
+            draft.settings.options[current][keyPath: key] = $0
+        })
     }
 
     private var footer: some View {

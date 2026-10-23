@@ -15,6 +15,9 @@ Checked on 2026-10-23 for [PR #315](https://github.com/L-K-M/MonkeysPaw/pull/315
 - Script tests: 204 passed; Xcode object-ID validation passed.
 - macOS: CI built the app, ran hosted tests and packaged universal artifacts.
   The hosted icon test loads the compiled 18-point template paw asset.
+  A hosted regression observed delayed choice bindings editing the wrong row
+  after deletion. Choice rows now retain stable identities, and removed-row
+  callbacks are ignored; the same regression verifies this path.
 
 ## Android native checks
 

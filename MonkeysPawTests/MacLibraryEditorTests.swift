@@ -1216,14 +1216,20 @@ final class MacLibraryEditorTests: XCTestCase {
         presentation.requestFieldSettings(try XCTUnwrap(presentation.editorState.form?.fieldSettings.first))
         let draft = try XCTUnwrap(presentation.fieldSettingsDraft)
         let sheet = LibraryFieldSettingsSheet(draft: draft, onCancel: {}, onApply: {})
+        let originalIDs = draft.optionIDs
         let bindingB = sheet.choiceBinding(1, \.label)
         let removedBinding = sheet.choiceBinding(0, \.label)
         draft.removeOption(at: 0)
+        XCTAssertEqual(draft.optionIDs, Array(originalIDs.dropFirst()))
         bindingB.wrappedValue = "Edited B"
         XCTAssertEqual(draft.staged.options.map(\.label), ["Edited B", "C"])
         XCTAssertEqual(draft.staged.options.map(\.value), ["B", "C"])
         removedBinding.wrappedValue = "Late edit to removed A"
         XCTAssertEqual(draft.staged.options.map(\.label), ["Edited B", "C"])
+        draft.addOption()
+        XCTAssertFalse(originalIDs.contains(try XCTUnwrap(draft.optionIDs.last)))
+        removedBinding.wrappedValue = "Late edit after adding a choice"
+        XCTAssertEqual(draft.staged.options.map(\.label), ["Edited B", "C", ""])
     }
 
     func testFieldSettingsCancelAndUnchangedApplyWriteNothing() throws {
