@@ -75,6 +75,9 @@ final class ProviderSyncStep: @unchecked Sendable {
         // that never provision a key keep working against servers that predate
         // the provider-settings routes.
         guard let key = try keys.keyBytes(userID: identity.userID) else { return .keyRequired }
+        // A malformed stored key cannot seal either; fail closed before the
+        // endpoint is contacted rather than letting seal trap below.
+        guard key.count == Limits.providerSyncKeyBytes else { return .decryptFailed }
         let remote = try await client.providerSettings()
         try permit.check()
 
@@ -92,13 +95,22 @@ final class ProviderSyncStep: @unchecked Sendable {
             var decrypted: (payload: ProviderSyncPayload, plaintext: Data)?
             do {
                 let plaintext = try ProviderSyncCipher.open(document, key: key, userID: identity.userID)
-                decrypted = (try ProviderSyncPayload(plaintext: plaintext), plaintext)
+                do {
+                    decrypted = (try ProviderSyncPayload(plaintext: plaintext), plaintext)
+                } catch {
+                    // Authentication passed but the plaintext is not a v1
+                    // payload — a same-key document in a format this client
+                    // cannot read (oversized plaintexts and future-version
+                    // seals included). Fail closed rather than clobber data
+                    // written under this key by a newer client.
+                    return .decryptFailed
+                }
             } catch {
-                // Every failure up to and including parsing is decrypt-side:
-                // oversized plaintexts and future-version seals included. An
-                // undecryptable document cannot gate the push: under literal
-                // last-writer-wins the local document overwrites it this pass,
-                // so key rotation self-heals instead of stalling forever.
+                // Authentication failed — the document was sealed under a
+                // different key or its bytes are corrupt. It cannot gate the
+                // push: under literal last-writer-wins the local document
+                // overwrites it this pass, so key rotation self-heals
+                // instead of stalling forever.
                 decryptFailed = true
             }
             if let decrypted {

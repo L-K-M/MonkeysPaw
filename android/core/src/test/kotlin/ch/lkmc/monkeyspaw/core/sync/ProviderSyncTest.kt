@@ -40,7 +40,7 @@ class ProviderSyncTest {
     private fun hex(text: String): ByteArray =
         ByteArray(text.length / 2) { text.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 
-    // McGrew–Viega AES-256-GCM test case 13 verbatim: K, IV, P, A, C and T,
+    // McGrew–Viega AES-256-GCM test case 16 verbatim: K, IV, P, A, C and T,
     // shared with the Swift tests.
     @Test fun sealMatchesTheSharedVector() {
         val key = hex("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308")
@@ -205,6 +205,32 @@ class ProviderSyncTest {
         rig.requests.clear()
         assertEquals(ProviderSyncOutcome.UNCHANGED, rig.step.run(rig.client, rig.identity, rig.permit))
         assertTrue(rig.requests.none { it.method == HttpMethod.PUT })
+    }
+
+    @Test fun authenticatedUnreadableRemoteFailsClosedWithoutPush() = runTest {
+        val rig = Rig()
+        rig.provision()
+        // A document that authenticates under our key but is not a v1 payload
+        // is a same-key document we cannot read: fail closed so a newer
+        // client's data is never clobbered. Neither pass pushes.
+        for (plaintext in listOf("not a payload".encodeToByteArray(),
+            """{"version":2,"settings":{},"secrets":{}}""".encodeToByteArray())) {
+            rig.remoteDocument = ProviderSyncCipher.seal(keyBytes, user, plaintext) { nonce }
+            rig.remoteRev = 7
+            assertEquals(ProviderSyncOutcome.DECRYPT_FAILED, rig.step.run(rig.client, rig.identity, rig.permit))
+        }
+        assertTrue(rig.requests.none { it.method == HttpMethod.PUT })
+        assertTrue(rig.providerFiles.memory.listFiles().none { it.relativePath == "provider-settings.json" })
+    }
+
+    @Test fun malformedStoredKeyFailsClosedWithoutNetwork() = runTest {
+        val rig = Rig()
+        rig.secrets.persisted[SecretAccount.providerSync(user)] =
+            ch.lkmc.monkeyspaw.core.domain.llm.StoredSecret(
+                SecretValue(Base64URL.encode(ByteArray(31))),
+                ch.lkmc.monkeyspaw.core.domain.llm.SecretTier.KEYSTORE)
+        assertEquals(ProviderSyncOutcome.DECRYPT_FAILED, rig.step.run(rig.client, rig.identity, rig.permit))
+        assertTrue(rig.requests.isEmpty())
     }
 
     @Test fun metadataWriteFailureRollsBackSecretMutations() = runTest {

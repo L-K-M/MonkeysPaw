@@ -36,7 +36,9 @@ enum ProviderSyncCipher {
         guard let plaintext = AES256GCM.open(key: Array(key), nonce: nonce, aad: aad, sealed: sealed) else {
             throw ProviderSyncError.authentication
         }
-        guard plaintext.count <= Limits.providerSyncPayloadMaxBytes else { throw ProviderSyncError.oversized }
+        // No size check here: open is the authentication boundary and every
+        // throw above it means "not sealed under this key". The payload
+        // parser bounds the plaintext so oversized documents fail closed.
         return Data(plaintext)
     }
 }
@@ -149,7 +151,7 @@ struct ProviderSyncPayload: Equatable {
     private static func isPayloadVersion(_ value: Any?) -> Bool {
         guard let version = value as? NSNumber,
               !["c", "d", "f"].contains(String(cString: version.objCType)) else { return false }
-        return version.intValue == Self.version
+        return version.int64Value == Int64(Self.version)
     }
 }
 

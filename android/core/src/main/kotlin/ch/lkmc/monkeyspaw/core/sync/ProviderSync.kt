@@ -125,7 +125,9 @@ internal object ProviderSyncCipher {
         cipher.updateAAD(aad(userID))
         val plaintext = try { cipher.doFinal(sealed) }
         catch (_: Exception) { throw ProviderSyncError.Authentication }
-        if (plaintext.size > Limits.providerSyncPayloadMaxBytes) throw ProviderSyncError.Oversized
+        // No size check here: open is the authentication boundary and every
+        // throw above it means "not sealed under this key". The payload
+        // parser bounds the plaintext so oversized documents fail closed.
         return plaintext
     }
 }
@@ -147,10 +149,11 @@ internal class ProviderSyncPayload(val settings: JsonObject, val secrets: Map<St
         const val version = 1L
 
         fun parse(plaintext: ByteArray): ProviderSyncPayload {
+            if (plaintext.size > Limits.providerSyncPayloadMaxBytes) throw ProviderSyncError.InvalidDocument
             val root = try { ProviderSettingsJson.read(plaintext) }
             catch (error: CancellationException) { throw error }
             catch (_: Exception) { throw ProviderSyncError.InvalidDocument }
-            if (plaintext.size > Limits.providerSyncPayloadMaxBytes || root.keys != setOf("secrets", "settings", "version")) {
+            if (root.keys != setOf("secrets", "settings", "version")) {
                 throw ProviderSyncError.InvalidDocument
             }
             val version = (root["version"] as? JsonPrimitive)?.takeUnless { it.isString }
@@ -209,6 +212,9 @@ internal class ProviderSyncStep(
         // that never provision a key keep working against servers that predate
         // the provider-settings routes.
         val key = keys.keyBytes(identity.userID) ?: return ProviderSyncOutcome.KEY_REQUIRED
+        // A malformed stored key cannot seal either; fail closed before the
+        // endpoint is contacted rather than letting seal throw below.
+        if (key.size != Limits.providerSyncKeyBytes) return ProviderSyncOutcome.DECRYPT_FAILED
         val remote = client.providerSettings()
         permit.check()
 
@@ -220,16 +226,25 @@ internal class ProviderSyncStep(
         var remoteSecrets = emptyMap<String, String>()
         var decryptFailed = false
         remote.document?.let { document ->
-            val decrypted = try {
+            val plaintext = try {
                 ProviderSyncCipher.open(document, key, identity.userID)
-                    .let { ProviderSyncPayload.parse(it) to it }
             } catch (error: CancellationException) { throw error }
-            // Every failure up to and including parsing is decrypt-side:
-            // oversized plaintexts and future-version seals included. An
-            // undecryptable document cannot gate the push: under literal
-            // last-writer-wins the local document overwrites it this pass,
-            // so key rotation self-heals instead of stalling forever.
+            // Authentication failed — the document was sealed under a
+            // different key or its bytes are corrupt. It cannot gate the
+            // push: under literal last-writer-wins the local document
+            // overwrites it this pass, so key rotation self-heals instead
+            // of stalling forever.
             catch (_: Exception) { decryptFailed = true; null }
+            val decrypted = plaintext?.let {
+                // Authentication passed but the plaintext is not a v1
+                // payload — a same-key document in a format this client
+                // cannot read (oversized plaintexts and future-version
+                // seals included). Fail closed rather than clobber data
+                // written under this key by a newer client.
+                try { ProviderSyncPayload.parse(it) to it }
+                catch (error: CancellationException) { throw error }
+                catch (_: Exception) { return ProviderSyncOutcome.DECRYPT_FAILED }
+            }
             if (decrypted != null) {
                 remoteSecrets = decrypted.first.secrets
                 if (remote.rev > known.rev) {

@@ -235,6 +235,41 @@ final class ProviderSyncStepTests: XCTestCase {
         XCTAssertEqual(rig.remote.puts, 2)
     }
 
+    func testAuthenticatedUnreadableRemoteFailsClosedWithoutPush() async throws {
+        let rig = try ProviderStepRig()
+        let key = try rig.provisionKey()
+        try rig.providers.save(ProviderDraft(displayName: "Mine", baseURL: "https://api.anthropic.com"))
+        let before = rig.files.attemptedWrites.count
+        let nonce = { Data((0..<12).map { UInt8(200 + $0) }) }
+
+        // A document that authenticates under our key but is not a v1 payload
+        // is a same-key document we cannot read: fail closed so a newer
+        // client's data is never clobbered. Neither pass pushes.
+        for plaintext in [Data("not a payload".utf8),
+                          Data(#"{"version":2,"settings":{},"secrets":{}}"#.utf8)] {
+            let document = try ProviderSyncCipher.seal(key: key, userID: rig.identity.userID,
+                                                       plaintext: plaintext, nonce: nonce)
+            rig.remote.setDocument(document, rev: 7)
+            await expect(.decryptFailed, from: rig)
+        }
+        XCTAssertEqual(rig.remote.puts, 0)
+        XCTAssertEqual(rig.files.attemptedWrites.count, before)
+        XCTAssertNil(try rig.record())
+        XCTAssertEqual(rig.providers.snapshot.settings.profiles.count, 1)
+    }
+
+    func testMalformedStoredKeyFailsClosedWithoutNetwork() async throws {
+        let rig = try ProviderStepRig()
+        let account = SecretAccount.providerSync(rig.identity.userID)
+        rig.secrets.persisted[account] = StoredSecret(
+            value: SecretValue(Base64URL.encode([UInt8](repeating: 7, count: 31))),
+            tier: .secretService)
+        await expect(.decryptFailed, from: rig)
+        XCTAssertEqual(rig.remote.gets, 0)
+        XCTAssertEqual(rig.remote.puts, 0)
+        XCTAssertNil(try rig.record())
+    }
+
     func testEnvironmentSecretsSurviveRemoteApplyAndNeverExport() async throws {
         let rig = try ProviderStepRig()
         let key = try rig.provisionKey()

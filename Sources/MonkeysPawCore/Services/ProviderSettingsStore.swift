@@ -129,6 +129,7 @@ public final class ProviderSettingsStore: @unchecked Sendable {
                 log?.write(.error, "Provider secret restoration failed.")
                 throw ProviderSettingsError.secretRollbackFailed
             }
+            if error is CancellationError { throw error }
             if let error = error as? ProviderSettingsError { throw error }
             log?.write(.warning, "Provider settings write failed.")
             throw ProviderSettingsError.writeFailed(error as? FileStoreError ?? .ioFailure)

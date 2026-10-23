@@ -97,7 +97,7 @@ class ProviderSettingsStore(private val files: StateStore) {
                             System.err.println("Provider secret restoration failed.")
                             throw ProviderSettingsError.SecretRollbackFailed
                         }
-                        if (error is ProviderSettingsError) throw error
+                        if (error is CancellationException || error is ProviderSettingsError) throw error
                         System.err.println("Provider settings write failed.")
                         throw ProviderSettingsError.WriteFailed
                     }

@@ -9,7 +9,7 @@ final class ProviderSyncCipherTests: XCTestCase {
     private let nonce = Data(hex: "cafebabefacedbaddecaf888")
 
     func testAES256GCMSealsTheNISTVector() throws {
-        // McGrew–Viega AES-256-GCM test case 13 verbatim: K, IV, P, A, C and T.
+        // McGrew–Viega AES-256-GCM test case 16 verbatim: K, IV, P, A, C and T.
         let aad = Array(Data(hex: "feedfacedeadbeeffeedfacedeadbeefabaddad2"))
         let plaintext = Array(Data(hex:
             "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72" +
