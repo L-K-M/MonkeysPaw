@@ -79,7 +79,10 @@ The example shows Source; Edit opens the properties form and body editor.
   folder or group. Opening a prompt follows the click's release, so a drag
   never raises the unsaved-edits alert first.
 - **Editor.** Edit shows labelled title, description, tag and privacy
-  controls above a body-only text view. Source retains the complete file in
+  controls above a body-only text view. The title stays visible; description,
+  tags and privacy use a collapsible Details section, also available from View.
+  Placeholder settings live in the Fields inspector, reachable directly from
+  the editor's placeholder count. Source retains the complete file in
   a monospaced text view; both text views keep native Find, undo and highlighted
    `{{placeholders}}`. Placeholder rows open settings without editing YAML.
    Source also edits advanced metadata and declarations.
@@ -95,6 +98,14 @@ The example shows Source; Edit opens the properties form and body editor.
   bars and sheets rather than permanent rows.
 - **Escape** clears the search field when it has focus and dismisses sheets
   and popovers. It no longer closes the window; ⌘W does.
+- **Search navigation.** Down/Up from toolbar Search selects a result without
+  clearing the query. Return opens the selected result for editing. Input-method
+  composition keeps these keys until conversion finishes.
+- **Dock reopening.** With a regular window visible, reopening raises that
+  window. With only minimized windows, it restores Library or Settings. The
+  picker opens only when there is no regular window to resume.
+- **Save feedback.** A compact Save control beside validation and draft status
+  makes explicit saving discoverable without adding a permanent button row.
 
 ### 24.4 Menus (macOS)
 
@@ -103,7 +114,7 @@ The example shows Source; Edit opens the properties form and body editor.
 | Monkey's Paw | About, Check for Updates…, Settings… ⌘,, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q |
 | File | New Prompt… ⌘N, Import… ⇧⌘I, Close ⌘W, Save ⌘S, Duplicate ⇧⌘S, Rename…, Move To ▸, Revert to Saved, Show in Finder, Delete… |
 | Edit | Undo/Redo (named by the text system), Cut, Copy, Paste, Paste and Match Style, Delete, Select All, Find ▸ (Find… ⌘F, Find Next ⌘G, Find Previous ⇧⌘G, Use Selection for Find ⌘E, Search Library ⌥⌘F), Spelling and Grammar ▸ |
-| View | Edit ⌘1, Preview ⌘2, Source ⌘3, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
+| View | Edit ⌘1, Preview ⌘2, Source ⌘3, Show/Hide Prompt Details, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
 | Prompt | Add to/Remove from Favourites ⌘D, Review with Assistant ⌘R, Improve with Assistant ⌘I |
 | Window | Minimize ⌘M, Zoom, Library ⌘L, Bring All to Front, window list |
 | Help | Monkey's Paw Help |

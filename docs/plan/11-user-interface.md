@@ -453,7 +453,10 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   declarations only after a setting changes. Settings are staged with Apply
   and Cancel; Apply updates the draft, not the file. Choice settings require
   an option and a matching default when enabled. Builtins have no settings.
-  Android exposes the same controls in Fields. Both modes share one draft, explicit Save, validation,
+  macOS keeps the title visible, puts description, tags and privacy in a
+  collapsible Details section, and opens placeholder settings from the Fields
+  inspector in any editor mode. Android exposes the same controls in Fields.
+  Both modes share one draft, explicit Save, validation,
   history and conflict handling. Switching modes never writes or normalizes
   the draft. Form edits retain IDs, optional-key presence, field declarations
   and unknown metadata; body-only edits retain the original header bytes.

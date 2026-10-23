@@ -36,6 +36,7 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var sourceRevision: UInt64 = 0
     @Published private(set) var imports: LibraryImportViewState?
     @Published var editorMode = EditorMode.edit
+    @Published private(set) var isDetailsVisible = false
     @Published private(set) var inspectorPane = InspectorPane.fields
     @Published private(set) var isInspectorVisible = false
     @Published private(set) var editorFocusRevision: UInt64 = 0
@@ -183,6 +184,13 @@ final class LibraryViewState: ObservableObject {
               fileCommandRequest == nil, !isScopeDropPending, mode != .preview else { return }
         editorMode = mode
         editorFocusRevision &+= 1
+    }
+
+    func toggleDetails() {
+        guard isActive, editorState.form != nil else { return }
+        let wasVisible = editorMode == .edit && isDetailsVisible
+        editorMode = .edit
+        isDetailsVisible = !wasVisible
     }
 
     func movePrompt(to folder: String) {
@@ -587,7 +595,7 @@ final class LibraryViewState: ObservableObject {
     /// Settings stage in the sheet like a command dialog; conflicts and guard
     /// decisions suspend field edits the same way they suspend file commands.
     var canEditFieldSettings: Bool {
-        canEditSource && editorMode == .edit && editorState.conflict == nil && editorState.pendingDecision == nil
+        canEditSource && editorState.form != nil && editorState.conflict == nil && editorState.pendingDecision == nil
             && editorState.queuedActions.isEmpty && fileCommandRequest == nil && newPromptRequest == nil
     }
 

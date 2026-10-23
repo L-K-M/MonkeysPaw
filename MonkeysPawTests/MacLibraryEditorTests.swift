@@ -187,6 +187,8 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(body.string, "Body {{topic}}")
         XCTAssertFalse(body.isHiddenOrHasHiddenAncestor)
         XCTAssertTrue(raw.isHiddenOrHasHiddenAncestor)
+        presentation.toggleDetails()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
         let title = try nativeProperty("library-prompt-title", in: native)
         let description = try nativeProperty("library-prompt-description", in: native)
         XCTAssertEqual(title.stringValue, "Title")

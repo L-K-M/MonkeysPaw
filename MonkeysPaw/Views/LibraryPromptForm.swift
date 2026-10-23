@@ -11,9 +11,17 @@ enum LibraryFormStrings {
     static let privacyHint = "Never send this prompt to the assistant."
     static let body = "Prompt"
     static let bodyHint = "Use {{name}} for a placeholder."
+    static let details = "Details"
+    static let showDetails = "Show Prompt Details"
+    static let hideDetails = "Hide Prompt Details"
+    static let expanded = "Expanded"
+    static let collapsed = "Collapsed"
     static let source = "Source"
     static let unavailable = "Edit Source to fix validation errors and use the form."
     static func removeTag(_ tag: String) -> String { "Remove tag “" + tag + "”" }
+    static func placeholderCount(_ count: Int) -> String {
+        "\(count) " + (count == 1 ? "Placeholder" : "Placeholders")
+    }
 }
 
 /// The form and Source feed the same EditorModel draft and discard guard.
@@ -24,13 +32,27 @@ struct LibraryPromptForm: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            properties
+            VStack(alignment: .leading, spacing: 10) {
+                title
+                if presentation.isDetailsVisible { properties }
+            }
+                .padding(12)
                 .id(presentation.sourceRevision)
                 .disabled(!presentation.canEditSource || !isVisible)
             Divider()
-            VStack(alignment: .leading, spacing: 4) {
-                Text(LibraryFormStrings.body).font(.headline)
-                Text(LibraryFormStrings.bodyHint).font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(LibraryFormStrings.body).font(.headline)
+                    Text(LibraryFormStrings.bodyHint).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button { presentation.showInspector(.fields) } label: {
+                    Label(LibraryFormStrings.placeholderCount(presentation.editorState.fields.count),
+                        systemImage: "curlybraces")
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .accessibilityIdentifier("library-show-placeholders")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 4)
@@ -43,24 +65,31 @@ struct LibraryPromptForm: View {
                 isVisible: isVisible, content: .body)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .disabled(!isVisible)
         .accessibilityIdentifier("library-prompt-form")
-        .sheet(item: $presentation.fieldSettingsDraft) { draft in
-            LibraryFieldSettingsSheet(draft: draft,
-                onCancel: presentation.cancelFieldSettings,
-                onApply: presentation.applyFieldSettings)
-        }
         .onChange(of: presentation.sourceRevision) { _ in newTag = "" }
+    }
+
+    private var title: some View {
+        HStack(spacing: 12) {
+            Text(LibraryFormStrings.title).foregroundStyle(.secondary)
+            PickerTextInput(value: presentation.editorState.form?.title ?? "",
+                label: LibraryFormStrings.title, identifier: "library-prompt-title",
+                wantsFocus: false, focusRevision: 0,
+                onChange: { presentation.edit(.title($0)) })
+            Button { presentation.toggleDetails() } label: {
+                Label(LibraryFormStrings.details,
+                    systemImage: presentation.isDetailsVisible ? "chevron.up" : "chevron.down")
+            }
+            .buttonStyle(.borderless)
+            .help(presentation.isDetailsVisible ? LibraryFormStrings.hideDetails : LibraryFormStrings.showDetails)
+            .accessibilityValue(presentation.isDetailsVisible ? LibraryFormStrings.expanded : LibraryFormStrings.collapsed)
+            .accessibilityIdentifier("library-details-toggle")
+        }
     }
 
     private var properties: some View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-            GridRow {
-                Text(LibraryFormStrings.title).foregroundStyle(.secondary)
-                PickerTextInput(value: presentation.editorState.form?.title ?? "",
-                    label: LibraryFormStrings.title, identifier: "library-prompt-title",
-                    wantsFocus: false, focusRevision: 0,
-                    onChange: { presentation.edit(.title($0)) })
-            }
             GridRow {
                 Text(LibraryFormStrings.description).foregroundStyle(.secondary)
                 PickerTextInput(value: presentation.editorState.form?.description ?? "",
@@ -83,54 +112,9 @@ struct LibraryPromptForm: View {
                     Text(LibraryFormStrings.privacyHint).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if let fields = presentation.editorState.form?.fieldSettings, !fields.isEmpty {
-                GridRow(alignment: .top) {
-                    Text(LibraryFieldStrings.placeholders).foregroundStyle(.secondary)
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            ForEach(Array(fields.enumerated()), id: \.offset) { item in
-                                if item.offset > 0 { Divider() }
-                                fieldRow(item.element)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 110)
-                    .accessibilityIdentifier("library-field-list")
-                }
-            }
         }
         .textFieldStyle(.roundedBorder)
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Rows stay visible whenever the form renders; only their buttons share
-    /// the settings gate so conflicts and guard decisions explain the dimming.
-    private func fieldRow(_ field: PromptFieldSettings) -> some View {
-        HStack(spacing: 8) {
-            Text(verbatim: "{{" + field.name + "}}")
-                .font(.system(.callout, design: .monospaced))
-                .lineLimit(1).truncationMode(.middle)
-            if field.isImplicit {
-                Text(LibraryFieldStrings.implicit)
-                    .font(.caption2)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-            }
-            Text(EditorStrings.fieldKind(field.kind))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 4)
-            Button(LibraryFieldStrings.settings) { presentation.requestFieldSettings(field) }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(!presentation.canEditFieldSettings || !isVisible)
-                .accessibilityLabel(LibraryFieldStrings.settingsLabel(field.name))
-                .accessibilityIdentifier("library-field-settings-\(field.name)")
-        }
-        .padding(.vertical, 3)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("library-field-row-\(field.name)")
     }
 
     private var tags: some View {

@@ -164,6 +164,7 @@ enum MainMenu {
         add(menu, MainMenuStrings.editMode, #selector(LibraryWindowController.showEdit(_:)), "1")
         add(menu, MainMenuStrings.previewMode, #selector(LibraryWindowController.showPreview(_:)), "2")
         add(menu, LibraryFormStrings.source, #selector(LibraryWindowController.showSource(_:)), "3")
+        add(menu, LibraryFormStrings.showDetails, #selector(LibraryWindowController.togglePromptDetails(_:)))
         menu.addItem(.separator())
         add(menu, MainMenuStrings.showSidebar, Selector(("toggleSidebar:")), "s", [.control, .command])
         add(menu, MainMenuStrings.showInspector, Selector(("toggleInspector:")), "i", [.command, .option])

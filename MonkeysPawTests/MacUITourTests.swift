@@ -136,10 +136,27 @@ final class MacUITourTests: XCTestCase {
         presentation.editorMode = .edit
         settle()
         capture(window, as: "library-\(appearance)-edit")
+        window.setContentSize(NSSize(width: 820, height: 480))
+        settle()
+        capture(window, as: "library-\(appearance)-compact")
+        if let root = window.contentView,
+           let body = nativeEditors(in: root).first(where: { $0.content == .body }) {
+            XCTAssertGreaterThan(body.enclosingScrollView?.bounds.height ?? 0, 200,
+                "The prompt must retain writing space at the minimum window size")
+        } else { XCTFail("The composed editor has no native prompt text view") }
+        presentation.toggleDetails()
+        settle()
+        capture(window, as: "library-\(appearance)-details")
+        presentation.toggleDetails()
+        window.setContentSize(NSSize(width: 1180, height: 720))
+        presentation.editorMode = .source
+        settle()
+        capture(window, as: "library-\(appearance)-source")
         presentation.setInspectorVisible(false)
         presentation.editorMode = .preview
         settle()
         capture(window, as: "library-\(appearance)-preview")
+        presentation.editorMode = .edit
         presentation.showInspector(.fields)
         settle()
         capture(window, as: "library-\(appearance)-fields")
@@ -300,7 +317,10 @@ final class MacUITourTests: XCTestCase {
             XCTFail("The tour cannot open placeholder settings for \(fieldName)")
             return
         }
-        presentation.requestFieldSettings(field)
+        presentation.showInspector(.fields)
+        settle()
+        let settings = try XCTUnwrap(accessibilityElement(in: window, identifier: "library-field-settings-\(field.name)"))
+        XCTAssertTrue(accessibilityPress(settings), "The inspector must open placeholder settings")
         settle()
         let sheet = try XCTUnwrap(window.attachedSheet, "requestFieldSettings attaches a real sheet")
         XCTAssertTrue(sheet.sheetParent === window)
@@ -413,6 +433,11 @@ final class MacUITourTests: XCTestCase {
     }
 
     // MARK: - Capture
+
+    private func nativeEditors(in view: NSView) -> [LibrarySourceTextView] {
+        if let text = view as? LibrarySourceTextView { return [text] }
+        return view.subviews.flatMap(nativeEditors)
+    }
 
     private func settle(_ seconds: TimeInterval = MacUITourTests.settleTime) {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))

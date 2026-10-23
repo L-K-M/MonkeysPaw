@@ -43,6 +43,7 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(toggleFavorite(_:)): return presentation.canToggleFavorite
         case #selector(showEdit(_:)), #selector(showPreview(_:)), #selector(showSource(_:)), #selector(selectEditorMode(_:)):
             return presentation.editorState.prompt != nil
+        case #selector(togglePromptDetails(_:)): return presentation.editorState.form != nil
         case #selector(showFields(_:)), #selector(showHistory(_:)):
             return presentation.editorState.prompt != nil
         case #selector(showAssistant(_:)), #selector(writeWithAssistant(_:)):
@@ -72,6 +73,9 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(showEdit(_:)): item.state = presentation.editorMode == .edit ? .on : .off
         case #selector(showPreview(_:)): item.state = presentation.editorMode == .preview ? .on : .off
         case #selector(showSource(_:)): item.state = presentation.editorMode == .source ? .on : .off
+        case #selector(togglePromptDetails(_:)):
+            item.title = presentation.editorMode == .edit && presentation.isDetailsVisible
+                ? LibraryFormStrings.hideDetails : LibraryFormStrings.showDetails
         case #selector(showFields(_:)): item.state = presentation.isInspectorVisible && presentation.inspectorPane == .fields ? .on : .off
         case #selector(showHistory(_:)): item.state = presentation.isInspectorVisible && presentation.inspectorPane == .history ? .on : .off
         case #selector(showAssistant(_:)): item.state = presentation.isAssistantVisible ? .on : .off
@@ -137,6 +141,11 @@ extension LibraryWindowController: NSMenuItemValidation {
         guard commandsAvailable(in: window), presentation.editorState.prompt != nil else { return }
         window?.makeFirstResponder(nil)
         presentation.focusEditor(mode: .source)
+    }
+    @objc func togglePromptDetails(_ sender: Any?) {
+        guard commandsAvailable(in: window) else { return }
+        window?.makeFirstResponder(nil)
+        presentation.toggleDetails()
     }
     @objc func selectEditorMode(_ sender: NSToolbarItemGroup) {
         switch LibraryViewState.EditorMode(rawValue: sender.selectedIndex) {
