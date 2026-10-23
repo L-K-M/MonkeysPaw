@@ -184,6 +184,49 @@ final class MacForgetControlsTests: XCTestCase {
         XCTAssertEqual(try picker().fillModel?.values["topic"], "Alpha default")
     }
 
+    func testForgettingMultilineInputClearsItsNativeUndoHistory() throws {
+        try files.write(Data("---\ntitle: Alpha\nfields:\n  detail: {type: multiline, default: Default}\n---\n{{detail}}".utf8), at: "a.md")
+        try start()
+        let fill = try openForm("Alpha")
+        XCTAssertTrue(spin { self.find("fill-field-detail") != nil })
+        let text = try XCTUnwrap(find("fill-field-detail") as? PickerMultilineTextView)
+        let window = try XCTUnwrap(text.window)
+        XCTAssertTrue(window.makeFirstResponder(text))
+        let undo = try XCTUnwrap(text.undoManager)
+        undo.groupsByEvent = false
+        undo.beginUndoGrouping()
+        text.insertText(" forgotten input", replacementRange: NSRange(location: text.string.utf16.count, length: 0))
+        text.breakUndoCoalescing()
+        undo.endUndoGrouping()
+        XCTAssertTrue(undo.canUndo)
+        XCTAssertEqual(fill.values["detail"], "Default forgotten input")
+
+        try presentation().forgetSelectedValues()
+        XCTAssertTrue(spin { text.string == "Default" })
+        XCTAssertFalse(undo.canUndo, "Undo must not resurrect forgotten field values or replay stale ranges")
+        XCTAssertFalse(undo.canRedo)
+        XCTAssertEqual(fill.values["detail"], "Default")
+        XCTAssertTrue(panel.isVisible)
+    }
+
+    func testForgettingFocusedTextRetiresCompositionAndUpdatesTheFieldEditor() throws {
+        try start()
+        let fill = try openForm("Alpha")
+        XCTAssertTrue(spin { (self.find("fill-field-topic") as? PickerTextField)?.currentEditor() != nil })
+        let field = try XCTUnwrap(find("fill-field-topic") as? PickerTextField)
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        editor.setMarkedText("かな", selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        XCTAssertTrue(editor.hasMarkedText())
+
+        try presentation().forgetSelectedValues()
+        XCTAssertTrue(spin { editor.string == "Alpha default" && !editor.hasMarkedText() })
+        XCTAssertEqual(field.stringValue, "Alpha default")
+        XCTAssertEqual(fill.values["topic"], "Alpha default")
+        XCTAssertFalse(editor.undoManager?.canUndo ?? false)
+        XCTAssertTrue(panel.isVisible)
+    }
+
     func testForgetHiddenWithoutSelectionAndRetiredPresentationCannotMutateValues() throws {
         try start()
         let alpha = try identity("a.md")

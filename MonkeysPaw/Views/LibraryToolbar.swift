@@ -44,19 +44,17 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
         }
         if identifier == .libraryEditorMode {
             let labels = [EditorStrings.editTab, EditorStrings.previewTab, LibraryFormStrings.source]
-            let symbols = ["pencil", "eye", "curlybraces"]
-            let images = symbols.map { NSImage(systemSymbolName: $0, accessibilityDescription: nil) ?? NSImage() }
-            let item = NSToolbarItemGroup(itemIdentifier: identifier, images: images,
+            let item = NSToolbarItemGroup(itemIdentifier: identifier, titles: labels,
                 selectionMode: .selectOne, labels: labels, target: self, action: #selector(selectEditorMode(_:)))
-            for (index, symbol) in symbols.enumerated() {
-                item.subitems[index].image = NSImage(systemSymbolName: symbol, accessibilityDescription: labels[index])
-                item.subitems[index].toolTip = labels[index]
+            for index in labels.indices {
+                item.subitems[index].toolTip = labels[index] + " (⌘\(index + 1))"
                 item.subitems[index].paletteLabel = labels[index]
             }
             item.label = LibraryStrings.editPreview
             item.paletteLabel = item.label
             item.toolTip = item.label
             item.selectedIndex = presentation.editorMode.rawValue
+            item.visibilityPriority = .high
             return item
         }
         if identifier == .librarySearch {
