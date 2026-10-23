@@ -51,7 +51,7 @@ struct ServerAccountMigrationTests {
             await repository.reject("UPDATE users SET display_name = NULL")
             try await repository.database.migrate()
             try await repository.execute("UPDATE users SET display_name = NULL")
-            #expect(try await repository.count("schema_migrations") == 5)
+            #expect(try await repository.count("schema_migrations") == ServerMigration.current.count)
         }
     }
 }

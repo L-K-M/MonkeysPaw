@@ -27,7 +27,7 @@ struct ServerSnapshotMigrationTests {
             #expect(before.count == ServerLimits.snapshotSigningKeyBytes)
             #expect(try await MetaRepository(database: repository.database).databaseID() == identity)
             #expect(try await repository.count("prompts") == 1)
-            #expect(try await repository.count("schema_migrations") == 5)
+            #expect(try await repository.count("schema_migrations") == ServerMigration.current.count)
             #expect(try await repository.string("SELECT CAST(head_seq AS TEXT) AS head_seq FROM scope_heads", column: "head_seq") == "1")
             #expect(try await repository.string("SELECT CAST(floor_seq AS TEXT) AS floor_seq FROM scope_floors", column: "floor_seq") == "2")
         }
@@ -47,7 +47,7 @@ struct ServerSnapshotMigrationTests {
             #expect(try await repository.count("schema_migrations") == 3)
             try await repository.database.migrate()
             #expect(try await repository.count("snapshot_cursor_key") == 1)
-            #expect(try await repository.count("schema_migrations") == 5)
+            #expect(try await repository.count("schema_migrations") == ServerMigration.current.count)
         }
     }
 }
