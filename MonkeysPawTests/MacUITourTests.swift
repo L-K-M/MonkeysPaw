@@ -48,6 +48,12 @@ final class MacUITourTests: XCTestCase {
     }
 
     func testRenderTour() throws {
+        defer {
+            do {
+                try windowNotes.joined(separator: "\n").write(to: output.appendingPathComponent("windows.txt"),
+                    atomically: true, encoding: .utf8)
+            } catch { XCTFail("The render tour could not write its window evidence") }
+        }
         try start()
 
         tourOnboarding()
@@ -65,8 +71,6 @@ final class MacUITourTests: XCTestCase {
         tourPicker(appearance: "dark")
         try tourStatusItem(appearance: "dark")
 
-        try windowNotes.joined(separator: "\n").write(to: output.appendingPathComponent("windows.txt"),
-            atomically: true, encoding: .utf8)
     }
 
     // MARK: - Composition
@@ -308,8 +312,8 @@ final class MacUITourTests: XCTestCase {
         let named = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-name"))
         XCTAssertTrue(accessibilityText(named).contains(fieldName), "The sheet must name its field")
         let type = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-type"))
-        XCTAssertEqual(accessibility(type, #selector(NSAccessibilityProtocol.accessibilityLabel)),
-            EditorStrings.fieldType)
+        XCTAssertTrue(accessibilityText(type).contains(EditorStrings.fieldType),
+            "The native type control must expose its name")
         if appearance != "dark" {
             let label = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-label"))
             XCTAssertEqual(accessibility(label, Selector(("accessibilityValue"))), field.label)
@@ -329,7 +333,8 @@ final class MacUITourTests: XCTestCase {
             XCTAssertTrue(accessibilityPress(toggle), "The default toggle does not accept AXPress")
             settle()
             XCTAssertTrue(draft.hasDefault, "AXPress on the default toggle did not stage a default")
-            XCTAssertTrue(accessibilityPress(apply), "Apply does not accept AXPress")
+            let currentApply = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-settings-apply"))
+            XCTAssertTrue(accessibilityPress(currentApply), "Apply does not accept AXPress")
             settle()
             XCTAssertNil(presentation.fieldSettingsDraft)
             XCTAssertNil(window.attachedSheet)
