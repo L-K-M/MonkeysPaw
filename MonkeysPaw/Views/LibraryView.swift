@@ -311,7 +311,8 @@ struct LibraryEditorView: View {
             onEdit: presentation.edit,
             highlight: presentation.quoteHighlight,
             focusRevision: showsSource ? presentation.editorFocusRevision : 0,
-            isVisible: showsSource)
+            isVisible: showsSource,
+            loadState: presentation.editorState.status == .loading ? .loading : .ready)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 

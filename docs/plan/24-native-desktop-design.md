@@ -61,6 +61,9 @@ The example shows Source; Edit opens the properties form and body editor.
 - **Structure.** An `NSSplitViewController` with a sidebar, a content list,
   the editor and an inspector (`NSSplitViewItem` sidebar, content-list and
   inspector behaviours). Panes collapse instead of widening the window.
+  At compact widths the sidebar yields to the inspector, then returns when
+  space permits or the inspector closes. An explicit sidebar choice takes
+  precedence over that automatic restoration.
 - **Toolbar.** A unified, customizable `NSToolbar` with tracking separators:
   sidebar toggle; New Prompt in the list column; an Edit/Preview/Source segmented
   control, Favourite and Assistant in the editor column; a search field
@@ -106,6 +109,11 @@ The example shows Source; Edit opens the properties form and body editor.
   picker opens only when there is no regular window to resume.
 - **Save feedback.** A compact Save control beside validation and draft status
   makes explicit saving discoverable without adding a permanent button row.
+- **Undo boundaries.** Initial and external loads establish native text baselines;
+  they are never undoable replacements of an empty buffer. Typing, save
+  normalization and draft edits retain native undo. A successful Forget resets
+  live picker controls, composition and undo together, even when reset values
+  equal the previous render. A failed Forget preserves them.
 
 ### 24.4 Menus (macOS)
 

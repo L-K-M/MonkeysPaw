@@ -7,6 +7,7 @@ import SwiftUI
 final class PickerViewState: ObservableObject {
     @Published private(set) var state: PickerModel.State
     @Published private(set) var focusRevision: UInt64 = 0
+    @Published private(set) var inputResetRevision: UInt64 = 0
     @Published private(set) var transientStatus: String?
     @Published var pasteTarget = Strings.noPasteTarget
     let model: PickerModel
@@ -100,6 +101,9 @@ final class PickerViewState: ObservableObject {
         guard isCurrent(), showsForgetValues else { return }
         transientStatus = nil
         model.forgetSelectedValues()
+        // A reset can return to the last rendered value before SwiftUI echoes
+        // native typing. Invalidate controls even when their values compare equal.
+        if model.forgetValuesError == nil { inputResetRevision &+= 1 }
     }
 
     var status: String {

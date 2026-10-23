@@ -21,6 +21,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private(set) var promptList: LibraryPromptListController?
     private(set) var inspectorItem: NSSplitViewItem?
     private var inspectorObservation: NSKeyValueObservation?
+    private var sidebarObservation: NSKeyValueObservation?
+    private var restoresSidebarAfterInspector = false
+    private var isAdaptingColumns = false
     private var presentationObservation: AnyCancellable?
     private var filterObservation: AnyCancellable?
     private var presentationUpdatePending = false
@@ -139,6 +142,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     func windowDidDeminiaturize(_ notification: Notification) { refreshDialogsAfterVisibilityChange() }
     func windowDidBecomeKey(_ notification: Notification) { refreshDialogsAfterVisibilityChange() }
     func windowDidChangeOcclusionState(_ notification: Notification) { refreshDialogsAfterVisibilityChange() }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        adaptInspectorLayout(to: frameSize.width)
+        return frameSize
+    }
 
     func refreshDialogsAfterVisibilityChange() { updateDialog() }
 
@@ -261,6 +269,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             window.representedURL = nil
         }
         window.isDocumentEdited = state.isDirty
+        adaptInspectorLayout(to: window.frame.width)
         if let item = inspectorItem, item.isCollapsed == presentation.isInspectorVisible {
             let collapsed = !presentation.isInspectorVisible
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { item.isCollapsed = collapsed }
@@ -274,6 +283,50 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             appliedSearchFocusRevision = presentation.focusRevision
             if searchItem != nil, window.toolbar?.isVisible == true { searchLibrary(nil) }
         }
+    }
+
+    /// At compact widths, temporarily trade the sidebar for the inspector
+    /// rather than allowing split-view minimums to widen the window.
+    private func adaptInspectorLayout(to width: CGFloat) {
+        guard !isAdaptingColumns, let split = splitController,
+              let sidebar = split.splitViewItems.first, let inspector = inspectorItem else { return }
+        isAdaptingColumns = true
+        defer { isAdaptingColumns = false }
+        if !presentation.isInspectorVisible {
+            guard restoresSidebarAfterInspector else { return }
+            inspector.isCollapsed = true
+            restoresSidebarAfterInspector = false
+            sidebar.isCollapsed = false
+            return
+        }
+        let required = expandedInspectorMinimumWidth
+        if width < required, !sidebar.isCollapsed {
+            restoresSidebarAfterInspector = true
+            sidebar.isCollapsed = true
+        } else if width >= required, restoresSidebarAfterInspector {
+            restoresSidebarAfterInspector = false
+            sidebar.isCollapsed = false
+        }
+    }
+
+    private var expandedInspectorMinimumWidth: CGFloat {
+        guard let split = splitController, let sidebar = split.splitViewItems.first, let inspector = inspectorItem else { return 0 }
+        let content = split.splitViewItems.filter { $0 !== sidebar && $0 !== inspector && !$0.isCollapsed }
+        return sidebar.minimumThickness + inspector.minimumThickness
+            + content.reduce(CGFloat.zero) { $0 + $1.minimumThickness }
+            + CGFloat(content.count + 1) * split.splitView.dividerThickness
+    }
+
+    private func toggleLibrarySidebar() {
+        guard let sidebar = splitController?.splitViewItems.first else { return }
+        let show = sidebar.isCollapsed
+        // An explicit sidebar command supersedes automatic layout restoration.
+        restoresSidebarAfterInspector = false
+        if show, presentation.isInspectorVisible, let window, window.frame.width < expandedInspectorMinimumWidth {
+            presentation.setInspectorVisible(false)
+            refreshWindowPresentation()
+        }
+        sidebar.isCollapsed = !show
     }
 
     /// Native toolbar transitions can emit search actions while rebuilding the
@@ -423,6 +476,12 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         window.validateCommand = { [weak self] item in self?.validateMenuItem(item) == true }
         let split = LibrarySplitViewController()
         split.validateCommand = { [weak self] item in self?.validateMenuItem(item) == true }
+        split.onToggleSidebar = { [weak self] in self?.toggleLibrarySidebar() }
+        split.onToggleInspector = { [weak self] in
+            guard let self else { return }
+            self.presentation.setInspectorVisible(!self.presentation.isInspectorVisible)
+            self.refreshWindowPresentation()
+        }
         split.splitView.isVertical = true
         split.splitView.autosaveName = "LibrarySplitView"
         let sidebar = NSHostingController(rootView: LibrarySidebarView(presentation: presentation))
@@ -438,10 +497,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         let list = LibraryPromptListController(presentation: presentation, mainThread: mainThread)
         list.validateCommand = { [weak self] item in self?.validateLibraryMenuItem(item, in: self?.window) == true }
         let listItem = NSSplitViewItem(contentListWithViewController: list)
-        listItem.minimumThickness = 240
+        listItem.minimumThickness = 220
         listItem.holdingPriority = .init(rawValue: 251)
         let editorItem = NSSplitViewItem(viewController: editor)
-        editorItem.minimumThickness = 360
+        editorItem.minimumThickness = 300
         editorItem.holdingPriority = .init(rawValue: 200)
         let inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
         inspectorItem.minimumThickness = 280
@@ -454,6 +513,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         self.splitController = split
         self.promptList = list
         self.inspectorItem = inspectorItem
+        sidebarObservation = sidebarItem.observe(\.isCollapsed, options: [.new]) { [weak self] _, _ in
+            guard let self, !self.isAdaptingColumns else { return }
+            self.restoresSidebarAfterInspector = false
+        }
         inspectorObservation = inspectorItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
             self?.mainThread.run { [weak self] in self?.presentation.setInspectorVisible(!item.isCollapsed) }
         }

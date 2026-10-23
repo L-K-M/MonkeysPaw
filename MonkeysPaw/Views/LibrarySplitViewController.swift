@@ -4,16 +4,20 @@ import AppKit
 /// the responder chain, so they share its sheet and input-method validation.
 final class LibrarySplitViewController: NSSplitViewController, NSMenuItemValidation, NSToolbarItemValidation {
     var validateCommand: ((NSMenuItem) -> Bool)?
+    var onToggleSidebar: (() -> Void)?
+    var onToggleInspector: (() -> Void)?
 
     override func toggleSidebar(_ sender: Any?) {
         let item = NSMenuItem(title: LibraryStrings.showSidebar, action: #selector(toggleSidebar(_:)), keyEquivalent: "")
         guard validateCommand?(item) == true else { return }
+        if let onToggleSidebar { onToggleSidebar(); return }
         super.toggleSidebar(sender)
     }
 
     override func toggleInspector(_ sender: Any?) {
         let item = NSMenuItem(title: LibraryStrings.showInspector, action: #selector(toggleInspector(_:)), keyEquivalent: "")
         guard validateCommand?(item) == true else { return }
+        if let onToggleInspector { onToggleInspector(); return }
         super.toggleInspector(sender)
     }
 

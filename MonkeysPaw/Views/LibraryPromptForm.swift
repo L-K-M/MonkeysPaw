@@ -34,11 +34,11 @@ struct LibraryPromptForm: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 title
-                if presentation.isDetailsVisible { properties }
+                if presentation.isDetailsVisible { properties.disabled(!presentation.canEditSource) }
             }
                 .padding(12)
                 .id(presentation.sourceRevision)
-                .disabled(!presentation.canEditSource || !isVisible)
+                .disabled(!presentation.libraryAvailable)
             Divider()
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -62,7 +62,8 @@ struct LibraryPromptForm: View {
                 isEditable: presentation.canEditSource && presentation.editorState.form != nil,
                 onEdit: { presentation.edit(.body($0)) },
                 focusRevision: isVisible ? presentation.editorFocusRevision : 0,
-                isVisible: isVisible, content: .body)
+                isVisible: isVisible, content: .body,
+                loadState: presentation.editorState.status == .loading ? .loading : .ready)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .disabled(!isVisible)
@@ -77,6 +78,7 @@ struct LibraryPromptForm: View {
                 label: LibraryFormStrings.title, identifier: "library-prompt-title",
                 wantsFocus: false, focusRevision: 0,
                 onChange: { presentation.edit(.title($0)) })
+                .disabled(!presentation.canEditSource)
             if presentation.editorState.isPrivate {
                 Image(systemName: "lock.fill")
                     .foregroundStyle(.secondary)

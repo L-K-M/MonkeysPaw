@@ -238,6 +238,51 @@ final class MacLibraryEditorTests: XCTestCase {
         return try XCTUnwrap(window.contentView.flatMap(find), "Missing property control: " + identifier)
     }
 
+    func testSearchReturnFocusesTheFirstResultAfterItsAsynchronousLoad() throws {
+        try put("---\ntitle: Alpha\n---\nBody")
+        start()
+        delegate.showLibrary()
+        let controller = try XCTUnwrap(delegate.libraryWindow)
+        let input = try LibrarySearchTestSupport.type("Alpha", in: controller)
+        XCTAssertNil(controller.presentation.editorState.prompt)
+        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+            doCommandBy: #selector(NSResponder.insertNewline(_:))))
+        XCTAssertEqual(controller.presentation.editorState.status, .loading)
+        work.drain()
+        let native = try window()
+        let text = try waitForNativeEditor("library-body", in: native)
+        let deadline = Date(timeIntervalSinceNow: 2)
+        while native.firstResponder !== text, Date() < deadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        XCTAssertTrue(native.firstResponder === text, "One Return must focus the loaded result")
+        XCTAssertEqual(controller.presentation.editorState.form?.body, "Body")
+    }
+
+    func testAsynchronousLoadEstablishesBothNativeUndoBaselines() throws {
+        let source = "---\ntitle: Note\n---\nBody"
+        try put(source)
+        start()
+        delegate.showLibrary()
+        let presentation = try XCTUnwrap(delegate.libraryWindow?.presentation)
+        presentation.selectPath("one.md")
+        let native = try window()
+        let raw = try waitForNativeEditor("library-source", in: native)
+        let body = try waitForNativeEditor("library-body", in: native)
+        XCTAssertEqual(raw.string, "")
+        XCTAssertFalse(raw.isEditable)
+        work.drain()
+        let deadline = Date(timeIntervalSinceNow: 2)
+        while (raw.string != source || body.string != "Body"), Date() < deadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        XCTAssertEqual(raw.string, source)
+        XCTAssertEqual(body.string, "Body")
+        XCTAssertFalse(raw.undoManager?.canUndo ?? true, "Loading a file is not a source edit")
+        XCTAssertFalse(body.undoManager?.canUndo ?? true, "Loading a file is not a body edit")
+        XCTAssertFalse(presentation.editorState.isDirty)
+    }
+
     func testCommandSSavesAndFavouriteChangesTheOpenDraft() throws {
         let presentation = try open()
         presentation.edit("Draft")
