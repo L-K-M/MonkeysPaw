@@ -36,7 +36,7 @@ final class MacUITourTests: XCTestCase {
 
     override func tearDown() {
         statusItem?.menu?.cancelTracking()
-        if let item = statusItem { NSStatusBar.system.remove(item) }
+        if let item = statusItem { NSStatusBar.system.removeStatusItem(item) }
         statusItem = nil
         delegate?.pickerModel?.dismiss()
         for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
