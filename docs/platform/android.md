@@ -1047,3 +1047,61 @@ retain their race matrices. JVM reconstruction closes and reopens stores;
 it does not kill Android, run WorkManager's OS database or inspect logcat.
 Both engines' full real-server scenario gates and all owner rows remain
 separate proofs; local slice results belong in its handoff.
+
+## Android Expressive presentation checks
+
+The §25 redesign received a focused local smoke run on 2026-10-22 using an
+isolated Pixel 5 x86_64 emulator, Android 11/API 30. The tested build is signed
+and R8-minified, version 1.0.0/code 2, compiled for API 37. The signer certificate
+SHA-256 is the committed public signer recorded above. APK checksums, screen
+captures and detailed local evidence accompany the task's Android deliverables.
+
+The complete local gate passed, with a UTF-8 locale on the Paseo host:
+
+```bash
+env LANG=C.UTF-8 LC_ALL=C.UTF-8 JAVA_HOME=/opt/java/openjdk \
+  ANDROID_HOME=/home/paseo/Android/Sdk \
+  MONKEYSPAW_GOOGLE_MAVEN_URL=https://redirector.gvt1.com/edgedl/android/maven2/ \
+  android/gradlew -p android --max-workers=2 \
+  :core:test testDebugUnitTest lintDebug assembleDebug assembleRelease
+```
+
+| Focused scenario | Result | Observed evidence |
+|---|---|---|
+| Shared presentation | PASS | Inspected the actual library, Settings, Account, provider settings, source editor, preview, field/history empty states and Fill surfaces. Light and dark palettes render; app bars and docked actions stay distinct from content. |
+| Local prompt loop | PASS | Created and explicitly saved a disposable prompt, reopened its preview/history, changed its favourite, opened Fill and explicitly copied it. |
+| Picker insertion and switching | PASS | A fieldless disposable prompt was inserted literally once into a separate native EditText target; Android restored the prior AOSP keyboard. Repeated in landscape at 200% font scale. |
+| Protected and single-line targets | PASS | Password target hides prompt content and retains Switch keyboard. A multi-line prompt in a single-line target disables Insert and offers Copy with its warning. |
+| Inline choices and handoff | PASS | Scrolled to a choice, opened the menu, changed the option and used the toolbar's activity handoff. The editable Fill activity retained the selected option and builtin snapshot, with the AOSP keyboard restored. |
+| Adaptive composition | PASS | Inspected dark portrait picker renders at 100% and 200% font scale and landscape at 200%; inspected the app at 200% and a 1920×1200 wide viewport with the lazy browse sidebar. |
+| Guard decisions and accessible creation | PASS | At 200% text in phone landscape, Save, Discard and Cancel each expose at least a 48 dp visible action target. Cancel retained the draft; Discard closed it. New prompt exposes a localized accessible action and opens the editor. |
+
+The run exposed two IME integration constraints. Material 3 1.4.0's
+`ExposedDropdownMenuBox` composes an activity Back handler even while closed;
+scrolling such a field into the keyboard killed the process. Ordinary focusable
+popups also replace the external input target and retire its session. Inline
+choices now use ordinary, non-focusable menus; keyboard browse menus preserve
+focus too. The new source-boundary regression was observed failing before each
+fix, then passing with the complete gate. The signed release was used to verify
+the actual choice selection and handoff without a new crash or session reset.
+This source guard documents the framework boundary; it does not execute Compose.
+
+The same short-window check caught a clipped Cancel button in the three-choice
+editor guard. Compact wrapping actions and a scrollable explanation now keep
+all decisions reachable. The extended FAB uses its icon's localized label,
+because Material clears its visual text's semantics. Native accessibility-tree
+queries verified the creation action and the decision target bounds; this is
+not a physical TalkBack run.
+
+Review follow-up on 2026-10-23 confirmed that a plain and quoted declaration of
+the same unused field survive normalization as two forensic rows with a
+duplicate-key issue. The Fields tab therefore uses positional list identity,
+not field-name keys. The regression first failed against the name-keyed view,
+then passed with the full gate; the minified release displayed both malformed
+declarations without crashing. Parsing and source preservation are unchanged.
+
+Physical TalkBack, external keyboards, OEM/gesture-navigation behavior, API 26/27
+runtime and Android 12+ dynamic-color/runtime checks remain **NOT RUN**. The
+software emulator is not performance evidence. Paid-provider and deployed-server
+flows, cross-device sync, the Gboard/Samsung matrix and the existing M8–M11 owner
+rows remain separate acceptance work; these focused UI results do not close them.

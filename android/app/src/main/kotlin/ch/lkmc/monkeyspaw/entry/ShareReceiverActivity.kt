@@ -8,6 +8,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material3.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -27,6 +31,9 @@ import ch.lkmc.monkeyspaw.ui.fill.FillViewModelFactory
 import ch.lkmc.monkeyspaw.ui.library.LibraryViewModel
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferUiState
 import ch.lkmc.monkeyspaw.ui.locallibrary.SeedOfferViewModel
+import ch.lkmc.monkeyspaw.ui.theme.MonkeysPawTheme
+import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
+import ch.lkmc.monkeyspaw.ui.components.PawScreen
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -85,17 +92,22 @@ class ShareReceiverActivity : ComponentActivity() {
         }
         setContent {
             BackHandler { entry.back() }
-            MaterialTheme {
+            MonkeysPawTheme {
                 Scaffold { padding ->
-                    val modifier = Modifier.padding(padding)
+                    val modifier = Modifier.padding(padding).consumeWindowInsets(padding)
                     when (val destination = entry.destination.collectAsStateWithLifecycle().value) {
-                        ShareDestination.Choosing -> Column(modifier.fillMaxSize().padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(stringResource(R.string.share_title), style = MaterialTheme.typography.headlineSmall)
-                            Text(stringResource(R.string.share_help))
-                            Button(onClick = entry::useInPrompt) { Text(stringResource(R.string.share_use_in_prompt)) }
-                            Button(onClick = entry::saveAsNewPrompt) { Text(stringResource(R.string.share_save_as_new)) }
-                            TextButton(onClick = entry::back) { Text(stringResource(R.string.share_cancel)) }
+                        ShareDestination.Choosing -> PawScreen(stringResource(R.string.share_title), modifier, onBack = entry::back) {
+                            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawSpacing.section),
+                                verticalArrangement = Arrangement.spacedBy(PawSpacing.section)) {
+                                Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.primaryContainer) {
+                                    Icon(Icons.Rounded.ContentPaste, null, Modifier.padding(PawSpacing.large).size(32.dp),
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                                }
+                                Text(stringResource(R.string.share_help), style = MaterialTheme.typography.bodyLarge)
+                                Button(onClick = entry::useInPrompt, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.share_use_in_prompt)) }
+                                OutlinedButton(onClick = entry::saveAsNewPrompt, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.share_save_as_new)) }
+                                TextButton(onClick = entry::back) { Text(stringResource(R.string.share_cancel)) }
+                            }
                         }
                         is ShareDestination.Filling -> FillRouteContent(destination.form, library, seedOffer, modifier)
                         is ShareDestination.Editing -> {

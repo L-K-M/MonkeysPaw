@@ -1,7 +1,8 @@
 <resources>
     <string name="account_title">Account</string>
     <string name="account_settings">Settings · Account</string>
-    <string name="account_back">Back to Library</string>
+    <string name="account_sign_in_section">Server and sign-in</string>
+    <string name="account_sync_section">Sync</string>
     <string name="account_inactive">Sync is off. Your library is available locally.</string>
     <string name="account_active">Signed in</string>
     <string name="account_connection">%1$s at %2$s</string>

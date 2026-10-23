@@ -63,8 +63,8 @@ internal class KeyboardTileSetupBoundaryTest {
     fun `unresolved settings show loading before any setup title`() {
         val screen = root.resolve("ui/setup/KeyboardTileSetupScreen.kt").readText()
         val loading = screen.indexOf("if (state.loading)")
-        val loadingExit = screen.indexOf("return@Column", loading)
-        val title = screen.indexOf("Text(stringResource(R.string.setup_title)")
+        val loadingExit = screen.indexOf("return", loading)
+        val title = screen.indexOf("PawScreen(stringResource(R.string.design_setup_title)")
         assertTrue(loading >= 0 && loadingExit > loading && title > loadingExit,
             "KeyboardTileSetupScreen must finish the loading branch before rendering the setup title")
     }

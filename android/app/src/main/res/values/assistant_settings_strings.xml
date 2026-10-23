@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="assistant_settings_title">Assistant settings</string>
-    <string name="assistant_settings_back">Back to library</string>
+    <string name="assistant_profile_label">Profile</string>
+    <string name="assistant_section_profile">Profile</string>
+    <string name="assistant_section_endpoint">Endpoint</string>
+    <string name="assistant_section_model">Model</string>
+    <string name="assistant_empty_title">No provider configured</string>
     <string name="assistant_key_disclosure">API keys are encrypted locally using AndroidKeyStore. Hardware protection depends on your device. Each profile has its own key; stored keys are never displayed. There is no plaintext fallback.</string>
     <string name="assistant_outbound_disclosure">Test connection sends only model-list requests to your provider. Save and other settings edits send no network requests. Write sends your brief; Review and Improve send the current template, including front matter, plus instructions and selected findings. Explicit retries may send the session transcript and feedback. Private prompts block Review and Improve. Fill previews and remembered field values are never sent. Providers see what you send. No telemetry.</string>
     <string name="assistant_profiles">Provider profiles</string>

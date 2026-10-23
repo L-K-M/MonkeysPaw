@@ -2,9 +2,9 @@ package ch.lkmc.monkeyspaw.ui.assistant
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -30,59 +30,77 @@ internal fun WriteScreen(
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
-    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        TextButton(onClick = onBack) { Text(stringResource(R.string.assistant_write_back)) }
-        Text(stringResource(R.string.assistant_write_title), style = MaterialTheme.typography.headlineMedium)
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item {
-                Text(stringResource(R.string.assistant_write_disclosure))
-                Text(stringResource(R.string.assistant_key_disclosure), style = MaterialTheme.typography.bodySmall)
+    AssistantScaffold(
+        title = stringResource(R.string.assistant_write_title),
+        onBack = onBack,
+        onSettings = onSettings,
+        footer = { AssistantFooter(state.assistant) },
+        modifier = modifier,
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.assistant_write_disclosure),
+                    style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.assistant_key_disclosure),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(value = state.brief, onValueChange = onBrief, enabled = state.canEdit,
                     label = { Text(stringResource(R.string.assistant_write_brief)) }, minLines = 3,
                     modifier = Modifier.fillMaxWidth())
                 AssistantEffortControl(state.effort, state.canEdit, onEffort)
-                Button(onClick = onWrite, enabled = state.canWrite) { Text(stringResource(R.string.assistant_write_send)) }
-                state.unavailable?.let { Text(stringResource(assistantUnavailableResource(it))) }
-                if (state.unavailable == AssistantUnavailable.PROVIDER) {
-                    TextButton(onClick = onSettings) { Text(stringResource(R.string.assistant_settings_title)) }
+                Button(onClick = onWrite, enabled = state.canWrite, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.assistant_write_send))
                 }
-                if (state.loading) CircularProgressIndicator()
+                state.unavailable?.let { reason ->
+                    val providerDown = reason == AssistantUnavailable.PROVIDER
+                    AssistantNotice(stringResource(assistantUnavailableResource(reason)),
+                        tone = AssistantTone.ERROR,
+                        actionLabel = stringResource(R.string.assistant_settings_title).takeIf { providerDown },
+                        onAction = onSettings.takeIf { providerDown })
+                }
+                if (state.loading) AssistantLoading()
                 if (state.loadFailed) {
-                    Text(stringResource(R.string.assistant_graph_failed), color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = onReload) { Text(stringResource(R.string.retry)) }
+                    AssistantNotice(stringResource(R.string.assistant_graph_failed), tone = AssistantTone.ERROR,
+                        actionLabel = stringResource(R.string.retry), onAction = onReload)
                 }
             }
-            item { AssistantResult(state.assistant, state.acceptanceOutcome) }
-            state.assistant?.artifact?.let { artifact ->
-                item { ArtifactDraft(artifact) }
-                item { ArtifactFields(artifact.fields) }
-                item { ArtifactNotes(artifact.notes) }
-            }
-            item { ArtifactIssues(state.assistant?.issues.orEmpty()) }
-            state.assistant?.candidate?.let { candidate -> item { ArtifactPreview(candidate) } }
-            item {
+        }
+        item { AssistantResult(state.assistant, state.acceptanceOutcome) }
+        state.assistant?.artifact?.let { artifact ->
+            item { ArtifactDraft(artifact) }
+            item { ArtifactFields(artifact.fields) }
+            item { ArtifactNotes(artifact.notes) }
+        }
+        item { ArtifactIssues(state.assistant?.issues.orEmpty()) }
+        state.assistant?.candidate?.let { candidate -> item { ArtifactPreview(candidate) } }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (state.isWorking || state.isAccepting) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    TextButton(onClick = onCancel) { Text(stringResource(R.string.assistant_cancel)) }
+                    AssistantBusy(onCancel)
                 } else if (state.assistant?.artifact != null) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        TextButton(onClick = onShowDiff, enabled = state.canShowDiff) { Text(stringResource(R.string.assistant_show_diff)) }
-                        Button(onClick = onAccept, enabled = state.canAccept) { Text(stringResource(R.string.assistant_accept)) }
-                        TextButton(onClick = onReject) { Text(stringResource(R.string.assistant_reject)) }
+                        OutlinedButton(onClick = onShowDiff, enabled = state.canShowDiff) {
+                            Text(stringResource(R.string.assistant_show_diff))
+                        }
+                        Button(onClick = onAccept, enabled = state.canAccept) {
+                            Text(stringResource(R.string.assistant_accept))
+                        }
+                        TextButton(onClick = onReject) {
+                            Text(stringResource(R.string.assistant_reject))
+                        }
                     }
                 }
                 if (state.canRetry) {
-                    Text(stringResource(R.string.assistant_retry_help), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.assistant_retry_help),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     OutlinedTextField(value = state.feedback, onValueChange = onFeedback, enabled = state.canEdit,
                         label = { Text(stringResource(R.string.assistant_feedback)) }, minLines = 2,
                         modifier = Modifier.fillMaxWidth())
-                    TextButton(onClick = onRetry) { Text(stringResource(R.string.assistant_retry_feedback)) }
+                    TextButton(onClick = onRetry, modifier = Modifier.align(Alignment.End)) {
+                        Text(stringResource(R.string.assistant_retry_feedback))
+                    }
                 }
             }
-            item { Spacer(Modifier.height(12.dp)) }
         }
-        HorizontalDivider()
-        AssistantFooter(state.assistant, Modifier.padding(vertical = 12.dp))
     }
 }

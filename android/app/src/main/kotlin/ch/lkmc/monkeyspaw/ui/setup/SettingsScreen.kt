@@ -2,19 +2,46 @@ package ch.lkmc.monkeyspaw.ui.setup
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Keyboard
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
+import ch.lkmc.monkeyspaw.ui.components.*
+import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 
 @Composable
-internal fun SettingsScreen(onKeyboardTileSetup: () -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SettingsScreen(onKeyboardTileSetup: () -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier,
+    onAccount: (() -> Unit)? = null, onAssistantSettings: (() -> Unit)? = null) {
     BackHandler(onBack = onBack)
-    Column(modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineMedium)
-        Button(onClick = onKeyboardTileSetup) { Text(stringResource(R.string.setup_title)) }
-        TextButton(onClick = onBack) { Text(stringResource(R.string.setup_back)) }
+    PawScreen(stringResource(R.string.settings_title), modifier, onBack = onBack) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawSpacing.large),
+            verticalArrangement = Arrangement.spacedBy(PawSpacing.section)) {
+            PawSectionHeading(stringResource(R.string.design_library_group))
+            Surface(shape = MaterialTheme.shapes.large) {
+                Column {
+                    PawSettingRow(stringResource(R.string.setup_title), stringResource(R.string.design_keyboard_subtitle),
+                        Icons.Rounded.Keyboard, onKeyboardTileSetup)
+                    onAccount?.let { account ->
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        PawSettingRow(stringResource(R.string.account_title), stringResource(R.string.design_account_subtitle),
+                            Icons.Rounded.AccountCircle, account)
+                    }
+                }
+            }
+            onAssistantSettings?.let { settings ->
+                PawSectionHeading(stringResource(R.string.design_assistant_section))
+                Surface(shape = MaterialTheme.shapes.large) {
+                    PawSettingRow(stringResource(R.string.assistant_settings_title), stringResource(R.string.design_assistant_subtitle),
+                        Icons.Rounded.Tune, settings)
+                }
+            }
+        }
     }
 }

@@ -18,7 +18,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/Theme.MonkeysPaw">
         <!-- Component-only startup must not initialize HTTP/logging or schedule profile work. -->
         <provider
             android:name="androidx.startup.InitializationProvider"
@@ -38,12 +38,14 @@
         </provider>
         <activity
             android:name=".entry.FillActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
             android:taskAffinity="ch.lkmc.monkeyspaw.fill" />
         <activity
             android:name=".entry.ProcessTextActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.PROCESS_TEXT" />
@@ -53,6 +55,7 @@
         </activity>
         <activity
             android:name=".entry.ShareReceiverActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
@@ -70,6 +73,7 @@
             android:theme="@android:style/Theme.NoDisplay" />
         <activity
             android:name=".MainActivity"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>

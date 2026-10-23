@@ -53,7 +53,8 @@ internal class LibraryScreenBoundaryTest {
         assertTrue(activity.contains("onSettings = setup::openSettings"))
         assertTrue(activity.contains("onAssistantSettings = assistantSettings::open"))
         val screen = packageRoot.resolve("ui/library/LibraryScreen.kt").readText()
-        val browserControls = screen.substringAfter("if (mode == LibraryMode.BROWSER) {").substringBefore("\n            }")
+        val browserControls = screen.substringAfter("actions = {").substringBefore("floatingActionButton = {")
+        assertTrue(browserControls.contains("if (mode == LibraryMode.BROWSER) {"))
         assertTrue(browserControls.contains("onWrite?.let"))
         assertTrue(browserControls.contains("onAssistantSettings?.let"))
         val ime = packageRoot.resolve("ime/ImeScreen.kt").readText()
@@ -62,9 +63,24 @@ internal class LibraryScreenBoundaryTest {
         assertFalse(ime.contains("onAssistantSettings"))
     }
 
+    @Test
+    fun `picker exits before the browser chrome and only browser rows expose editing and favourites`() {
+        val screen = packageRoot.resolve("ui/library/LibraryScreen.kt").readText()
+        val picker = screen.indexOf("if (mode == LibraryMode.IME_PICKER)")
+        val pickerExit = screen.indexOf("return", picker)
+        val chrome = screen.indexOf("PawScreen(")
+        assertTrue(picker >= 0 && pickerExit > picker && chrome > pickerExit)
+        assertFalse(screen.substring(picker, pickerExit).contains("OutlinedTextField"))
+        val row = screen.substringAfter("private fun PromptRow(")
+        val browser = row.indexOf("if (mode == LibraryMode.BROWSER)", row.indexOf("Column("))
+        assertTrue(browser >= 0 && row.indexOf("IconToggleButton") > browser)
+        assertTrue(row.indexOf("onEdit?.let") > browser)
+    }
+
     private fun validateView(source: String) {
         val imports = Regex("(?m)^import (.+)$").findAll(source).map { it.groupValues[1] }
         assertTrue(imports.all { it.startsWith("androidx.compose.") || it == "androidx.activity.compose.BackHandler" ||
+            it.startsWith("ch.lkmc.monkeyspaw.ui.components.") || it.startsWith("ch.lkmc.monkeyspaw.ui.theme.") ||
             it == "ch.lkmc.monkeyspaw.R" || it == "ch.lkmc.monkeyspaw.ui.assistant.ImproveDiffView" ||
             it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
                 "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview",

@@ -9,7 +9,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.consumeWindowInsets
+import ch.lkmc.monkeyspaw.ui.theme.MonkeysPawTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
@@ -97,9 +98,9 @@ class FillActivity : ComponentActivity() {
         }
         setContent {
             BackHandler { fill.cancel() }
-            MaterialTheme {
+            MonkeysPawTheme {
                 Scaffold { padding ->
-                    FillRouteContent(fill, library, seedOffer, Modifier.padding(padding))
+                    FillRouteContent(fill, library, seedOffer, Modifier.padding(padding).consumeWindowInsets(padding))
                 }
             }
         }

@@ -2,10 +2,13 @@ package ch.lkmc.monkeyspaw.ui.assistant
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -37,96 +40,151 @@ internal fun ReviewScreen(
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
-    Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        TextButton(onClick = onBack) { Text(stringResource(R.string.assistant_write_back)) }
-        Text(stringResource(R.string.assistant_review_title), style = MaterialTheme.typography.headlineMedium)
-        val result = state.assistant
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item {
-                Text(stringResource(R.string.assistant_review_disclosure))
-                Text(stringResource(R.string.assistant_key_disclosure), style = MaterialTheme.typography.bodySmall)
+    val result = state.assistant
+    AssistantScaffold(
+        title = stringResource(R.string.assistant_review_title),
+        onBack = onBack,
+        onSettings = onSettings,
+        footer = { AssistantFooter(result) },
+        modifier = modifier,
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.assistant_review_disclosure),
+                    style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.assistant_key_disclosure),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 AssistantEffortControl(state.effort, !state.isWorking, onEffort)
-                Button(onClick = onReview, enabled = state.canReview) { Text(stringResource(R.string.assistant_review_send)) }
-                state.unavailable?.let { Text(stringResource(reviewUnavailableResource(it))) }
-                if (state.unavailable == ReviewUnavailable.PROVIDER) {
-                    TextButton(onClick = onSettings) { Text(stringResource(R.string.assistant_settings_title)) }
+                Button(onClick = onReview, enabled = state.canReview, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.assistant_review_send))
                 }
-                if (state.loading) CircularProgressIndicator()
+                state.unavailable?.let { reason ->
+                    val providerDown = reason == ReviewUnavailable.PROVIDER
+                    AssistantNotice(stringResource(reviewUnavailableResource(reason)),
+                        tone = AssistantTone.ERROR,
+                        actionLabel = stringResource(R.string.assistant_settings_title).takeIf { providerDown },
+                        onAction = onSettings.takeIf { providerDown })
+                }
+                if (state.loading) AssistantLoading()
                 if (state.loadFailed) {
-                    Text(stringResource(R.string.assistant_graph_failed), color = MaterialTheme.colorScheme.error)
-                    TextButton(onClick = onReload) { Text(stringResource(R.string.retry)) }
+                    AssistantNotice(stringResource(R.string.assistant_graph_failed), tone = AssistantTone.ERROR,
+                        actionLabel = stringResource(R.string.retry), onAction = onReload)
                 }
             }
-            item {
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 val failure = result?.failure
-                Text(stringResource(when {
-                    failure is ch.lkmc.monkeyspaw.core.services.AssistantFailure.Invalid -> R.string.assistant_review_invalid
-                    failure != null -> assistantFailureResource(failure)
-                    result?.isStale == true -> R.string.assistant_review_stale
-                    state.isWorking -> R.string.assistant_working
-                    result?.review != null -> R.string.assistant_review_complete
-                    else -> R.string.assistant_review_help
-                }))
-                if (state.isWorking) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    TextButton(onClick = onCancel) { Text(stringResource(R.string.assistant_cancel)) }
-                }
+                AssistantNotice(
+                    text = stringResource(when {
+                        failure is ch.lkmc.monkeyspaw.core.services.AssistantFailure.Invalid -> R.string.assistant_review_invalid
+                        failure != null -> assistantFailureResource(failure)
+                        result?.isStale == true -> R.string.assistant_review_stale
+                        state.isWorking -> R.string.assistant_working
+                        result?.review != null -> R.string.assistant_review_complete
+                        else -> R.string.assistant_review_help
+                    }),
+                    tone = when {
+                        failure != null -> AssistantTone.ERROR
+                        result?.isStale == true -> AssistantTone.WARNING
+                        state.isWorking -> AssistantTone.INFO
+                        result?.review != null -> AssistantTone.SUCCESS
+                        else -> AssistantTone.INFO
+                    })
+                if (state.isWorking) AssistantBusy(onCancel)
             }
-            item {
-                Text(stringResource(R.string.assistant_review_local), style = MaterialTheme.typography.titleMedium)
-                if (state.localIssues.isEmpty()) Text(stringResource(R.string.assistant_review_local_empty))
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistantSection(R.string.assistant_review_local)
+                if (state.localIssues.isEmpty()) {
+                    Text(stringResource(R.string.assistant_review_local_empty),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 ArtifactIssues(state.localIssues)
             }
-            result?.review?.let { review ->
-                item {
-                    Text(stringResource(R.string.assistant_review_summary), style = MaterialTheme.typography.titleMedium)
-                    SelectionContainer { Text(review.summary) }
-                    if (review.findings.isEmpty()) Text(stringResource(R.string.assistant_review_empty))
-                    Button(onClick = onImprove, enabled = state.canImproveWithThese) {
+        }
+        result?.review?.let { review ->
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistantSection(R.string.assistant_review_summary)
+                    SelectionContainer { Text(review.summary, style = MaterialTheme.typography.bodyMedium) }
+                    if (review.findings.isEmpty()) {
+                        Text(stringResource(R.string.assistant_review_empty),
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Button(onClick = onImprove, enabled = state.canImproveWithThese, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.assistant_improve_selected))
                     }
                 }
-                itemsIndexed(review.findings) { index, finding ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            val heading = stringResource(R.string.assistant_review_finding,
-                                stringResource(reviewSeverityResource(finding.severity)),
-                                stringResource(reviewCriterionResource(finding.criterion)))
-                            Row(Modifier.fillMaxWidth().toggleable(value = index in result.selectedFindings,
-                                enabled = state.canSelectFindings, role = Role.Checkbox, onValueChange = { onFinding(index) }),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = index in result.selectedFindings, onCheckedChange = null,
-                                    enabled = state.canSelectFindings)
-                                Text(heading, style = MaterialTheme.typography.titleSmall,
-                                    color = if (finding.severity == LlmReviewSeverity.HIGH) MaterialTheme.colorScheme.error
-                                        else MaterialTheme.colorScheme.onSurface)
-                            }
-                            SelectionContainer {
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text(stringResource(R.string.assistant_review_problem, finding.problem))
-                                    Text(stringResource(R.string.assistant_review_suggestion, finding.suggestion))
-                                    Text(stringResource(R.string.assistant_review_quote, finding.quote), fontFamily = FontFamily.Monospace)
-                                }
-                            }
-                            if (finding.quoteMatch is LlmReview.QuoteMatch.Matched) {
-                                TextButton(onClick = { onQuote(index) }, enabled = state.canSelectFindings) {
-                                    Text(stringResource(R.string.assistant_review_show_quote))
-                                }
-                            } else Text(stringResource(R.string.assistant_review_unmatched), style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+            }
+            itemsIndexed(review.findings) { index, finding ->
+                ReviewFindingCard(index, finding, result.selectedFindings, state.canSelectFindings, onFinding, onQuote)
+            }
+        }
+        if (state.canRetry) item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.assistant_review_retry_help),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(value = state.feedback, onValueChange = onFeedback,
+                    label = { Text(stringResource(R.string.assistant_feedback)) }, minLines = 2,
+                    modifier = Modifier.fillMaxWidth())
+                TextButton(onClick = onRetry, modifier = Modifier.align(Alignment.End)) {
+                    Text(stringResource(R.string.assistant_retry_feedback))
                 }
             }
-            if (state.canRetry) item {
-                Text(stringResource(R.string.assistant_review_retry_help), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(value = state.feedback, onValueChange = onFeedback,
-                    label = { Text(stringResource(R.string.assistant_feedback)) }, minLines = 2, modifier = Modifier.fillMaxWidth())
-                TextButton(onClick = onRetry) { Text(stringResource(R.string.assistant_retry_feedback)) }
-            }
-            item { Spacer(Modifier.height(12.dp)) }
         }
-        HorizontalDivider()
-        AssistantFooter(result, Modifier.padding(vertical = 12.dp))
+    }
+}
+
+@Composable
+private fun ReviewFindingCard(
+    index: Int,
+    finding: LlmReview.Finding,
+    selectedFindings: Set<Int>,
+    canSelect: Boolean,
+    onFinding: (Int) -> Unit,
+    onQuote: (Int) -> Unit,
+) {
+    val (icon, tint) = when (finding.severity) {
+        LlmReviewSeverity.HIGH -> Icons.Rounded.ErrorOutline to MaterialTheme.colorScheme.error
+        LlmReviewSeverity.MEDIUM -> Icons.Rounded.WarningAmber to MaterialTheme.colorScheme.tertiary
+        LlmReviewSeverity.LOW -> Icons.Rounded.Info to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val heading = stringResource(R.string.assistant_review_finding,
+                stringResource(reviewSeverityResource(finding.severity)),
+                stringResource(reviewCriterionResource(finding.criterion)))
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value = index in selectedFindings,
+                enabled = canSelect, role = Role.Checkbox, onValueChange = { onFinding(index) }),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = index in selectedFindings, onCheckedChange = null, enabled = canSelect)
+                Icon(icon, null, Modifier.size(18.dp), tint = tint)
+                Text(heading, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f),
+                    color = if (finding.severity == LlmReviewSeverity.HIGH) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurface)
+            }
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(stringResource(R.string.assistant_review_problem, finding.problem),
+                        style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.assistant_review_suggestion, finding.suggestion),
+                        style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.assistant_review_quote, finding.quote),
+                        fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (finding.quoteMatch is LlmReview.QuoteMatch.Matched) {
+                TextButton(onClick = { onQuote(index) }, enabled = canSelect) {
+                    Text(stringResource(R.string.assistant_review_show_quote))
+                }
+            } else {
+                Text(stringResource(R.string.assistant_review_unmatched),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

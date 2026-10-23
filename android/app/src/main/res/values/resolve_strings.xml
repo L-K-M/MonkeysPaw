@@ -3,6 +3,7 @@
     <string name="resolve_open">Resolve</string>
     <string name="resolve_help">Review the versions and choose what to keep. Opening this view changes nothing.</string>
     <string name="resolve_diff_title">Version comparison</string>
+    <string name="resolve_choices_title">Choose a resolution</string>
     <string name="resolve_server_version">Server</string>
     <string name="resolve_my_version">My version</string>
     <string name="resolve_keep_server">Keep server</string>
