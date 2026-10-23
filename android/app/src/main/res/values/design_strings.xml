@@ -9,6 +9,11 @@
     <string name="design_setup_title">Quick setup</string>
     <string name="design_setup_loading">Checking your setup…</string>
     <string name="design_no_matches_title">No matching prompts</string>
+    <string name="design_no_favourites">No favourites yet</string>
+    <string name="design_no_favourites_body">Star a prompt in your library to keep it close.</string>
+    <string name="design_no_recents">No recent prompts</string>
+    <string name="design_no_recents_body">Prompts you use will appear here.</string>
+    <string name="design_show_all_prompts">Show all prompts</string>
     <string name="design_empty_library_title">A place for your prompts</string>
     <string name="design_empty_library_body">Create a prompt for the things you write often. It will be ready whenever you need it.</string>
     <string name="design_account_subtitle">Your server, devices and shared libraries</string>

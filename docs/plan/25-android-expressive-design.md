@@ -119,3 +119,21 @@ weight. Refine composition without changing session or storage contracts:
 Acceptance is rendered light/dark phone, large-text, landscape and wide-screen
 inspection, plus browse/edit/fill and IME insertion, menu and switch-back checks.
 The existing JVM, lint, APK and privacy/session gates remain required.
+
+### 25.7 Flow composition
+
+- Inline Fill has one keyboard header naming the selected prompt, with Back,
+  activity handoff and Switch. Text-value rows open the existing guarded
+  activity handoff; choices remain local non-focusable menus. Remove duplicate
+  title/close/handoff chrome from the scrolling form. Insert/Copy stay docked.
+- Keep the common All/Favourites/Recent filters concise and Browse reachable
+  beside the scrolling filter rail. Browse retains conflicts, folders, groups
+  and tags; no filter is removed. Keyboard loading/empty states use compact
+  type and spacing so the state and recovery action fit the available panel.
+- Keep editor tabs below the app bar while source and history scroll. Show
+  localized revision/provenance dates and expose selected history semantics.
+  Preserve source, restore, validation, unsaved/conflict and read-only guards.
+
+Verify actual inline choices, text handoff, insertion/switching, protected
+targets, empty filters and editor navigation at ordinary/large font sizes,
+portrait/landscape and a wider viewport. Keep platform gaps explicit.

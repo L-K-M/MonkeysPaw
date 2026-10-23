@@ -18,6 +18,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
@@ -86,7 +87,7 @@ internal fun LibraryScreen(
             }
         }, floatingActionButton = {
             // Material's extended FAB clears text semantics and uses its icon's label.
-            onCreate?.let { create -> ExtendedFloatingActionButton(onClick = create,
+            onCreate?.takeIf { state.content != LibraryContent.EMPTY }?.let { create -> ExtendedFloatingActionButton(onClick = create,
                 icon = { Icon(Icons.Rounded.Add, stringResource(R.string.editor_new)) }, text = { Text(stringResource(R.string.editor_new)) }) }
         },
     ) {
@@ -140,32 +141,29 @@ private fun LibrarySearch(state: LibraryUiState, onQuery: (String) -> Unit, mode
 @Composable
 private fun LibraryFilters(state: LibraryUiState, onFilter: (LibraryFilter) -> Unit, mode: LibraryMode) {
     val gutter = if (mode == LibraryMode.IME_PICKER) PawSpacing.medium else PawLayout.pageGutter
-    LazyRow(contentPadding = PaddingValues(horizontal = gutter), horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-        items(state.sections.filter { it.filter.isPrimary() }, key = { sectionKey(it.filter) }) { section ->
-            FilterChip(selected = state.filter == section.filter, onClick = { onFilter(section.filter) },
-                label = { Text(sectionTitle(section)) },
-                shape = MaterialTheme.shapes.extraLarge, border = null,
-                colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
-                leadingIcon = if (state.filter == section.filter) {
-                    { Icon(Icons.Rounded.Check, null, Modifier.size(18.dp)) }
-                } else null)
+    val sections = libraryFilterSections(state.sections)
+    val activeBrowse = sections.browse.firstOrNull { it.filter == state.filter }
+    val activeTitle = activeBrowse?.let { sectionTitle(it) }
+    var expanded by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().padding(end = gutter), verticalAlignment = Alignment.CenterVertically) {
+        LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(start = gutter, end = PawSpacing.small),
+            horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+            activeBrowse?.let { section -> item(key = sectionKey(section.filter)) {
+                LibraryFilterChip(section, selected = true, onClick = { expanded = true })
+            } }
+            items(sections.quick, key = { sectionKey(it.filter) }) { section ->
+                LibraryFilterChip(section, selected = state.filter == section.filter, onClick = { onFilter(section.filter) })
+            }
         }
-        val browse = state.sections.filterNot { it.filter.isPrimary() }
-        if (browse.isNotEmpty()) item {
-            var expanded by remember { mutableStateOf(false) }
+        if (sections.browse.isNotEmpty()) {
             Box {
-                FilterChip(selected = !state.filter.isPrimary(), onClick = { expanded = true },
-                    label = { Text(browse.firstOrNull { it.filter == state.filter }?.let { sectionTitle(it) }
-                        ?: stringResource(R.string.design_browse)) },
-                    shape = MaterialTheme.shapes.extraLarge, border = null,
-                    colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                    leadingIcon = { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)) },
-                    trailingIcon = { Icon(Icons.Rounded.ExpandMore, null, Modifier.size(18.dp)) })
+                FilledTonalIconButton(onClick = { expanded = true }, modifier = Modifier.semantics {
+                    activeTitle?.let { stateDescription = it }
+                }) { Icon(Icons.Rounded.FolderOpen, stringResource(R.string.design_browse)) }
                 // The external editor must remain the input target while the keyboard's menu is open.
                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.heightIn(max = 360.dp),
                     properties = PopupProperties(focusable = mode == LibraryMode.BROWSER)) {
-                    for (section in browse) DropdownMenuItem(text = { Text(sectionTitle(section)) },
+                    for (section in sections.browse) DropdownMenuItem(text = { Text(sectionTitle(section)) },
                         leadingIcon = { Icon(sectionIcon(section.filter), null) },
                         trailingIcon = { Text(section.count.toString(), style = MaterialTheme.typography.labelMedium) },
                         onClick = { expanded = false; onFilter(section.filter) })
@@ -173,6 +171,17 @@ private fun LibraryFilters(state: LibraryUiState, onFilter: (LibraryFilter) -> U
             }
         }
     }
+}
+
+@Composable
+private fun LibraryFilterChip(section: LibrarySection, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(selected = selected, onClick = onClick,
+        label = { Text(sectionTitle(section), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = PawLayout.filterLabelWidth)) },
+        shape = MaterialTheme.shapes.extraLarge, border = null,
+        colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
+        leadingIcon = if (selected) { { Icon(Icons.Rounded.Check, null, Modifier.size(18.dp)) } } else null)
 }
 
 @Composable
@@ -184,6 +193,7 @@ private fun LibraryResults(
     onResolve: ((LibrarySelection) -> Unit)? = null, notice: String? = null,
     scrollingHeader: (@Composable () -> Unit)? = null,
 ) {
+    val density = if (mode == LibraryMode.IME_PICKER) PawContentDensity.COMPACT else PawContentDensity.COMFORTABLE
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = if (onCreate != null) 96.dp else PawSpacing.large)) {
         // Keep one header location through IME resizing, and let short windows scroll past it.
         scrollingHeader?.let { header -> item { header() } }
@@ -212,14 +222,24 @@ private fun LibraryResults(
                 } })
         } }
         when (state.content) {
-            LibraryContent.LOADING -> item { PawLoading(stringResource(R.string.library_loading)) }
+            LibraryContent.LOADING -> item { PawLoading(stringResource(R.string.library_loading), density = density) }
             LibraryContent.EMPTY -> item {
                 PawEmptyState(stringResource(R.string.design_empty_library_title), stringResource(R.string.design_empty_library_body),
-                    Icons.Rounded.AutoAwesome, actionLabel = onCreate?.let { stringResource(R.string.editor_new) }, onAction = onCreate)
+                    Icons.Rounded.AutoAwesome, actionLabel = onCreate?.let { stringResource(R.string.editor_new) }, onAction = onCreate,
+                    density = density)
             }
             LibraryContent.NO_MATCH -> item {
-                PawEmptyState(stringResource(R.string.design_no_matches_title), stringResource(R.string.library_no_match),
-                    Icons.Rounded.SearchOff, actionLabel = stringResource(R.string.library_clear_filters), onAction = onClearFilters)
+                val (title, body, icon) = when {
+                    state.query.isBlank() && state.filter == LibraryFilter.Favourites ->
+                        Triple(R.string.design_no_favourites, R.string.design_no_favourites_body, Icons.Rounded.StarBorder)
+                    state.query.isBlank() && state.filter == LibraryFilter.Recent ->
+                        Triple(R.string.design_no_recents, R.string.design_no_recents_body, Icons.Rounded.History)
+                    else -> Triple(R.string.design_no_matches_title, R.string.library_no_match, Icons.Rounded.SearchOff)
+                }
+                PawEmptyState(stringResource(title), stringResource(body), icon,
+                    actionLabel = stringResource(if (state.query.isBlank()) R.string.design_show_all_prompts else R.string.library_clear_filters),
+                    onAction = onClearFilters,
+                    density = density)
             }
             LibraryContent.FAILED, LibraryContent.READY -> Unit
         }
@@ -315,9 +335,6 @@ private fun PromptOptions(title: String, onEdit: (() -> Unit)?, onResolve: (() -
         }
     }
 }
-
-private fun LibraryFilter.isPrimary() = this == LibraryFilter.All || this == LibraryFilter.Favourites ||
-    this == LibraryFilter.Recent || this == LibraryFilter.Conflicts
 
 private fun sectionIcon(filter: LibraryFilter) = when (filter) {
     LibraryFilter.All -> Icons.Rounded.Description
