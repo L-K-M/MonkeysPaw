@@ -447,13 +447,20 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   modes; Fields, History and the Assistant are inspector panes (§24.3).
   Edit defaults to a form: title, description, individual tags, a Private
   toggle and a separate prompt-body editor. Source is an alternative mode
-  (⌘/Ctrl+3) for the complete file, including advanced placeholder definitions
-  and custom metadata. Both modes share one draft, explicit Save, validation,
+  (⌘/Ctrl+3) for the complete file and custom metadata. Placeholder settings
+  in the visual form edit type, label, description, an optional default,
+  choice labels/values, optional and remember. Implicit placeholders become
+  declarations only after a setting changes. Settings are staged with Apply
+  and Cancel; Apply updates the draft, not the file. Choice settings require
+  an option and a matching default when enabled. Builtins have no settings.
+  Android exposes the same controls in Fields. Both modes share one draft, explicit Save, validation,
   history and conflict handling. Switching modes never writes or normalizes
   the draft. Form edits retain IDs, optional-key presence, field declarations
   and unknown metadata; body-only edits retain the original header bytes.
   Malformed headers fall back to Source with an explanation. Invalid body
-  placeholders stay editable in the form. Fields lists parsed fields read-only.
+  placeholders stay editable in the form. Unknown declaration and option keys
+  survive setting edits; retained options keep their metadata when reordered
+  or removed. Malformed/future headers remain inspectable, with settings disabled.
   Preview renders with
   field defaults (or the field name when there is none), the real date and
   time, and a `{clipboard}` placeholder; browsing or typing never reads the

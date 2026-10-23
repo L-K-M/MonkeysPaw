@@ -1165,6 +1165,195 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertEqual(presentation.activeLibraryPath, other.path)
     }
 
+    func testFieldSettingsApplyPatchesOnlyChangedPropertiesAndStaysADraft() throws {
+        let source = "---\nfields:\n  tone: {default: brief, hint: keep}\n---\nHello {{tone}} {{implicit}} {{date}}"
+        let presentation = try open(source)
+        let settings = try XCTUnwrap(presentation.editorState.form?.fieldSettings)
+        XCTAssertEqual(settings.map(\.name), ["tone", "implicit"], "Builtin {{date}} never gets a row")
+        let field = try XCTUnwrap(settings.first { $0.name == "tone" })
+        XCTAssertTrue(presentation.canEditFieldSettings)
+        presentation.requestFieldSettings(field)
+        let draft = try XCTUnwrap(presentation.fieldSettingsDraft)
+        XCTAssertEqual(draft.fieldName, "tone")
+        XCTAssertEqual(draft.staged.label, "tone")
+        XCTAssertTrue(draft.hasDefault)
+        draft.settings.label = "Tone"
+        draft.descriptionText = "How to speak"
+        draft.defaultText = "warm"
+        draft.settings.optional = true
+        draft.settings.remember = false
+        presentation.applyFieldSettings()
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(try files.read(at: "one.md"), Data(source.utf8), "Apply edits the draft, not the file")
+        presentation.save()
+        work.drain()
+        let saved = PromptCodec.parseFile(try files.read(at: "one.md"), filename: "one.md")
+        let tone = try XCTUnwrap(saved.frontMatter.fields.first { $0.name == "tone" })
+        XCTAssertEqual(tone.label, "Tone")
+        XCTAssertEqual(tone.description, "How to speak")
+        XCTAssertEqual(tone.defaultValue, "warm")
+        XCTAssertTrue(tone.optional)
+        XCTAssertFalse(tone.remember)
+        XCTAssertTrue(saved.source.contains("hint: keep"), "Unknown declaration keys survive")
+        XCTAssertFalse(saved.source.contains("implicit:"), "An untouched implicit field stays undeclared")
+        XCTAssertFalse(saved.source.contains("remember: true"), "Unchanged settings are not written")
+    }
+
+    func testFieldSettingsDescriptionKeepsEditedUnicodeBytes() throws {
+        let presentation = try open("---\nfields:\n  topic: {description: é}\n---\n{{topic}}")
+        let field = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first)
+        presentation.requestFieldSettings(field)
+        let draft = try XCTUnwrap(presentation.fieldSettingsDraft)
+        draft.descriptionText = "e\u{301}"
+        XCTAssertEqual(Data(try XCTUnwrap(draft.staged.description).utf8), Data("e\u{301}".utf8))
+        presentation.applyFieldSettings()
+        XCTAssertEqual(Data(try XCTUnwrap(presentation.editorState.fields.first?.description).utf8), Data("e\u{301}".utf8))
+    }
+
+    func testFieldSettingsCancelAndUnchangedApplyWriteNothing() throws {
+        let source = "---\nfields:\n  tone: {default: brief}\n---\n{{tone}} {{implicit}}"
+        let presentation = try open(source)
+        let field = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "tone" })
+        presentation.requestFieldSettings(field)
+        let draft = try XCTUnwrap(presentation.fieldSettingsDraft)
+        draft.settings.label = "Cancelled"
+        presentation.cancelFieldSettings()
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        XCTAssertEqual(presentation.editorState.source, source)
+        XCTAssertFalse(presentation.editorState.isDirty)
+        presentation.requestFieldSettings(field)
+        presentation.applyFieldSettings()
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        XCTAssertEqual(presentation.editorState.source, source)
+        XCTAssertFalse(presentation.editorState.isDirty, "An unchanged Apply does not dirty the draft")
+        let implicit = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "implicit" })
+        presentation.requestFieldSettings(implicit)
+        presentation.applyFieldSettings()
+        XCTAssertFalse(presentation.editorState.isDirty)
+        presentation.requestFieldSettings(implicit)
+        try XCTUnwrap(presentation.fieldSettingsDraft).settings.optional = true
+        presentation.applyFieldSettings()
+        XCTAssertTrue(presentation.editorState.isDirty)
+        let applied = try XCTUnwrap(presentation.editorState.source)
+        XCTAssertTrue(applied.contains("implicit:"), "A changed implicit field becomes declared")
+        XCTAssertTrue(applied.contains("optional: true"))
+        XCTAssertFalse(applied.contains("label: implicit"), "Unchanged settings are not declared")
+        XCTAssertFalse(applied.contains("remember: true"), "Unchanged settings are not declared")
+    }
+
+    func testFieldSettingsChoiceValidationBlocksInvalidApplyAndEmptyDefaultApplies() throws {
+        let source = "---\nfields:\n  color: {type: choice, options: [red, green], default: red}\n---\n{{color}}"
+        let presentation = try open(source)
+        let field = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "color" })
+        presentation.requestFieldSettings(field)
+        let draft = try XCTUnwrap(presentation.fieldSettingsDraft)
+        draft.settings.options = []
+        XCTAssertEqual(draft.issue, .missingOptions)
+        XCTAssertEqual(draft.issueMessage, LibraryFieldStrings.missingChoices)
+        presentation.applyFieldSettings()
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        XCTAssertEqual(presentation.editorState.source, source)
+        XCTAssertFalse(presentation.editorState.isDirty, "An invalid Apply writes nothing")
+        presentation.requestFieldSettings(field)
+        try XCTUnwrap(presentation.fieldSettingsDraft).defaultText = "blue"
+        XCTAssertEqual(presentation.fieldSettingsDraft?.issue, .invalidDefault)
+        XCTAssertEqual(presentation.fieldSettingsDraft?.issueMessage, LibraryFieldStrings.invalidDefault)
+        presentation.applyFieldSettings()
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        XCTAssertFalse(presentation.editorState.isDirty)
+        presentation.requestFieldSettings(field)
+        let valid = try XCTUnwrap(presentation.fieldSettingsDraft)
+        valid.settings.options.append(PromptFieldOptionSettings(label: "None", value: ""))
+        valid.defaultText = ""
+        XCTAssertNil(valid.issue, "An empty literal default matches an empty choice value")
+        presentation.applyFieldSettings()
+        XCTAssertTrue(presentation.editorState.isDirty)
+        let applied = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "color" })
+        XCTAssertEqual(applied.defaultValue, "", "An enabled empty default is present, not nil")
+        XCTAssertEqual(applied.options.map(\.value), ["red", "green", ""])
+    }
+
+    func testFieldSettingsSheetRetiresOnConflictAndPendingDecision() throws {
+        try put("Second {{other}}", at: "two.md")
+        let presentation = try open("Original {{field}}")
+        let field = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "field" })
+        presentation.edit("Mine {{field}}")
+        presentation.requestFieldSettings(field)
+        XCTAssertNotNil(presentation.fieldSettingsDraft)
+        try put("Theirs")
+        try XCTUnwrap(watchers.first).emit(.file(FileStoreEvent(relativePath: "one.md", kind: .modified)))
+        work.drain()
+        XCTAssertNotNil(presentation.editorState.conflict)
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        XCTAssertFalse(presentation.canEditFieldSettings)
+        presentation.requestFieldSettings(field)
+        XCTAssertNil(presentation.fieldSettingsDraft, "A live conflict refuses a new sheet")
+        try respond(.conflict(.keepMine))
+        work.drain()
+        XCTAssertNil(presentation.editorState.conflict)
+        XCTAssertEqual(try body(), "Mine {{field}}")
+        XCTAssertTrue(presentation.canEditFieldSettings)
+        presentation.edit("Unsaved {{field}}")
+        presentation.requestFieldSettings(field)
+        XCTAssertNotNil(presentation.fieldSettingsDraft)
+        presentation.selectPath("two.md")
+        XCTAssertNotNil(presentation.editorState.pendingDecision)
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        presentation.requestFieldSettings(field)
+        XCTAssertNil(presentation.fieldSettingsDraft, "A pending decision refuses a new sheet")
+        try respond(.decision(.cancel))
+        XCTAssertTrue(presentation.canEditFieldSettings)
+    }
+
+    func testFieldSettingsSheetRetiresWhenPromptOrSourceChanges() throws {
+        try put("Second {{other}}", at: "two.md")
+        let presentation = try open("Original {{field}}")
+        let field = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "field" })
+        presentation.requestFieldSettings(field)
+        XCTAssertNotNil(presentation.fieldSettingsDraft)
+        presentation.selectPath("two.md")
+        work.drain()
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "two.md")
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        let other = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "other" })
+        presentation.requestFieldSettings(other)
+        XCTAssertNotNil(presentation.fieldSettingsDraft)
+        presentation.edit("Replaced")
+        XCTAssertNil(presentation.fieldSettingsDraft, "A new source retires the staged sheet")
+    }
+
+    func testFieldSettingsQueuedApplyAgainstChangedPromptOrSourceWritesNothing() throws {
+        let presentation = try open("Original {{field}}")
+        let field = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first { $0.name == "field" })
+        let prompt = presentation.editorState.prompt
+        let source = presentation.editorState.source
+        let staleTokens: [(LibraryPromptSelection?, String?, UInt64)] = [
+            (nil, source, presentation.sourceRevision),
+            (prompt, "A different source", presentation.sourceRevision),
+            (prompt, source, presentation.sourceRevision &+ 1),
+        ]
+        for (prompt, source, revision) in staleTokens {
+            let stale = LibraryFieldSettingsDraft(field: field, prompt: prompt,
+                source: source, sourceRevision: revision)
+            stale.settings.label = "Stale"
+            presentation.fieldSettingsDraft = stale
+            presentation.applyFieldSettings()
+            XCTAssertNil(presentation.fieldSettingsDraft)
+            XCTAssertFalse(presentation.editorState.isDirty)
+            XCTAssertEqual(presentation.editorState.source, "Original {{field}}")
+        }
+        // A draft that fails validation writes nothing even with a fresh token.
+        let invalid = LibraryFieldSettingsDraft(field: field,
+            prompt: presentation.editorState.prompt, source: presentation.editorState.source,
+            sourceRevision: presentation.sourceRevision)
+        invalid.settings.kind = .choice
+        presentation.fieldSettingsDraft = invalid
+        presentation.applyFieldSettings()
+        XCTAssertNil(presentation.fieldSettingsDraft)
+        XCTAssertFalse(presentation.editorState.isDirty)
+    }
+
     func testNativeSourceEditorUndoAndMarkedTextSurviveStateRefreshes() throws {
         XCTAssertTrue(Thread.isMainThread)
         let presentation = try open()

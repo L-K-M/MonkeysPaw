@@ -9,6 +9,13 @@ import org.snakeyaml.engine.v2.exceptions.MarkedYamlEngineException
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException
 
 object PromptCodec {
+    /** Null keeps malformed or future headers inspectable without enabling structured edits. */
+    fun fieldSettings(document: PromptDocument): List<PromptFieldSettings>? = PromptForm.of(document)?.fieldSettings
+
+    /** Changes the in-memory draft only; stores still own validation, history and saving. */
+    fun editingField(settings: PromptFieldSettings, document: PromptDocument, filename: String): PromptDocument =
+        PromptFieldEditing.edit(settings, document, filename)
+
     /** Content only: optional-key presence and body bytes survive; stores own identity and atomic writes. */
     fun write(document: PromptDocument): String = PromptWriter.write(document)
 

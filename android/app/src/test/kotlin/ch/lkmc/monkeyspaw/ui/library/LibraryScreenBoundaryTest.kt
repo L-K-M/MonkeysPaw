@@ -87,7 +87,8 @@ internal class LibraryScreenBoundaryTest {
             it == "ch.lkmc.monkeyspaw.R" || it == "ch.lkmc.monkeyspaw.ui.assistant.ImproveDiffView" ||
             it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
                 "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview",
-                "ch.lkmc.monkeyspaw.core.domain.format.PromptIssueSeverity",
+                 "ch.lkmc.monkeyspaw.core.domain.format.PromptIssueSeverity",
+                 "ch.lkmc.monkeyspaw.core.domain.format.PromptFieldSettings",
                 "ch.lkmc.monkeyspaw.core.domain.sync.SyncStatus",
                 "ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance",
                 "ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason",

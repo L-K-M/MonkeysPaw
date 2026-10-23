@@ -70,6 +70,7 @@ internal data class EditorUiState(
     val title: String = "",
     val issues: List<PromptIssue> = emptyList(),
     val fields: List<PromptField> = emptyList(),
+    val fieldSettings: List<PromptFieldSettings>? = null,
     val preview: String = "",
     val previewAvailable: Boolean = false,
     val isPrivate: Boolean = false,
@@ -104,7 +105,8 @@ internal data class EditorUiState(
 }
 
 internal data class EditorDocumentState(val title: String, val issues: List<PromptIssue>,
-    val fields: List<PromptField>, val preview: String, val previewAvailable: Boolean, val isPrivate: Boolean)
+    val fields: List<PromptField>, val preview: String, val previewAvailable: Boolean, val isPrivate: Boolean,
+    val fieldSettings: List<PromptFieldSettings>? = null)
 
 /** History rows show a localized medium date with a short time instead of the raw ISO instant. */
 internal fun editorTimestamp(instant: Instant, locale: Locale = Locale.getDefault(),
@@ -133,5 +135,5 @@ internal fun projectEditor(document: PromptDocument, now: Instant, zone: ZoneId)
         }
     }
     return EditorDocumentState(document.frontMatter.title, document.issues, fields, preview, document.canRender,
-        document.frontMatter.isPrivate)
+        document.frontMatter.isPrivate, PromptCodec.fieldSettings(document))
 }

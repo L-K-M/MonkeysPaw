@@ -6,6 +6,8 @@ import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
 import ch.lkmc.monkeyspaw.core.domain.format.PromptDocument
 import ch.lkmc.monkeyspaw.core.domain.format.PromptEdit
 import ch.lkmc.monkeyspaw.core.domain.format.PromptField
+import ch.lkmc.monkeyspaw.core.domain.format.FieldKind
+import ch.lkmc.monkeyspaw.core.domain.format.PromptFieldOptionSettings
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssue
 import ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError
 import ch.lkmc.monkeyspaw.core.domain.format.PromptRenderer
@@ -72,6 +74,26 @@ internal object PromptFixtures {
                 "tags" -> PromptMutations.editing(PromptEdit.Tags(value.strings()), document, filename)
                 "private" -> PromptMutations.editing(PromptEdit.IsPrivate(value.booleanValue()), document, filename)
                 "body" -> PromptMutations.editing(PromptEdit.Body(value.stringValue()), document, filename)
+                "field" -> {
+                    val field = value.objectValue()
+                    val current = PromptCodec.fieldSettings(document)?.singleOrNull { it.name == field["name"].stringValue() }
+                        ?: throw CorpusException("Missing editable field")
+                    val options = field["options"].arrayValue().map { element ->
+                        val option = element.objectValue()
+                        val label = option["label"].stringValue()
+                        val text = option["value"].stringValue()
+                        option["sourceIndex"]?.let {
+                            (current.options.getOrNull(it.integerValue().intValueExact())
+                                ?: throw CorpusException("Unknown option index")).copy(label = label, value = text)
+                        } ?: PromptFieldOptionSettings(label, text)
+                    }
+                    val changed = current.copy(kind = FieldKind.entries.single { it.rawValue == field["type"].stringValue() },
+                        label = field["label"].stringValue(),
+                        description = field["description"].takeUnless { it == JsonNull }?.stringValue(),
+                        defaultValue = field["default"].takeUnless { it == JsonNull }?.stringValue(),
+                        options = options, optional = field["optional"].booleanValue(), remember = field["remember"].booleanValue())
+                    PromptMutations.editing(PromptEdit.Field(changed), document, filename)
+                }
                 else -> throw CorpusException("Unknown edit property")
             }
         }

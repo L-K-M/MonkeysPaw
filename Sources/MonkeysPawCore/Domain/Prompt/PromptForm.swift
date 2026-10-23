@@ -6,6 +6,7 @@ public struct PromptForm: Equatable, Sendable {
     public let tags: [String]
     public let isPrivate: Bool
     public let body: String
+    public let fieldSettings: [PromptFieldSettings]
 
     init?(_ document: PromptDocument) {
         guard !document.isReadOnly,
@@ -15,6 +16,14 @@ public struct PromptForm: Equatable, Sendable {
         tags = document.frontMatter.tags
         isPrivate = document.frontMatter.isPrivate
         body = document.body
+        let used = Set(document.effectiveFields.map(\.name))
+        let fields = document.effectiveFields + document.frontMatter.fields.filter { !used.contains($0.name) }
+        let declarations = document.preservedHeader?.mapping?.first { PortableYAML.string($0.key) == "fields" }?.value.mapping
+        let defaults = Set(declarations?.compactMap { pair -> String? in
+            guard pair.value.mapping?.contains(where: { PortableYAML.string($0.key) == "default" }) == true else { return nil }
+            return PortableYAML.string(pair.key)
+        } ?? [])
+        fieldSettings = fields.map { PromptFieldSettings($0, hasDefault: defaults.contains($0.name)) }
     }
 }
 
@@ -25,4 +34,5 @@ public enum PromptEdit: Sendable {
     case tags([String])
     case isPrivate(Bool)
     case body(String)
+    case field(PromptFieldSettings)
 }

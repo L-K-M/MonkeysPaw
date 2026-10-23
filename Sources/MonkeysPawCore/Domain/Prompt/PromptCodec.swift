@@ -181,6 +181,8 @@ public enum PromptCodec {
         let key: String
         let value: Node
         switch edit {
+        case .field(let settings):
+            return try editingField(settings, in: document, filename: filename)
         case .body(let body):
             guard !body.utf8.elementsEqual(document.body.utf8) else { return document }
             let prefixCount = document.source.utf8.count - document.body.utf8.count

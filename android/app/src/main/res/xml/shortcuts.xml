@@ -3,7 +3,7 @@
     <shortcut
         android:shortcutId="insert_prompt"
         android:enabled="true"
-        android:icon="@drawable/ic_insert_prompt"
+        android:icon="@drawable/ic_paw"
         android:shortcutShortLabel="@string/entry_insert_prompt"
         android:shortcutLongLabel="@string/entry_shortcut_long_label">
         <intent

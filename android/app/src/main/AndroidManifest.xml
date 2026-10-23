@@ -105,7 +105,7 @@
         <service
             android:name=".entry.PromptTileService"
             android:exported="true"
-            android:icon="@drawable/ic_insert_prompt"
+            android:icon="@drawable/ic_paw"
             android:label="@string/entry_insert_prompt"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>

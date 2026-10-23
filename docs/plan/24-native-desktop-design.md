@@ -81,7 +81,8 @@ The example shows Source; Edit opens the properties form and body editor.
 - **Editor.** Edit shows labelled title, description, tag and privacy
   controls above a body-only text view. Source retains the complete file in
   a monospaced text view; both text views keep native Find, undo and highlighted
-  `{{placeholders}}`. Source also edits advanced metadata and declarations.
+   `{{placeholders}}`. Placeholder rows open settings without editing YAML.
+   Source also edits advanced metadata and declarations.
   Preview renders the body. A slim status bar below shows validation (with an expandable
   issue list) and the save state. A sync conflict shows a bar above the
   editor with Keep Server, Keep Mine, Keep Both and an expandable
@@ -115,6 +116,9 @@ matching Safari's bookmark command and Linux's Ctrl+D.
 
 The status item menu lists Show Picker with the global shortcut, Repeat
 Last Prompt, Library, Settings… ⌘,, Setup…, About and Quit.
+Its template icon is the paw silhouette in `media-sources/paw-symbol.svg`.
+`python3 scripts/generate-paw-icon.py` derives the macOS vector and Android
+tile, shortcut and Android 13+ themed-icon assets from that same source.
 
 ### 24.5 Settings, picker and other windows
 

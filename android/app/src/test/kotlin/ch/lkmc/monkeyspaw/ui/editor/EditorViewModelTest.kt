@@ -59,6 +59,67 @@ internal class EditorViewModelTest : TemporaryFiles() {
     private fun bytesAre(expected: ByteArray, path: String = "a.md") = assertTrue(bytes(path).contentEquals(expected), "Disk bytes differ.")
 
     @Test
+    fun `placeholder apply updates the guarded draft before save and records history once`() = runTest {
+        val original = "{{topic}}\r\n"
+        put(libraryDir.resolve("a.md"), original.encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        val staged = assertNotNull(model.state.value.fieldSettings).single().copy(kind = FieldKind.MULTILINE,
+            label = "Topic", defaultValue = "Earth", optional = true, remember = false)
+        assertFalse(model.state.value.dirty)
+        bytesAre(original.encodeToByteArray())
+        model.editField("a.md", original, staged)
+        assertTrue(model.state.value.writing)
+        model.close()
+        runCurrent()
+        assertTrue(model.state.value.dirty)
+        assertNotNull(model.state.value.pendingDecision)
+        assertEquals("Earth\r\n", model.state.value.preview)
+        assertEquals(FieldKind.MULTILINE, model.state.value.fields.single().kind)
+        assertFalse(model.state.value.fields.single().remember)
+        bytesAre(original.encodeToByteArray())
+        decide(model, EditorDecision.CANCEL)
+        model.save()
+        runCurrent()
+        assertFalse(model.state.value.dirty)
+        val saved = library().load("a.md")
+        assertEquals(original, saved.document.body)
+        assertEquals("Earth", saved.document.effectiveFields.single().defaultValue)
+        assertEquals(1, library().history.revisions(saved.identity).size)
+    }
+
+    @Test
+    fun `stale placeholder settings cannot edit another prompt or a changed source`() = runTest {
+        val original = "{{topic}}"
+        for (path in listOf("a.md", "b.md")) put(libraryDir.resolve(path), original.encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        val staged = assertNotNull(model.state.value.fieldSettings).single().copy(defaultValue = "Stale")
+        model.edit("{{topic}} changed")
+        runCurrent()
+        val changed = model.state.value
+        model.editField("a.md", original, staged)
+        assertEquals(changed, model.state.value)
+        model.open(LibrarySelection(PromptIdentity.at("b.md"), "b.md"))
+        decide(model, EditorDecision.DISCARD)
+        runCurrent()
+        assertEquals("b.md", model.state.value.relativePath)
+        val other = model.state.value
+        model.editField("a.md", original, staged)
+        assertEquals(other, model.state.value)
+        assertFalse(model.state.value.dirty)
+        bytesAre(original.encodeToByteArray(), "b.md")
+        model.edit("---\nformat: 2\n---\n{{topic}}")
+        runCurrent()
+        assertNull(model.state.value.fieldSettings)
+        val protected = model.state.value
+        model.editField("b.md", assertNotNull(protected.source), staged)
+        assertEquals(protected, model.state.value)
+    }
+
+    @Test
     fun `create commits exact body and unknown metadata before publishing index and favourite`() = runTest {
         val model = model()
         model.createDraft("Notes/new.md")

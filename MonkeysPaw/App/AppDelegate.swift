@@ -1262,12 +1262,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "text.quote",
-                                     accessibilityDescription: AppIdentity.displayName)
-        item.button?.image?.isTemplate = true
+        item.button?.image = makeStatusItemImage()
 
         item.menu = makeStatusMenu()
         statusItem = item
+    }
+
+    /// The catalog marks MenuBarIcon as a template; copy it so the explicit
+    /// flag and description stay off the shared cached image. Hosted tests
+    /// exercise this without installing a real status item.
+    func makeStatusItemImage() -> NSImage? {
+        guard let image = NSImage(named: "MenuBarIcon")?.copy() as? NSImage else { return nil }
+        image.isTemplate = true
+        image.accessibilityDescription = AppIdentity.displayName
+        return image
     }
 
     /// Pure menu construction lets hosted tests exercise the real equivalents

@@ -98,7 +98,7 @@ internal class EntryBoundaryTest {
         val shortcut = children(xml("res/xml/shortcuts.xml"), "shortcut").single()
         assertEquals("insert_prompt", shortcut.attr("shortcutId"))
         assertEquals("true", shortcut.attr("enabled"))
-        assertEquals("@drawable/ic_insert_prompt", shortcut.attr("icon"))
+        assertEquals("@drawable/ic_paw", shortcut.attr("icon"))
         val intent = children(shortcut, "intent").single()
         assertEquals(EntrySource.SHORTCUT.action, intent.attr("action"))
         assertEquals("ch.lkmc.monkeyspaw", intent.attr("targetPackage"))
@@ -107,7 +107,30 @@ internal class EntryBoundaryTest {
         val strings = children(xml("res/values/strings.xml"), "string").associate { it.getAttribute("name") to it.textContent }
         assertEquals("Insert prompt", strings[shortcut.attr("shortcutShortLabel").removePrefix("@string/")])
         assertNotNull(strings[shortcut.attr("shortcutLongLabel").removePrefix("@string/")])
-        assertEquals("vector", xml("res/drawable/ic_insert_prompt.xml").tagName)
+        assertEquals("vector", xml("res/drawable/ic_paw.xml").tagName)
+    }
+
+    @Test
+    fun `paw identity icon is one silhouette across tile shortcut and themed icon`() {
+        val tile = (children(xml("AndroidManifest.xml"), "service")
+            .single { it.attr("name") == ".entry.PromptTileService" })
+        assertEquals("@drawable/ic_paw", tile.attr("icon"))
+        val paw = xml("res/drawable/ic_paw.xml")
+        assertEquals("24", paw.attr("viewportWidth"))
+        assertEquals("24", paw.attr("viewportHeight"))
+        assertEquals(1, paw.getElementsByTagName("*").length)
+        // The API 33 monochrome layer reuses the same path on a 108dp canvas
+        // scaled into the safe circle; API 26-32 never parse the element.
+        val monochrome = xml("res/drawable/ic_paw_monochrome.xml")
+        assertEquals("108", monochrome.attr("viewportWidth"))
+        assertEquals("108", monochrome.attr("viewportHeight"))
+        assertEquals(children(monochrome, "path").single().attr("pathData"),
+            children(paw, "path").single().attr("pathData"))
+        val themed = xml("res/mipmap-anydpi-v33/ic_launcher.xml")
+        assertEquals("@drawable/ic_paw_monochrome",
+            children(themed, "monochrome").single().attr("drawable"))
+        assertTrue(children(xml("res/mipmap-anydpi-v26/ic_launcher.xml"), "monochrome").isEmpty())
+        assertFalse(sources.resolve("res/drawable/ic_insert_prompt.xml").exists())
     }
 
     @Test

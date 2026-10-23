@@ -14,6 +14,45 @@ enum LinuxEditorStrings {
 
     static let source = "Prompt source"
     static let promptBody = "Prompt body"
+    static let placeholders = "Placeholders"
+    static let fieldSettings = "Settings…"
+    static func fieldSettingsLabel(_ name: String) -> String { "Settings for placeholder \(name)" }
+    static func fieldSettingsTitle(_ name: String) -> String { "Placeholder settings: \(name)" }
+    static func fieldSummary(_ settings: PromptFieldSettings) -> String {
+        var parts = [settings.kind.rawValue.capitalized, settings.optional ? "Optional" : "Required"]
+        if settings.remember { parts.append("Remembered") }
+        if settings.isImplicit { parts.append("Implicit") }
+        return parts.joined(separator: " · ")
+    }
+
+    static let fieldType = "Type"
+    static let fieldLabel = "Label"
+    static let fieldDefault = "Set a default value"
+    static let defaultValue = "Default value"
+    static let options = "Options"
+    static let optionLabel = "Option label"
+    static let optionValue = "Option value"
+    static let addOption = "Add Option"
+    static let removeOption = "Remove option"
+    static let optional = "Optional"
+    static let remember = "Remember last value"
+    static let apply = "Apply"
+
+    static func fieldKind(_ kind: FieldKind) -> String {
+        switch kind {
+        case .text: return "Text"
+        case .multiline: return "Multiline"
+        case .choice: return "Choice"
+        }
+    }
+
+    static func fieldIssue(_ issue: PromptFieldSettingsIssue) -> String {
+        switch issue {
+        case .missingOptions: return "Add at least one option."
+        case .invalidDefault: return "The default must match an option's value."
+        }
+    }
+
     static let description = "Description"
     static let addTag = "Add"
     static let newTag = "New tag"
