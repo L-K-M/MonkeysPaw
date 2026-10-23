@@ -237,7 +237,9 @@ final class LinuxAssistantSettingsPage {
         model?.syncKey?.onChange = nil
         model?.cancelTest()
         model?.keepKey()
-        mp_entry_set_text(syncEntry, "")
+        // Only a hidden page still owns live widgets; on destroy the entry's
+        // buffer is freed with it and touching it is a use-after-free.
+        if reason == .hidden { mp_entry_set_text(syncEntry, "") }
         keyInputReset = nil
         pendingInputs.removeAll()
         if reason == .destroyed {
