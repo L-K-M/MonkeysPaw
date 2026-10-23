@@ -294,7 +294,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         defer { isAdaptingColumns = false }
         if !presentation.isInspectorVisible {
             guard restoresSidebarAfterInspector else { return }
-            inspector.isCollapsed = true
+            if !inspector.isCollapsed { inspector.isCollapsed = true }
             restoresSidebarAfterInspector = false
             sidebar.isCollapsed = false
             return
@@ -517,8 +517,21 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             guard let self, !self.isAdaptingColumns else { return }
             self.restoresSidebarAfterInspector = false
         }
-        inspectorObservation = inspectorItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
-            self?.mainThread.run { [weak self] in self?.presentation.setInspectorVisible(!item.isCollapsed) }
+        inspectorObservation = inspectorItem.observe(\.isCollapsed, options: [.new, .prior]) { [weak self] item, change in
+            self?.mainThread.run { [weak self] in
+                guard let self, !self.isTornDown, !self.isAdaptingColumns else { return }
+                // Native expansion also needs room before AppKit applies its
+                // minimum width, including divider-driven inspector opening.
+                if change.isPrior {
+                    if item.isCollapsed {
+                        self.presentation.setInspectorVisible(true)
+                        if let window = self.window { self.adaptInspectorLayout(to: window.frame.width) }
+                    }
+                    return
+                }
+                self.presentation.setInspectorVisible(!item.isCollapsed)
+                self.refreshWindowPresentation()
+            }
         }
         window.contentViewController = split
         window.toolbar = makeToolbar()

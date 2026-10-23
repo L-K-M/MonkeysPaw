@@ -406,6 +406,8 @@ final class MacUITourTests: XCTestCase {
         undo.redo()
         XCTAssertEqual(presentation.editorState.form?.body, original + "x")
         settle()
+        capture(window, as: "library-\(appearance)-edited-workflow")
+        _ = describeAccessibility(of: window, as: "editing-\(appearance)")
         let save = try XCTUnwrap(accessibilityElement(in: window, identifier: "library-save"))
         XCTAssertTrue(accessibilityPress(save))
         settle()
@@ -607,9 +609,10 @@ final class MacUITourTests: XCTestCase {
     /// Windows may expose their SwiftUI tree through the content view instead.
     private func accessibilityElements(under window: NSWindow) -> [NSObject] {
         let elements = accessibilityElements(in: window)
-        if !elements.isEmpty { return elements }
-        guard let contentView = window.contentView else { return [] }
-        return accessibilityElements(in: contentView)
+        // Native window chrome can expose a partial tree while SwiftUI's
+        // content root exposes the remaining controls, especially during editing.
+        guard let contentView = window.contentView else { return elements }
+        return elements + accessibilityElements(in: contentView)
     }
 
     private func accessibilityElement(in window: NSWindow, identifier: String) -> NSObject? {

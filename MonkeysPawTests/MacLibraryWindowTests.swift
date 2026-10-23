@@ -629,6 +629,32 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
     }
 
+    func testAutomaticSidebarCollapseDoesNotBecomeANewWindowsPreference() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let previous = try controller()
+        let window = try window()
+        let sidebar = try XCTUnwrap(previous.splitController?.splitViewItems.first)
+        sidebar.isCollapsed = false
+        window.setContentSize(NSSize(width: 820, height: 480))
+        previous.presentation.showInspector(.fields)
+        previous.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertTrue(sidebar.isCollapsed)
+        previous.tearDown()
+
+        let main = DispatchMainThread()
+        let next = LibraryWindowController(model: try XCTUnwrap(delegate.libraryBrowserModel),
+            editor: try XCTUnwrap(delegate.editorModel), libraryPath: root.path, available: true,
+            mainThread: main, activation: WindowActivationCoordinator(mainThread: main,
+                setPolicy: { _ in }, activate: {}), revealLibrary: {})
+        defer { next.tearDown() }
+        next.show()
+        XCTAssertFalse(try XCTUnwrap(next.splitController?.splitViewItems.first).isCollapsed,
+            "Only an explicit sidebar choice should survive a new window")
+    }
+
     func testPlaceholderSettingsRemainAvailableInSourceAndPreview() throws {
         try put("Hello {{name}}", at: "one.md")
         try start()
