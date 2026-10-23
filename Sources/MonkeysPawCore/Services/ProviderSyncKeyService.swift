@@ -33,9 +33,11 @@ public final class ProviderSyncKeyService: @unchecked Sendable {
     }
 
     /// Accepts the key text; stores it under the persisted ladder like provider keys.
+    /// Pasted text is trimmed before the strict base64url check.
     @discardableResult
     public func enterKey(userID: ULID, text: String) throws -> String {
-        guard let bytes = Base64URL.decode(text), bytes.count == Limits.providerSyncKeyBytes else {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let bytes = Base64URL.decode(trimmed), bytes.count == Limits.providerSyncKeyBytes else {
             throw ProviderSyncKeyError.invalidKey
         }
         let normalized = Base64URL.encode(bytes)

@@ -27,7 +27,8 @@ enum ProviderSyncCipher {
 
     static func open(_ document: String, key: Data, userID: ULID) throws -> Data {
         guard key.count == AES256GCM.keyBytes else { throw ProviderSyncError.invalidKey }
-        guard let bytes = Base64URL.decode(document), bytes.count > 1 + AES256GCM.nonceBytes + AES256GCM.tagBytes,
+        // Accept every document seal can produce, including an empty plaintext.
+        guard let bytes = Base64URL.decode(document), bytes.count >= 1 + AES256GCM.nonceBytes + AES256GCM.tagBytes,
               bytes[0] == 0x01 else { throw ProviderSyncError.invalidDocument }
         let nonce = Array(bytes[1..<1 + AES256GCM.nonceBytes])
         let sealed = Array(bytes.dropFirst(1 + AES256GCM.nonceBytes))
@@ -129,10 +130,7 @@ struct ProviderSyncPayload: Equatable {
         guard plaintext.count <= Limits.providerSyncPayloadMaxBytes,
               let object = try? JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
               object.keys.sorted() == ["secrets", "settings", "version"],
-              { if let version = object["version"] as? NSNumber,
-                  !["c", "d", "f"].contains(String(cString: version.objCType)) {
-                  return version.intValue == Self.version }
-                return false }(),
+              Self.isPayloadVersion(object["version"]),
               let settings = object["settings"] as? [String: Any],
               let secrets = object["secrets"] as? [String: Any],
               secrets.count <= Limits.providerSyncSecretEntries else { throw ProviderSyncError.invalidDocument }
@@ -143,6 +141,15 @@ struct ProviderSyncPayload: Equatable {
             values[account] = envelope
         }
         self.init(settings: settings, secrets: values)
+    }
+
+    /// JSON booleans arrive as NSCFBoolean (objCType "c"); doubles and floats
+    /// as "d"/"f". Any other numeric objCType is an integer, so only those may
+    /// equal the expected payload version.
+    private static func isPayloadVersion(_ value: Any?) -> Bool {
+        guard let version = value as? NSNumber,
+              !["c", "d", "f"].contains(String(cString: version.objCType)) else { return false }
+        return version.intValue == Self.version
     }
 }
 

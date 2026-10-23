@@ -130,7 +130,8 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
         fun newModel(): AssistantSettingsViewModel {
             val settings = kotlin.lazy {
                 assertNotEquals(owner, Thread.currentThread(), "The graph must be constructed off UI")
-                AppModule.providerSettings(AppModule.providerSettingsStore(state), secrets, Dispatchers.IO).also { provider = it }
+                AppModule.providerSettings(AppModule.providerSettingsStore(state), secrets, Dispatchers.IO,
+                    changes, scope, main).also { provider = it }
             }
             val connection = kotlin.lazy {
                 AssistantConnectionService(settings.value, AnthropicClient(transport, clock),

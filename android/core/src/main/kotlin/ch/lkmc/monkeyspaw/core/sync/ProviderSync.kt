@@ -114,7 +114,8 @@ internal object ProviderSyncCipher {
     fun open(document: String, key: ByteArray, userID: ULID): ByteArray {
         if (key.size != Limits.providerSyncKeyBytes) throw ProviderSyncError.InvalidKey
         val bytes = Base64URL.decode(document)
-        if (bytes == null || bytes.size <= 1 + Limits.providerSyncNonceBytes + Limits.providerSyncTagBytes ||
+        // Accept every document seal can produce, including an empty plaintext.
+        if (bytes == null || bytes.size < 1 + Limits.providerSyncNonceBytes + Limits.providerSyncTagBytes ||
             bytes[0] != 0x01.toByte()) throw ProviderSyncError.InvalidDocument
         val nonce = bytes.copyOfRange(1, 1 + Limits.providerSyncNonceBytes)
         val sealed = bytes.copyOfRange(1 + Limits.providerSyncNonceBytes, bytes.size)
@@ -217,25 +218,29 @@ internal class ProviderSyncStep(
 
         // The pulled document is S6's "last decrypted remote document".
         var remoteSecrets = emptyMap<String, String>()
+        var decryptFailed = false
         remote.document?.let { document ->
-            try {
-                val plaintext = ProviderSyncCipher.open(document, key, identity.userID)
-                val payload = ProviderSyncPayload.parse(plaintext)
-                remoteSecrets = payload.secrets
-                if (remote.rev > known.rev) {
-                    providers.applySynced(payload.settings, payload.secrets)
-                    known = ProviderSyncRecord(known.serverURL, known.userID,
-                        remote.rev, SyncHash.of(plaintext).rawValue)
-                }
-            } catch (error: ProviderSyncError) {
-                return when (error) {
-                    ProviderSyncError.InvalidDocument, ProviderSyncError.Authentication,
-                    ProviderSyncError.UnsupportedVersion, ProviderSyncError.InvalidKey ->
-                        ProviderSyncOutcome.DECRYPT_FAILED
-                    else -> ProviderSyncOutcome.APPLY_FAILED
-                }
+            val decrypted = try {
+                ProviderSyncCipher.open(document, key, identity.userID)
+                    .let { ProviderSyncPayload.parse(it) to it }
             } catch (error: CancellationException) { throw error }
-            catch (_: Exception) { return ProviderSyncOutcome.APPLY_FAILED }
+            // Every failure up to and including parsing is decrypt-side:
+            // oversized plaintexts and future-version seals included. An
+            // undecryptable document cannot gate the push: under literal
+            // last-writer-wins the local document overwrites it this pass,
+            // so key rotation self-heals instead of stalling forever.
+            catch (_: Exception) { decryptFailed = true; null }
+            if (decrypted != null) {
+                remoteSecrets = decrypted.first.secrets
+                if (remote.rev > known.rev) {
+                    try {
+                        providers.applySynced(decrypted.first.settings, decrypted.first.secrets)
+                        known = ProviderSyncRecord(known.serverURL, known.userID,
+                            remote.rev, SyncHash.of(decrypted.second).rawValue)
+                    } catch (error: CancellationException) { throw error }
+                    catch (_: Exception) { return ProviderSyncOutcome.APPLY_FAILED }
+                }
+            }
         }
 
         val plaintext = try { providers.exportSyncPayload(remoteSecrets).encode() }
@@ -243,7 +248,7 @@ internal class ProviderSyncStep(
         catch (_: Exception) { return ProviderSyncOutcome.APPLY_FAILED }
         val hash = SyncHash.of(plaintext).rawValue
 
-        if (remote.rev == known.rev && hash == known.payloadHash) {
+        if (!decryptFailed && remote.rev == known.rev && hash == known.payloadHash) {
             if (baseline != known) records.update { known }
             return ProviderSyncOutcome.UNCHANGED
         }
@@ -252,6 +257,6 @@ internal class ProviderSyncStep(
         }
         val response = client.putProviderSettings(PutProviderSettingsRequest(document))
         records.update { ProviderSyncRecord(known.serverURL, known.userID, response.rev, hash) }
-        return ProviderSyncOutcome.SYNCED
+        return if (decryptFailed) ProviderSyncOutcome.DECRYPT_FAILED else ProviderSyncOutcome.SYNCED
     }
 }

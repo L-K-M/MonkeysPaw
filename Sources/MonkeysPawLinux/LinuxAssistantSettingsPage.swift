@@ -167,7 +167,8 @@ final class LinuxAssistantSettingsPage {
         gtk_box_append(mp_box(syncButtons), syncGenerate)
         syncEnter = GTK.button(LinuxAssistantSettingsStrings.syncEnter) { [weak self] in
             guard let self else { return }
-            self.model?.syncKey?.enterKey(String(cString: mp_entry_text(self.syncEntry)))
+            self.model?.syncKey?.enterKey(String(cString: mp_entry_text(self.syncEntry))
+                .trimmingCharacters(in: .whitespacesAndNewlines))
         }
         gtk_widget_set_name(syncEnter, "settings-assistant-sync-enter")
         mp_accessible_label(syncEnter, LinuxAssistantSettingsStrings.syncEnter)

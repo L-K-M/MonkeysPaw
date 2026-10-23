@@ -40,7 +40,8 @@ class ProviderSyncTest {
     private fun hex(text: String): ByteArray =
         ByteArray(text.length / 2) { text.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 
-    // JCA-verified NIST-style vector, shared with the Swift tests.
+    // McGrew–Viega AES-256-GCM test case 13 verbatim: K, IV, P, A, C and T,
+    // shared with the Swift tests.
     @Test fun sealMatchesTheSharedVector() {
         val key = hex("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308")
         val plaintext = hex("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72" +
@@ -48,9 +49,10 @@ class ProviderSyncTest {
         val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, javax.crypto.spec.SecretKeySpec(key, "AES"),
             javax.crypto.spec.GCMParameterSpec(128, nonce))
+        cipher.updateAAD(hex("feedfacedeadbeeffeedfacedeadbeefabaddad2"))
         val sealed = cipher.doFinal(plaintext)
         assertEquals("522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa" +
-            "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662" + "eb9f796c8d356fc31a8433884b696f4f",
+            "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662" + "76fc6ece0f4e1768cddf8853bb2d551b",
             sealed.joinToString("") { "%02x".format(it.toInt() and 255) })
     }
 
@@ -83,10 +85,14 @@ class ProviderSyncTest {
 
     @Test fun malformedDocumentsAndKeysAreTyped() {
         for (document in listOf("", "!!!", "AQAB", Base64URL.encode(byteArrayOf(1, 2)),
-            Base64URL.encode(byteArrayOf(1) + ByteArray(12 + 16)), "AA==", "a")) {
+            "AA==", "a")) {
             assertFailsWith<ProviderSyncError.InvalidDocument>(document) {
                 ProviderSyncCipher.open(document, keyBytes, user)
             }
+        }
+        // An empty-plaintext envelope is valid wire format; it fails at the tag.
+        assertFailsWith<ProviderSyncError.Authentication> {
+            ProviderSyncCipher.open(Base64URL.encode(byteArrayOf(1) + ByteArray(12 + 16)), keyBytes, user)
         }
         assertFailsWith<ProviderSyncError.InvalidKey> {
             ProviderSyncCipher.seal(byteArrayOf(1), user, byteArrayOf(120)) { nonce }
@@ -153,7 +159,7 @@ class ProviderSyncTest {
         val client = SyncHTTPClient(server, transport, SyncCredential(server, SecretValue("A".repeat(43))))
         val identity = SyncTestValues.accountIdentity()
         val permit = SyncWorkPermit(SyncTestValues.binding(account = identity), 0)
-        fun provision() = kotlinx.coroutines.runBlocking { keys.enterKey(user, Base64URL.encode(keyBytes)) }
+        suspend fun provision() = keys.enterKey(user, Base64URL.encode(keyBytes))
 
         fun remotePayload(settings: JsonObject, secrets: Map<String, String>): String {
             val plaintext = ProviderSyncPayload(settings, secrets).encode()
@@ -185,8 +191,49 @@ class ProviderSyncTest {
         rig.provision()
         rig.remoteRev = 3
         rig.remoteDocument = Base64URL.encode(byteArrayOf(1) + ByteArray(12) + byteArrayOf(9, 9) + ByteArray(16))
+        // The remote is unreadable but must not stall sync: literal
+        // last-writer-wins overwrites it this pass so key rotation self-heals.
         assertEquals(ProviderSyncOutcome.DECRYPT_FAILED, rig.step.run(rig.client, rig.identity, rig.permit))
         assertTrue(rig.providerFiles.memory.listFiles().none { it.relativePath == "provider-settings.json" })
+        val put = rig.requests.single { it.method == HttpMethod.PUT }
+        val payload = ProviderSyncPayload.parse(ProviderSyncCipher.open(
+            PutProviderSettingsRequest.codec.decode(put.body!!).document, keyBytes, user))
+        assertEquals(emptyMap(), payload.secrets)
+        // The next pass sees our own document and settles unchanged.
+        rig.remoteDocument = PutProviderSettingsRequest.codec.decode(put.body!!).document
+        rig.remoteRev = 4
+        rig.requests.clear()
+        assertEquals(ProviderSyncOutcome.UNCHANGED, rig.step.run(rig.client, rig.identity, rig.permit))
+        assertTrue(rig.requests.none { it.method == HttpMethod.PUT })
+    }
+
+    @Test fun metadataWriteFailureRollsBackSecretMutations() = runTest {
+        val rig = Rig()
+        rig.provision()
+        val profileID = "550e8400-e29b-41d4-a716-446655440000"
+        val account = "provider:$profileID"
+        val secretAccount = SecretAccount.provider(
+            ch.lkmc.monkeyspaw.core.domain.llm.ProviderProfileID.parse(profileID))
+        val local = JsonObject(mapOf(
+            "version" to JsonPrimitive(1),
+            "selectedProfileID" to JsonPrimitive(profileID),
+            "profiles" to kotlinx.serialization.json.JsonArray(listOf(JsonObject(mapOf(
+                "id" to JsonPrimitive(profileID), "displayName" to JsonPrimitive("Mine"),
+                "kind" to JsonPrimitive("anthropic"), "baseURL" to JsonPrimitive("https://api.anthropic.com"),
+                "modelID" to JsonPrimitive("m"), "secretReference" to JsonPrimitive(account)))))))
+        rig.providerFiles.memory.put(local.toString(), "provider-settings.json")
+        rig.secrets.persisted[secretAccount] = ch.lkmc.monkeyspaw.core.domain.llm.StoredSecret(
+            SecretValue("local-envelope"), ch.lkmc.monkeyspaw.core.domain.llm.SecretTier.KEYSTORE)
+        // The remote rewrites the secret, then the metadata write fails: the
+        // rollback contract must restore the local envelope.
+        rig.remoteDocument = rig.remotePayload(local, mapOf(account to "remote-envelope"))
+        rig.remoteRev = 2
+        rig.providerFiles.failNextWrite = true
+        assertEquals(ProviderSyncOutcome.APPLY_FAILED, rig.step.run(rig.client, rig.identity, rig.permit))
+        rig.secrets.persisted[secretAccount]!!.value.withValue {
+            assertEquals("local-envelope", it)
+        }
+        assertTrue(rig.requests.none { it.method == HttpMethod.PUT })
     }
 
     @Test fun firstSyncUploadsEncryptedDocument() = runTest {

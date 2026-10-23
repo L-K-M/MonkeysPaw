@@ -9,16 +9,18 @@ final class ProviderSyncCipherTests: XCTestCase {
     private let nonce = Data(hex: "cafebabefacedbaddecaf888")
 
     func testAES256GCMSealsTheNISTVector() throws {
+        // McGrew–Viega AES-256-GCM test case 13 verbatim: K, IV, P, A, C and T.
+        let aad = Array(Data(hex: "feedfacedeadbeeffeedfacedeadbeefabaddad2"))
         let plaintext = Array(Data(hex:
             "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72" +
             "1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39"))
-        let sealed = AES256GCM.seal(key: Array(key), nonce: Array(nonce), aad: [], plaintext: plaintext)
+        let sealed = AES256GCM.seal(key: Array(key), nonce: Array(nonce), aad: aad, plaintext: plaintext)
         XCTAssertEqual(Data(sealed.dropLast(16)).map { String(format: "%02x", $0) }.joined(),
             "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa" +
             "8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662")
         XCTAssertEqual(sealed.suffix(16).map { String(format: "%02x", $0) }.joined(),
-            "eb9f796c8d356fc31a8433884b696f4f")
-        XCTAssertEqual(AES256GCM.open(key: Array(key), nonce: Array(nonce), aad: [], sealed: sealed), plaintext)
+            "76fc6ece0f4e1768cddf8853bb2d551b")
+        XCTAssertEqual(AES256GCM.open(key: Array(key), nonce: Array(nonce), aad: aad, sealed: sealed), plaintext)
     }
 
     func testAES256GCMEmptyPlaintextAndAADIndependent() throws {
@@ -70,14 +72,25 @@ final class ProviderSyncCipherTests: XCTestCase {
         }
     }
 
+    func testMalformedKeyAndNonceLengthsFailClosed() throws {
+        let sealed = [UInt8](repeating: 0, count: 20)
+        XCTAssertNil(AES256GCM.open(key: Array(key.dropLast()), nonce: Array(nonce), aad: [], sealed: sealed))
+        XCTAssertNil(AES256GCM.open(key: Array(key), nonce: Array(nonce.dropLast()), aad: [], sealed: sealed))
+        XCTAssertNil(AES256GCM.open(key: Array(key), nonce: Array(nonce), aad: [], sealed: [0x01]))
+    }
+
     func testMalformedDocumentsAndKeysAreTyped() throws {
         for document in ["", "!!!", "AQAB", Base64URL.encode([0x01, 0x02]),
-                         Base64URL.encode([0x01] + [UInt8](repeating: 0, count: 12 + 16)),
                          "AA==", "a"] {
             XCTAssertThrowsError(try ProviderSyncCipher.open(document, key: key, userID: userID),
                                  "document \(document)") {
                 XCTAssertEqual($0 as? ProviderSyncError, .invalidDocument)
             }
+        }
+        // An empty-plaintext envelope is valid wire format; it fails at the tag.
+        XCTAssertThrowsError(try ProviderSyncCipher.open(
+            Base64URL.encode([0x01] + [UInt8](repeating: 0, count: 12 + 16)), key: key, userID: userID)) {
+            XCTAssertEqual($0 as? ProviderSyncError, .authentication)
         }
         XCTAssertThrowsError(try ProviderSyncCipher.seal(key: Data([0x01]), userID: userID,
             plaintext: Data("x".utf8)) { nonce }) {

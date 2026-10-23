@@ -104,9 +104,12 @@ public final class ProviderSettingsStore: @unchecked Sendable {
     }
 
     /// §26 S7: the mutation runs while local settings are still installed; the
-    /// verbatim remote object then commits under the same lock. Any failure
-    /// leaves the file and snapshot untouched.
-    func applySynced(_ object: [String: Any], mutate: (ProviderSettings, ProviderSettings) throws -> Void) throws {
+    /// verbatim remote object then commits under the same lock. Secret edits
+    /// inside the mutation are compensated through `rollback` on any failure,
+    /// so a rejected commit cannot strand the secret store.
+    func applySynced(_ object: [String: Any],
+                     mutate: (ProviderSettings, ProviderSettings) throws -> Void,
+                     rollback: () throws -> Void = {}) throws {
         var committed = false
         lock.lock()
         defer {
@@ -115,16 +118,20 @@ public final class ProviderSettingsStore: @unchecked Sendable {
         }
         let loaded = try loadCurrent()
         let parsed = try settings(from: object)
-        try mutate(loaded.settings, parsed)
         do {
+            try mutate(loaded.settings, parsed)
             let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
             try files.write(bytes, at: path)
-        } catch let error as FileStoreError {
-            log?.write(.warning, "Provider settings write failed.")
-            throw ProviderSettingsError.writeFailed(error)
         } catch {
+            do { try rollback() }
+            catch {
+                publish(ProviderSettingsSnapshot(settings: loaded.settings, readOnlyError: .secretRollbackFailed))
+                log?.write(.error, "Provider secret restoration failed.")
+                throw ProviderSettingsError.secretRollbackFailed
+            }
+            if let error = error as? ProviderSettingsError { throw error }
             log?.write(.warning, "Provider settings write failed.")
-            throw ProviderSettingsError.writeFailed(.ioFailure)
+            throw ProviderSettingsError.writeFailed(error as? FileStoreError ?? .ioFailure)
         }
         publish(ProviderSettingsSnapshot(settings: parsed, readOnlyError: nil))
         committed = true

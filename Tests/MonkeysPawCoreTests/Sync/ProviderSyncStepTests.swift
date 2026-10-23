@@ -196,19 +196,28 @@ final class ProviderSyncStepTests: XCTestCase {
         XCTAssertEqual(try (try ProviderSyncPayload(plaintext: plaintext).settings["profiles"] as? [[String: Any]])?.count, 2)
     }
 
-    func testDecryptFailureLeavesLocalUntouchedAndDoesNotUpload() async throws {
+    func testDecryptFailureLeavesLocalUntouchedAndUploadsLocalUnderLWW() async throws {
         let rig = try ProviderStepRig()
-        _ = try rig.provisionKey()
+        let key = try rig.provisionKey()
         try rig.providers.save(ProviderDraft(displayName: "Mine", baseURL: "https://api.anthropic.com"))
         let before = rig.files.attemptedWrites.count
         let wrongKey = Data([UInt8](repeating: 9, count: 32))
         _ = try rig.remoteDocument(settings: rig.settingsObject(profileID: UUID()), secrets: [:], key: wrongKey, rev: 2)
 
+        // The remote cannot be read, but under literal last-writer-wins an
+        // unreadable document must not gate the push: local state overwrites
+        // it so key rotation self-heals instead of stalling forever.
         await expect(.decryptFailed, from: rig)
-        XCTAssertEqual(rig.remote.puts, 0)
+        XCTAssertEqual(rig.remote.puts, 1)
         XCTAssertEqual(rig.files.attemptedWrites.count, before)
-        XCTAssertNil(try rig.record())
+        XCTAssertEqual(try rig.record()?.rev, 3)
         XCTAssertEqual(rig.providers.snapshot.settings.profiles.count, 1)
+        let plaintext = try ProviderSyncCipher.open(rig.remote.putBodies[0], key: key, userID: rig.identity.userID)
+        XCTAssertEqual(try ProviderSyncPayload(plaintext: plaintext).secrets.count, 0)
+
+        // The next pass reads our own document back and settles unchanged.
+        await expect(.unchanged, from: rig)
+        XCTAssertEqual(rig.remote.puts, 1)
     }
 
     func testMalformedRemoteDocumentFailsClosed() async throws {
@@ -217,12 +226,13 @@ final class ProviderSyncStepTests: XCTestCase {
         // A document failing the wire schema is a malformed HTTP response.
         rig.remote.setDocument("not a document", rev: 1)
         await expectThrow(rig)
-        // A well-formed envelope that does not open fails non-destructively.
+        // A well-formed envelope that does not open fails non-destructively;
+        // each pass still overwrites it under literal last-writer-wins.
         rig.remote.setDocument(Base64URL.encode([0x09] + [UInt8](repeating: 0, count: 40)), rev: 1)
         await expect(.decryptFailed, from: rig)
         rig.remote.setDocument(Base64URL.encode([0x01] + [UInt8](repeating: 9, count: 40)), rev: 1)
         await expect(.decryptFailed, from: rig)
-        XCTAssertEqual(rig.remote.puts, 0)
+        XCTAssertEqual(rig.remote.puts, 2)
     }
 
     func testEnvironmentSecretsSurviveRemoteApplyAndNeverExport() async throws {
@@ -275,13 +285,39 @@ final class ProviderSyncStepTests: XCTestCase {
         XCTAssertEqual(restarted.remote.puts, 1)
 
         // A different account resets the baseline; its key cannot open a
-        // document sealed for the first account, so nothing is applied.
+        // document sealed for the first account, so nothing is applied — but
+        // it still overwrites the unreadable remote under last-writer-wins.
         _ = try restarted.keys.enterKey(userID: SyncTestValues.otherUser,
             text: Base64URL.encode([UInt8](repeating: 3, count: 32)))
         let shared = try ProviderStepRig(userID: SyncTestValues.otherUser, files: rig.files,
             data: rig.data, secrets: rig.secrets, remote: rig.remote)
         await expect(.decryptFailed, from: shared)
-        XCTAssertEqual(rig.remote.puts, 1)
+        XCTAssertEqual(rig.remote.puts, 2)
+    }
+
+    func testMetadataWriteFailureRollsBackSecretMutations() async throws {
+        let rig = try ProviderStepRig()
+        let key = try rig.provisionKey()
+        let profileID = UUID()
+        try rig.providers.save(ProviderDraft(id: ProviderProfileID(profileID), displayName: "Mine",
+            baseURL: "https://api.anthropic.com", modelID: "m", key: .replace(SecretValue("local-key"))))
+        let account = try SecretAccount(coding: "provider:\(profileID.uuidString.lowercased())")
+        var localEnvelope: String?
+        rig.secrets.persisted[account]?.value.withValue { localEnvelope = $0 }
+        _ = try rig.remoteDocument(settings: rig.settingsObject(profileID: profileID),
+            secrets: [account.rawValue: "remote-envelope"], key: key, rev: 2)
+
+        rig.files.writeError = FileStoreError.ioFailure
+        await expect(.applyFailed, from: rig)
+        XCTAssertEqual(rig.remote.puts, 0)
+        XCTAssertNil(try rig.record())
+        // The remote secret was written then restored by the rollback contract.
+        var stored: String?
+        rig.secrets.persisted[account]?.value.withValue { stored = $0 }
+        XCTAssertEqual(stored, localEnvelope)
+        // Local metadata was never replaced by the remote document.
+        let object = try JSONSerialization.jsonObject(with: rig.files.read(at: "provider-settings.json")) as? [String: Any]
+        XCTAssertEqual((object?["profiles"] as? [[String: Any]])?.first?["displayName"] as? String, "Mine")
     }
 
     func testReadOnlyProviderStoreReportsApplyFailed() async throws {

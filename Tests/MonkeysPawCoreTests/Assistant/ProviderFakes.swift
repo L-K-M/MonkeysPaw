@@ -5,12 +5,14 @@ import XCTest
 final class ProviderRecordingFiles: FileStore {
     let memory = MemoryFileStore()
     private(set) var attemptedWrites = [Data]()
+    var writeError: Error?
 
     func listFiles() throws -> [StoredFile] { try memory.listFiles() }
     func stamp(at path: String) throws -> FileStamp? { try memory.stamp(at: path) }
     func read(at path: String) throws -> Data { try memory.read(at: path) }
     func write(_ data: Data, at path: String) throws {
         attemptedWrites.append(data)
+        if let writeError { throw writeError }
         try memory.write(data, at: path)
     }
     func create(_ data: Data, at path: String) throws {

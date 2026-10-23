@@ -49,17 +49,21 @@ public final class ProviderSyncKeyModel: CustomStringConvertible,
     }
 
     /// Re-reads the account binding and stored tier; call when the account or
-    /// library may have changed.
+    /// library may have changed. An in-flight operation publishes its own
+    /// status — refreshing then would bump the revision and drop its reveal.
     public func refresh() {
         mainThread.run { [weak self] in
-            guard let self else { return }
+            guard let self, !self.state.busy else { return }
             let current = UUID()
             self.revision = current
             self.work.run { [keys, accountUserID, mainThread] in
                 let status = Self.readStatus(keys: keys, accountUserID: accountUserID)
                 mainThread.run { [weak self] in
                     guard let self, self.revision == current else { return }
-                    self.state = State(status: status, busy: false, notice: nil, revealedKey: nil)
+                    // Keep a visible reveal: the key is shown once, so a status
+                    // refresh must not erase the only copy the user can see.
+                    self.state = State(status: status, busy: false, notice: nil,
+                        revealedKey: self.state.revealedKey)
                     self.onChange?()
                 }
             }

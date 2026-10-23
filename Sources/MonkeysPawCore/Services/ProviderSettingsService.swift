@@ -133,25 +133,23 @@ public final class ProviderSettingsService {
 
     /// §26 S7: write the payload's secrets for referenced provider accounts and
     /// drop local provider secrets the remote metadata no longer references,
-    /// then commit the metadata object verbatim.
+    /// then commit the metadata object verbatim. A metadata failure restores
+    /// every mutated account through the same rollback contract as edits.
     func applySynced(settings object: [String: Any], secrets payload: [String: String]) throws {
-        try store.applySynced(object) { current, remote in
+        var undo: [() throws -> Void] = []
+        try store.applySynced(object, mutate: { current, remote in
             let referenced = Set(remote.profiles.compactMap(\.secretReference).filter { $0.namespace == "provider" })
             for account in referenced {
                 guard let envelope = payload[account.rawValue] else { continue }
                 // An environment override pins the device; leave it alone.
                 if try readForEdit(account, source: .effective).stored?.tier == .environment { continue }
-                do { _ = try secrets.write(SecretValue(envelope), account: account) }
-                catch let error as SecretStoreError { throw ProviderSettingsError.secret(error) }
-                catch { throw ProviderSettingsError.secret(.writeFailed) }
+                undo.append(try editSecret(account: account, value: SecretValue(envelope)))
             }
             let previous = Set(current.profiles.compactMap(\.secretReference).filter { $0.namespace == "provider" })
             for account in previous.subtracting(referenced) {
-                do { try secrets.delete(account: account) }
-                catch let error as SecretStoreError { throw ProviderSettingsError.secret(error) }
-                catch { throw ProviderSettingsError.secret(.deleteFailed) }
+                undo.append(try editSecret(account: account, value: nil))
             }
-        }
+        }, rollback: { for restore in undo.reversed() { try restore() } })
     }
 
     /// A missing file exports the canonical empty settings document.

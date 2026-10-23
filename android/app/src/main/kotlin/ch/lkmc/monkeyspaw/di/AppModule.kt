@@ -46,6 +46,10 @@ internal annotation class IoDispatcher
 
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
+internal annotation class MainDispatcher
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
 internal annotation class ApplicationScope
 
 @Qualifier
@@ -58,6 +62,10 @@ internal object AppModule {
     @Provides
     @IoDispatcher
     fun ioDispatcher(): CoroutineDispatcher = Dispatchers.IO
+
+    @Provides
+    @MainDispatcher
+    fun mainDispatcher(): CoroutineDispatcher = Dispatchers.Main.immediate
 
     @Provides
     @Singleton
@@ -229,7 +237,14 @@ internal object AppModule {
     @Provides
     @Singleton
     fun providerSettings(store: ProviderSettingsStore, secrets: SecretStore,
-        @IoDispatcher io: CoroutineDispatcher): ProviderSettingsService = ProviderSettingsService(store, secrets, io)
+        @IoDispatcher io: CoroutineDispatcher, changes: AssistantProviderChanges,
+        @ApplicationScope scope: CoroutineScope, @MainDispatcher main: CoroutineDispatcher): ProviderSettingsService =
+        // The observer must exist the moment the service does — whoever
+        // constructs it first (sync pass or settings UI). Remote applies
+        // commit in the sync pass; retire sessions from UI work.
+        ProviderSettingsService(store, secrets, io).also { service ->
+            service.observeChanges { scope.launch(main) { changes.changed() } }
+        }
 
     @Provides
     @Singleton
@@ -274,14 +289,8 @@ internal object AppModule {
         repository.get().graph().local.accountMetadata().account?.identity?.userID
     }
 
+    /** The sync repository registers the settings observer at construction. */
     @Provides
     @Singleton
-    fun providerChanges(settings: Lazy<ProviderSettingsService>, @ApplicationScope scope: CoroutineScope,
-        @IoDispatcher io: CoroutineDispatcher): AssistantProviderChanges =
-        AssistantProviderChanges().also { changes ->
-            // Remote applies commit in the sync pass; retire sessions from UI work.
-            scope.launch(io) {
-                settings.get().observeChanges { scope.launch(Dispatchers.Main.immediate) { changes.changed() } }
-            }
-        }
+    fun providerChanges(): AssistantProviderChanges = AssistantProviderChanges()
 }

@@ -264,14 +264,17 @@ struct SettingsAssistantView: View {
                             .disabled(!presentation.canEditSyncKey)
                     }
                 } label: {
-                    Text(SettingsAssistantStrings.syncEnter)
+                    Text(key.revealedKey == nil ? SettingsAssistantStrings.syncEnter : SettingsAssistantStrings.syncKeyValue)
                 }
                 HStack {
                     Button(SettingsAssistantStrings.syncGenerate, action: presentation.syncKeyGenerate)
                     if key.revealedKey != nil {
                         Button(SettingsAssistantStrings.syncDismissReveal, action: presentation.syncKeyDismissReveal)
                     } else {
-                        Button(SettingsAssistantStrings.syncEnter) { presentation.syncKeyEnter(syncKeyInput) }
+                        Button(SettingsAssistantStrings.syncEnter) {
+                            presentation.syncKeyEnter(syncKeyInput)
+                            syncKeyInput = ""
+                        }
                         Button(SettingsAssistantStrings.syncRemove, action: presentation.syncKeyRemove)
                             .disabled(key.status == .noAccount || key.status == .missing)
                     }

@@ -10,6 +10,8 @@ enum AES256GCM {
 
     /// Returns ciphertext ‖ tag. `nonce` must be fresh for every seal.
     static func seal(key: [UInt8], nonce: [UInt8], aad: [UInt8], plaintext: [UInt8]) -> [UInt8] {
+        precondition(key.count == keyBytes && nonce.count == nonceBytes,
+            "AES-256-GCM requires a 32-byte key and a 96-bit nonce")
         let schedule = Schedule(key: key)
         let ciphertext = crypt(schedule, nonce: nonce, input: plaintext)
         let tag = authenticate(schedule, nonce: nonce, aad: aad, ciphertext: ciphertext)
@@ -17,8 +19,10 @@ enum AES256GCM {
     }
 
     /// Authenticates and returns the plaintext, or nil on any mismatch.
+    /// Wrong key/nonce lengths would trap or produce a non-standard GCM;
+    /// parsed records fail closed instead.
     static func open(key: [UInt8], nonce: [UInt8], aad: [UInt8], sealed: [UInt8]) -> [UInt8]? {
-        guard sealed.count >= tagBytes else { return nil }
+        guard sealed.count >= tagBytes, key.count == keyBytes, nonce.count == nonceBytes else { return nil }
         let ciphertext = Array(sealed.dropLast(tagBytes))
         let schedule = Schedule(key: key)
         let expected = authenticate(schedule, nonce: nonce, aad: aad, ciphertext: ciphertext)

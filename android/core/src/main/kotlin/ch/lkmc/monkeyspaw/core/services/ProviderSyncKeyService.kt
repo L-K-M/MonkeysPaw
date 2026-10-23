@@ -35,9 +35,10 @@ class ProviderSyncKeyService(private val secrets: SecretStore, private val entro
         return enterKey(userID, Base64URL.encode(bytes))
     }
 
-    /** Accepts the key text; stores it under the persisted tier. */
+    /** Accepts the key text; stores it under the persisted tier.
+     * Pasted text is trimmed before the strict base64url check. */
     suspend fun enterKey(userID: ULID, text: String): String {
-        val bytes = Base64URL.decode(text)
+        val bytes = Base64URL.decode(text.trim())
         if (bytes == null || bytes.size != Limits.providerSyncKeyBytes) throw ProviderSyncKeyError.InvalidKey
         val normalized = Base64URL.encode(bytes)
         try { secrets.write(SecretValue(normalized), SecretAccount.providerSync(userID)) }

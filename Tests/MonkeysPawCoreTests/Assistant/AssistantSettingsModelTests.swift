@@ -68,6 +68,22 @@ final class AssistantSettingsModelTests: XCTestCase {
         XCTAssertTrue(h.testing.tests.isEmpty)
     }
 
+    func testOutOfBandWritesPreserveStagedDraftEdits() throws {
+        let saved = try AssistantSettingsHarness.profile(name: "First")
+        let h = try AssistantSettingsHarness(profiles: [saved], selected: saved.id)
+        h.model.renameProfile("Staged")
+        h.model.setModelID("edited-model")
+        // A committed remote write reloads the page but cannot discard staged input.
+        h.provider.snapshot = ProviderSettingsSnapshot(settings: try ProviderSettings(
+            profiles: [saved], selectedProfileID: nil), readOnlyError: nil)
+        h.provider.notifyChanged()
+        XCTAssertEqual(h.model.state.draft?.displayName, "Staged")
+        XCTAssertEqual(h.model.state.draft?.modelID, "edited-model")
+        XCTAssertNil(h.model.state.selectedProfileID)
+        h.model.save()
+        XCTAssertEqual(h.provider.saves.last?.displayName, "Staged")
+    }
+
     func testSelectionDiscardsDraftAndRenameIsStagedUntilSave() throws {
         let first = try AssistantSettingsHarness.profile(name: "First")
         let second = try AssistantSettingsHarness.profile(name: "Second")

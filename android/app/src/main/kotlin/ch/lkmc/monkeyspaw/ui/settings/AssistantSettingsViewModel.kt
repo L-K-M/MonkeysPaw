@@ -51,7 +51,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
     private var storageJob: Job? = null
     private var activeTest: ConnectionTestRequestID? = null
     private var test: AssistantConnectionTest? = null
-    private var alive = true
+    @Volatile private var alive = true
     private var syncKey = AssistantSyncKey()
     private var syncKeyInput = ""
     private var syncKeyInputReset = 0L
@@ -87,7 +87,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
         publish()
     }
 
-    fun refresh() {
+    fun refresh(preserveDraft: Boolean = false) {
         if (!isOpen || operation != null) return
         val navigation = navigationRevision
         stopTest()
@@ -119,7 +119,13 @@ internal class AssistantSettingsViewModel @Inject constructor(
             connectionService = loaded.second.second
             operation = null
             error = snapshot.readOnlyError
-            useDraft(selectedDraft())
+            // Observer-triggered reloads keep staged edits; an unedited or
+            // absent draft still re-derives so remote selection applies.
+            val staged = draft
+            val committed = staged?.let { current ->
+                snapshot.settings.profiles.firstOrNull { it.id == current.id } }
+            val keepDraft = staged != null && (committed == null || staged != ProviderDraft(committed))
+            if (!preserveDraft || !keepDraft) useDraft(selectedDraft())
             reloadStorage()
             refreshSyncKey()
         }
@@ -129,7 +135,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
     private fun onSettingsStoreChange() {
         if (operation != null || !alive) return
         viewModelScope.launch(Dispatchers.Main.immediate) {
-            if (alive && isOpen && operation == null) refresh()
+            if (alive && isOpen && operation == null) refresh(preserveDraft = true)
         }
     }
 
@@ -232,6 +238,9 @@ internal class AssistantSettingsViewModel @Inject constructor(
     }
 
     private fun refreshSyncKey() {
+        // A refresh must not preempt a running key operation: cancelling its
+        // completion would drop a one-time reveal and leave the UI stuck busy.
+        if (syncKey.busy) return
         val revision = ++syncKeyRevision
         syncKeyJob?.cancel()
         syncKeyJob = viewModelScope.launch {

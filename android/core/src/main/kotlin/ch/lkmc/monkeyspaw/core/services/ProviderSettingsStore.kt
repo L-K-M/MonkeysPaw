@@ -74,10 +74,12 @@ class ProviderSettingsStore(private val files: StateStore) {
     }
 
     /** §26 S7: the mutation runs while local settings are still installed; the
-     * verbatim remote object then commits under the same lock. Any failure
-     * leaves the file and snapshot untouched. */
+     * verbatim remote object then commits under the same lock. Secret edits
+     * inside the mutation are compensated through `rollback` on any failure,
+     * so a rejected commit cannot strand the secret store. */
     internal suspend fun applySynced(objectValue: JsonObject,
-                                     mutate: suspend (ProviderSettings, ProviderSettings) -> Unit) {
+                                     mutate: suspend (ProviderSettings, ProviderSettings) -> Unit,
+                                     rollback: suspend () -> Unit = {}) {
         var committed = false
         try {
             mutex.withLock {
@@ -85,9 +87,17 @@ class ProviderSettingsStore(private val files: StateStore) {
                     val loaded = loadCurrent()
                     val remote = try { settingsFrom(objectValue) }
                     catch (_: Exception) { throw ProviderSettingsError.CorruptFile }
-                    mutate(loaded.settings, remote)
-                    try { files.write(ProviderSettingsJson.encode(objectValue), path) }
-                    catch (_: Exception) {
+                    try {
+                        mutate(loaded.settings, remote)
+                        files.write(ProviderSettingsJson.encode(objectValue), path)
+                    } catch (error: Exception) {
+                        try { rollback() }
+                        catch (_: Exception) {
+                            cached = ProviderSettingsSnapshot(loaded.settings, ProviderSettingsError.SecretRollbackFailed)
+                            System.err.println("Provider secret restoration failed.")
+                            throw ProviderSettingsError.SecretRollbackFailed
+                        }
+                        if (error is ProviderSettingsError) throw error
                         System.err.println("Provider settings write failed.")
                         throw ProviderSettingsError.WriteFailed
                     }

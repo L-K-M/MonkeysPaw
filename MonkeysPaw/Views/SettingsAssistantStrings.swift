@@ -36,6 +36,7 @@ enum SettingsAssistantStrings {
     static let syncRemove = "Remove Key"
     static let syncDismissReveal = "Hide Key"
     static let syncReveal = "Copy this key to your other devices. It is shown once and never uploaded."
+    static let syncKeyValue = "Sync Key"
 
     static func syncStatus(_ status: ProviderSyncKeyModel.Status) -> String {
         switch status {

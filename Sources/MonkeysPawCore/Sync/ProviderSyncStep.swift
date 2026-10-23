@@ -87,21 +87,31 @@ final class ProviderSyncStep: @unchecked Sendable {
 
         // The pulled document is S6's "last decrypted remote document".
         var remoteSecrets: [String: String] = [:]
+        var decryptFailed = false
         if let document = remote.document {
+            var decrypted: (payload: ProviderSyncPayload, plaintext: Data)?
             do {
                 let plaintext = try ProviderSyncCipher.open(document, key: key, userID: identity.userID)
-                let payload = try ProviderSyncPayload(plaintext: plaintext)
-                remoteSecrets = payload.secrets
+                decrypted = (try ProviderSyncPayload(plaintext: plaintext), plaintext)
+            } catch {
+                // Every failure up to and including parsing is decrypt-side:
+                // oversized plaintexts and future-version seals included. An
+                // undecryptable document cannot gate the push: under literal
+                // last-writer-wins the local document overwrites it this pass,
+                // so key rotation self-heals instead of stalling forever.
+                decryptFailed = true
+            }
+            if let decrypted {
+                remoteSecrets = decrypted.payload.secrets
                 if remote.rev > known.rev {
-                    try providers.applySynced(settings: payload.settings, secrets: payload.secrets)
-                    known = ProviderSyncRecord(serverURL: known.serverURL, userID: known.userID,
-                        rev: remote.rev, payloadHash: SHA256.hexDigest(plaintext))
+                    do {
+                        try providers.applySynced(settings: decrypted.payload.settings,
+                                                  secrets: decrypted.payload.secrets)
+                        known = ProviderSyncRecord(serverURL: known.serverURL, userID: known.userID,
+                            rev: remote.rev, payloadHash: SHA256.hexDigest(decrypted.plaintext))
+                    } catch { return .applyFailed }
                 }
-            } catch let error as ProviderSyncError {
-                if error == .invalidDocument || error == .authentication
-                    || error == .unsupportedVersion || error == .invalidKey { return .decryptFailed }
-                return .applyFailed
-            } catch { return .applyFailed }
+            }
         }
 
         let plaintext: Data
@@ -109,7 +119,7 @@ final class ProviderSyncStep: @unchecked Sendable {
         catch { return .applyFailed }
         let hash = SHA256.hexDigest(plaintext)
 
-        if remote.rev == known.rev && hash == known.payloadHash {
+        if !decryptFailed, remote.rev == known.rev && hash == known.payloadHash {
             if baseline != known { try records.update { _ in known } }
             return .unchanged
         }
@@ -121,6 +131,6 @@ final class ProviderSyncStep: @unchecked Sendable {
             ProviderSyncRecord(serverURL: known.serverURL, userID: known.userID,
                                rev: response.rev, payloadHash: hash)
         }
-        return .synced
+        return decryptFailed ? .decryptFailed : .synced
     }
 }

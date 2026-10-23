@@ -100,27 +100,23 @@ class ProviderSettingsService(private val store: ProviderSettingsStore, private 
 
     /** §26 S7: write the payload's secrets for referenced provider accounts and
      * drop local provider secrets the remote metadata no longer references,
-     * then commit the metadata object verbatim. */
+     * then commit the metadata object verbatim. A metadata failure restores
+     * every mutated account through the same rollback contract as edits. */
     internal suspend fun applySynced(objectValue: JsonObject, payload: Map<String, String>) = withContext(io) {
-        store.applySynced(objectValue) { current, remote ->
+        val undo = ArrayDeque<suspend () -> Unit>()
+        store.applySynced(objectValue, mutate = { current, remote ->
             val referenced = remote.profiles.mapNotNull { it.secretReference }
                 .filter { it.namespace == "provider" }.toSet()
             for (account in referenced) {
                 val envelope = payload[account.rawValue] ?: continue
-                try { secrets.write(SecretValue(envelope), account) }
-                catch (error: CancellationException) { throw error }
-                catch (error: SecretStoreError) { throw ProviderSettingsError.Secret(error) }
-                catch (_: Exception) { throw ProviderSettingsError.Secret(SecretStoreError.WriteFailed) }
+                undo.addLast(editSecret(account, SecretValue(envelope)))
             }
             val previous = current.profiles.mapNotNull { it.secretReference }
                 .filter { it.namespace == "provider" }.toSet()
             for (account in previous - referenced) {
-                try { secrets.delete(account) }
-                catch (error: CancellationException) { throw error }
-                catch (error: SecretStoreError) { throw ProviderSettingsError.Secret(error) }
-                catch (_: Exception) { throw ProviderSettingsError.Secret(SecretStoreError.DeleteFailed) }
+                undo.addLast(editSecret(account, null))
             }
-        }
+        }, rollback = { for (restore in undo.reversed()) restore() })
     }
 
     /** A missing file exports the canonical empty settings document. */

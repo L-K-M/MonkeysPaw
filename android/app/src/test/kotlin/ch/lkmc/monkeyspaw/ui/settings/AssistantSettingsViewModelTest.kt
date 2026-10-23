@@ -673,6 +673,21 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertEquals(first.id, model.state.value.selectedProfileID)
     }
 
+    @Test fun `out-of-band writes preserve staged draft edits`() = runTest(scheduler) {
+        val first = seed()
+        val model = model()
+        model.renameProfile("Staged")
+        model.setModelID("edited-model")
+        withContext(worker) { settings.value.selectProfile(null) }
+        runCurrent()
+        // The remote write reloads the page but cannot discard staged input.
+        assertEquals("Staged", model.state.value.draft!!.displayName)
+        assertEquals("edited-model", model.state.value.draft!!.modelID)
+        assertNull(model.state.value.selectedProfileID)
+        model.save(); runCurrent()
+        assertEquals("Staged", model.state.value.profiles.single { it.id == first.id }.displayName)
+    }
+
     @Test fun `local writes during an admitted save keep newer staged edits`() = runTest(scheduler) {
         val model = model()
         model.addProfile(); model.setKeyInput("k")
