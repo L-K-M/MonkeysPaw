@@ -130,6 +130,9 @@ The existing JVM, lint, APK and privacy/session gates remain required.
   beside the scrolling filter rail. Browse retains conflicts, folders, groups
   and tags; no filter is removed. Keyboard loading/empty states use compact
   type and spacing so the state and recovery action fit the available panel.
+- Empty/filtered recovery views place creation inline instead of floating it
+  over recovery controls at large text sizes. Creating in the current folder
+  or group keeps the existing destination intent.
 - Keep editor tabs below the app bar while source and history scroll. Show
   localized revision/provenance dates and expose selected history semantics.
   Preserve source, restore, validation, unsaved/conflict and read-only guards.

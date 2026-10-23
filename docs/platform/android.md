@@ -1137,3 +1137,36 @@ passed; the final task delivery records the APK hashes and source revision.
 The software-only emulator also produced platform cold-start/ANR delays. No
 performance conclusion is drawn from it. Physical accessibility, OEM/gesture
 navigation, API 26/27 and dynamic-color runtime checks remain as listed above.
+
+### Flow composition follow-up (2026-10-23)
+
+The §25.7 pass used a disposable Android 8/API 26 x86_64 emulator at 720×1560,
+320 dpi, with synthetic prompts. Debug and signed/R8 builds were exercised.
+The complete local gate passed with 1,245 Core and 915 app tests, zero
+failures/errors/skips, plus lint and both APK variants.
+
+- Inline choice selection kept the external EditText session active. Insert
+  delivered the selected `Formal` fixture once and the legacy switch-back
+  restored AOSP input. The prompt title/Back control remained in the header.
+- Tapping a displayed text-value row launched the existing editable Copy
+  activity with its choice/default snapshot intact and AOSP restored. Editing
+  the message updated the preview; Copy finished through the existing route.
+- Inspected light/dark and ordinary/200% keyboard renders, compact empty
+  Favourites recovery, and the pinned Browse control beside the filter rail.
+- Scrolled a longer editor source while the tabs remained visible. Save,
+  History and selected revision source worked; the date rendered as localized
+  text on API 26. Selected history rows now expose selected semantics; this
+  was not a physical TalkBack test.
+- Large-text filtered emptiness exposed the floating creation button covering
+  the recovery action. Creation now sits inline as a secondary action for
+  recovery views, retaining its current folder/group destination callback.
+  Native recheck showed both Show all prompts and New prompt unobscured.
+- The new quick-filter partition regression first failed with zero conflicts
+  on the rail, then passed while preserving every Browse section. Lint also
+  rejected the API 34-only `localizedBy` date method before it was replaced
+  with API 26-safe `withLocale`; the native history render confirmed the path.
+
+These checks cover presentation and the exercised API 26 delivery routes,
+not the full minimum-API ICU/sync/entry matrices above. Physical TalkBack,
+external keyboards, OEM/gesture navigation and dynamic-color runtime remain
+owner checks. Software emulation is not performance evidence.

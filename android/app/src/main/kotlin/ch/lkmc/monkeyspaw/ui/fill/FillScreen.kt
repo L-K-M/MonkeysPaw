@@ -239,7 +239,8 @@ private fun FieldControl(state: FillFieldState, input: FillInput, enabled: Boole
                         color = if (invalid) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
                     field.description?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
-                Icon(Icons.AutoMirrored.Rounded.OpenInNew, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (enabled && onEditInApp != null) Icon(Icons.AutoMirrored.Rounded.OpenInNew, null,
+                    Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         return

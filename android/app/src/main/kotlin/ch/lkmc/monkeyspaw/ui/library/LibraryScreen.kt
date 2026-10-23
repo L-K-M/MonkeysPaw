@@ -87,7 +87,7 @@ internal fun LibraryScreen(
             }
         }, floatingActionButton = {
             // Material's extended FAB clears text semantics and uses its icon's label.
-            onCreate?.takeIf { state.content != LibraryContent.EMPTY }?.let { create -> ExtendedFloatingActionButton(onClick = create,
+            onCreate?.takeIf { state.content != LibraryContent.EMPTY && state.content != LibraryContent.NO_MATCH }?.let { create -> ExtendedFloatingActionButton(onClick = create,
                 icon = { Icon(Icons.Rounded.Add, stringResource(R.string.editor_new)) }, text = { Text(stringResource(R.string.editor_new)) }) }
         },
     ) {
@@ -236,10 +236,19 @@ private fun LibraryResults(
                         Triple(R.string.design_no_recents, R.string.design_no_recents_body, Icons.Rounded.History)
                     else -> Triple(R.string.design_no_matches_title, R.string.library_no_match, Icons.Rounded.SearchOff)
                 }
-                PawEmptyState(stringResource(title), stringResource(body), icon,
-                    actionLabel = stringResource(if (state.query.isBlank()) R.string.design_show_all_prompts else R.string.library_clear_filters),
-                    onAction = onClearFilters,
-                    density = density)
+                Column {
+                    PawEmptyState(stringResource(title), stringResource(body), icon,
+                        actionLabel = stringResource(if (state.query.isBlank()) R.string.design_show_all_prompts else R.string.library_clear_filters),
+                        onAction = onClearFilters, density = density)
+                    onCreate?.let { create ->
+                        TextButton(onClick = create, modifier = Modifier.align(Alignment.CenterHorizontally)
+                            .heightIn(min = PawLayout.touchTarget)) {
+                            Icon(Icons.Rounded.Add, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(PawSpacing.small))
+                            Text(stringResource(R.string.editor_new))
+                        }
+                    }
+                }
             }
             LibraryContent.FAILED, LibraryContent.READY -> Unit
         }

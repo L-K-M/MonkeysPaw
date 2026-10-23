@@ -65,7 +65,8 @@ internal fun ImeScreen(
                 horizontalArrangement = Arrangement.spacedBy(PawSpacing.small), verticalAlignment = Alignment.CenterVertically) {
                 activeFill?.let { form ->
                     IconButton(onClick = onCancel, enabled = form.cancelEnabled) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.ime_back_to_prompts))
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(
+                            if (form.phase == FillPhase.DELIVERED) R.string.fill_done else R.string.ime_back_to_prompts))
                     }
                 }
                 Text(activeFill?.title?.ifEmpty { stringResource(R.string.fill_title) }
