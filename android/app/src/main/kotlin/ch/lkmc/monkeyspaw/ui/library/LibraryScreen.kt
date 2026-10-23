@@ -92,6 +92,13 @@ internal fun LibraryScreen(
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth >= PawLayout.expandedBreakpoint
+            val header: @Composable () -> Unit = {
+                Column {
+                    LibrarySearch(state, onQuery, mode)
+                    if (!wide) LibraryFilters(state, onFilter, mode)
+                    if (state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
             Row(Modifier.fillMaxSize()) {
                 if (wide) {
                     Surface(Modifier.width(PawLayout.navigationWidth).fillMaxHeight().padding(PawSpacing.medium),
@@ -107,25 +114,27 @@ internal fun LibraryScreen(
                     }
                 }
                 Column(Modifier.weight(1f)) {
-                    OutlinedTextField(value = state.query, onValueChange = onQuery, singleLine = true,
-                        keyboardOptions = KeyboardOptions(showKeyboardOnFocus = mode != LibraryMode.IME_PICKER),
-                        placeholder = { Text(stringResource(R.string.library_search)) },
-                        leadingIcon = { Icon(Icons.Rounded.Search, null) },
-                        trailingIcon = { if (state.query.isNotEmpty()) IconButton(onClick = { onQuery("") }) {
-                            Icon(Icons.Rounded.Close, stringResource(R.string.design_clear_search))
-                        } }, shape = MaterialTheme.shapes.extraLarge,
-                         colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                             unfocusedBorderColor = Color.Transparent),
-                         modifier = Modifier.fillMaxWidth().padding(horizontal = PawLayout.pageGutter, vertical = PawSpacing.small))
-                    if (!wide) LibraryFilters(state, onFilter, mode)
-                    if (state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
                     LibraryResults(state, mode, onSelect, onOpen, onToggleFavorite, onClearFilters, onRefresh,
-                        Modifier.weight(1f), onEdit, onCreate, onResolve)
+                        Modifier.weight(1f), onEdit, onCreate, onResolve,
+                        scrollingHeader = header)
                 }
             }
         }
     }
+}
+
+@Composable
+private fun LibrarySearch(state: LibraryUiState, onQuery: (String) -> Unit, mode: LibraryMode) {
+    OutlinedTextField(value = state.query, onValueChange = onQuery, singleLine = true,
+        keyboardOptions = KeyboardOptions(showKeyboardOnFocus = mode != LibraryMode.IME_PICKER),
+        placeholder = { Text(stringResource(R.string.library_search)) },
+        leadingIcon = { Icon(Icons.Rounded.Search, null) },
+        trailingIcon = { if (state.query.isNotEmpty()) IconButton(onClick = { onQuery("") }) {
+            Icon(Icons.Rounded.Close, stringResource(R.string.design_clear_search))
+        } }, shape = MaterialTheme.shapes.extraLarge,
+        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow, unfocusedBorderColor = Color.Transparent),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = PawLayout.pageGutter, vertical = PawSpacing.small))
 }
 
 @Composable
@@ -173,8 +182,11 @@ private fun LibraryResults(
     onClearFilters: () -> Unit, onRefresh: () -> Unit, modifier: Modifier,
     onEdit: ((LibrarySelection) -> Unit)? = null, onCreate: (() -> Unit)? = null,
     onResolve: ((LibrarySelection) -> Unit)? = null, notice: String? = null,
+    scrollingHeader: (@Composable () -> Unit)? = null,
 ) {
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = if (onCreate != null) 96.dp else PawSpacing.large)) {
+        // Keep one header location through IME resizing, and let short windows scroll past it.
+        scrollingHeader?.let { header -> item { header() } }
         if (mode == LibraryMode.BROWSER && state.content == LibraryContent.READY) item {
             Text(pluralStringResource(R.plurals.design_prompt_count, state.rows.size, state.rows.size),
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -102,6 +102,8 @@ weight. Refine composition without changing session or storage contracts:
   keep favourite and file commands in a compact title row and metadata quiet.
 - Use a neutral canvas with restrained tonal groups. Preference icons use
   small tonal wells; section labels remain subordinate to row titles.
+- Search and filters scroll with the library in one stable layout, preserving
+  input focus through software-keyboard resizing and making short windows usable.
 - Render keyboard results as compact, inset prompt keys on a tonal keybed.
   Keep Search and Switch distinct, filters scrollable, and 48 dp targets.
 - Use proportional text for rendered prompt previews; monospace remains for

@@ -1105,3 +1105,35 @@ runtime and Android 12+ dynamic-color/runtime checks remain **NOT RUN**. The
 software emulator is not performance evidence. Paid-provider and deployed-server
 flows, cross-device sync, the Gboard/Samsung matrix and the existing M8–M11 owner
 rows remain separate acceptance work; these focused UI results do not close them.
+
+### Refinement follow-up (2026-10-23)
+
+The second pass used another disposable API 30 Pixel 5 emulator with synthetic
+data. Both debug and signed/R8 release builds were exercised. The full gate
+passed; the final task delivery records the APK hashes and source revision.
+
+- Inspected the library, preference groups, provider settings and light/dark
+  picker keybed. The portrait system navigation strip matches the keybed and
+  retains readable icons. The actual Switch button restored AOSP input.
+- Inserted a fieldless fixture into the separate native EditText target. Its
+  exact two-line text appeared once and the prior keyboard returned. Password
+  targets retained the protected screen. No target-text reads were introduced.
+- A loopback-only synthetic provider exercised Write → response → Accept →
+  editor, and Improve → Show diff → Reject. Inspected the phone's unified diff
+  (both line numbers, added marker and line endings), wide side-by-side layout,
+  and the persistent action dock at 200% font scale. This is UI/protocol-fixture
+  evidence, not a paid-provider test.
+- Opened the full Data and privacy disclosure and cancelled named provider
+  deletion; the saved profile/key remained usable for the fixture requests.
+- Large-text landscape exposed a nearly zero-height result strip beneath the
+  fixed search/filters. Search now lives in the same scrollable list as results,
+  including during software-keyboard resizing. The release recheck scrolled the
+  header away and exposed complete prompt text and 48 dp row controls.
+- Adversarial review caught an API 26 black navigation surface requesting dark
+  icons. A single resolved tone now controls both. Its JVM regression was
+  observed failing before the fix, then passing; API 26 runtime remains untested.
+  Per-keystroke editor validation is readable without a live announcement region.
+
+The software-only emulator also produced platform cold-start/ANR delays. No
+performance conclusion is drawn from it. Physical accessibility, OEM/gesture
+navigation, API 26/27 and dynamic-color runtime checks remain as listed above.
