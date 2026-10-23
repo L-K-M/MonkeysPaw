@@ -62,6 +62,8 @@ internal class EditorViewModel @Inject constructor(
     private var savingDecision: Long? = null
     private var runningCommand: EditorAction? = null
     private var validationJob: Job? = null
+    private var formBase: EditorSnapshot? = null
+    private val formEdits = mutableListOf<PromptEdit>()
     private var loadJob: Job? = null
     private var historyRequested = false
     private var assistantPermit: AssistantSavePermit? = null
@@ -113,7 +115,7 @@ internal class EditorViewModel @Inject constructor(
         val path = current.relativePath ?: return null
         val availability = when {
             current.conflict != null -> AssistantEditorAvailability.CONFLICTED
-            reading || current.status == EditorStatus.LOADING || current.writing || pending != null ||
+            reading || current.status == EditorStatus.LOADING || current.writing || current.formUpdating || current.formFailed || pending != null ||
                 requests.isNotEmpty() || savingDecision != null -> AssistantEditorAvailability.BUSY
             else -> AssistantEditorAvailability.AVAILABLE
         }
@@ -136,7 +138,7 @@ internal class EditorViewModel @Inject constructor(
         val source = reviewed.source ?: return false
         val selection = reviewQuoteSelection(source, quote, range) ?: return false
         highlightedSnapshot = reviewed
-        currentState = state.value.copy(tab = EditorTab.EDIT, quoteSelection = selection)
+        currentState = state.value.copy(tab = EditorTab.EDIT, editMode = EditorEditMode.SOURCE, quoteSelection = selection)
         return true
     }
 
@@ -368,7 +370,7 @@ internal class EditorViewModel @Inject constructor(
     fun restore(revision: HistoryRevision) = request(EditorAction.Restore(revision))
 
     fun edit(source: String) {
-        if (!active || !state.value.canEdit || state.value.source == source) return
+        if (!active || !state.value.canEdit || state.value.formUpdating || state.value.formFailed || state.value.source == source) return
         revision++
         currentState = state.value.copy(source = source,
             dirty = state.value.isNew || source != baseline?.source, validating = true,
@@ -376,10 +378,76 @@ internal class EditorViewModel @Inject constructor(
         validate()
     }
 
+    /** Rebase the whole pending batch on one source, so cancelled workers cannot lose other fields. */
+    fun editForm(change: PromptEdit) {
+        val current = state.value
+        val form = current.form ?: return
+        if (!active || !current.canEdit || current.writing || current.conflict != null ||
+            current.pendingDecision != null || change is PromptEdit.Field) return
+        val updated = form.editing(change)
+        if (updated == form) return
+        val base = formBase ?: snapshot()?.also { formBase = it } ?: return
+        // Only the latest value of each property is needed, including recovery after a size refusal.
+        formEdits.removeAll { it::class == change::class }
+        formEdits.add(change)
+        val edits = formEdits.toList()
+        val generation = ++revision
+        validationJob?.cancel()
+        currentState = current.copy(form = updated, formUpdating = true, formFailed = false, dirty = true, validating = true,
+            failure = null, saveIssues = emptyList())
+        validationJob = viewModelScope.launch {
+            val result = withContext(worker) {
+                runCatching {
+                    val filename = base.relativePath.substringAfterLast('/')
+                    val document = edits.fold(PromptCodec.parse(base.source, filename)) { document, edit ->
+                        PromptMutations.editing(edit, document, filename)
+                    }
+                    val projection = project(document)
+                    // Decode failures can carry empty forensic source; never adopt that as the draft.
+                    if (projection.form == null) throw PromptWriteError.InvalidPrompt
+                    document.source to projection
+                }
+            }
+            if (!current(base) || generation != revision) return@launch
+            val retainedForm = state.value.form
+            result.fold(onSuccess = { (source, projection) ->
+                formBase = null
+                formEdits.clear()
+                currentState = state.value.copy(source = source, dirty = state.value.isNew || source != baseline?.source)
+                applyProjection(projection)
+                // Preserve in-progress whitespace and empty titles instead of replacing them with codec fallbacks.
+                val form = if (edits.none { it is PromptEdit.Title } && projection.form != null)
+                    retainedForm?.copy(title = projection.form.title) else retainedForm
+                currentState = state.value.copy(form = form, formUpdating = false, formFailed = false)
+            }, onFailure = {
+                currentState = state.value.copy(failure = EditorFailure.INVALID, formUpdating = false, formFailed = true, validating = false)
+            })
+            drain()
+        }
+    }
+
+    fun setEditMode(mode: EditorEditMode) {
+        if (!active || state.value.validating || state.value.formFailed || mode == EditorEditMode.FORM && state.value.form == null) return
+        clearReviewQuote()
+        currentState = state.value.copy(editMode = mode)
+    }
+
+    /** Explicit recovery discards only unapplied form input, retaining the last applied unsaved source. */
+    fun discardFailedForm() {
+        if (!active || !state.value.formFailed || state.value.writing) return
+        revision++
+        validationJob?.cancel()
+        formBase = null
+        formEdits.clear()
+        currentState = state.value.copy(editMode = EditorEditMode.SOURCE, formFailed = false, formUpdating = false,
+            dirty = state.value.isNew || state.value.source != baseline?.source, failure = null, validating = true)
+        validate()
+    }
+
     /** A staged settings sheet belongs to one exact buffer. Apply shares the save/discard draft. */
     fun editField(expectedPath: String, expectedSource: String, settings: PromptFieldSettings) {
         val captured = snapshot() ?: return
-        if (!active || !state.value.canEdit || state.value.writing || state.value.validating || state.value.conflict != null ||
+        if (!active || !state.value.canEdit || state.value.writing || state.value.validating || state.value.formFailed || state.value.conflict != null ||
             state.value.pendingDecision != null || captured.relativePath != expectedPath ||
             captured.source != expectedSource || settings.validationIssue != null ||
             state.value.fieldSettings?.any { it.name == settings.name } != true) return
@@ -411,7 +479,7 @@ internal class EditorViewModel @Inject constructor(
     }
 
     fun setNewPath(path: String) {
-        if (!active || !state.value.isNew || state.value.writing || state.value.relativePath == path) return
+        if (!active || !state.value.isNew || state.value.writing || state.value.formUpdating || state.value.formFailed || state.value.relativePath == path) return
         revision++
         currentState = state.value.copy(relativePath = path, dirty = true, failure = null, saveIssues = emptyList(), validating = true)
         updateAccess(repository.accessSnapshot)
@@ -441,7 +509,8 @@ internal class EditorViewModel @Inject constructor(
     }
 
     private fun startSave(stamp: FileStamp?) {
-        if (!active || !state.value.canEdit || state.value.writing || state.value.status == EditorStatus.LOADING) return
+        if (!active || !state.value.canEdit || state.value.writing || state.value.formUpdating || state.value.formFailed ||
+            state.value.status == EditorStatus.LOADING) return
         val captured = snapshot() ?: return
         val accessGeneration = repository.accessSnapshot.generation
         loadGeneration++
@@ -636,7 +705,9 @@ internal class EditorViewModel @Inject constructor(
             EditorAction.Close -> reset()
             EditorAction.Reload -> if (state.value.isNew) {
                 revision++
-                currentState = state.value.copy(source = "", dirty = true, validating = true)
+                formBase = null
+                formEdits.clear()
+                currentState = state.value.copy(source = "", dirty = true, validating = true, formUpdating = false, formFailed = false)
                 validate()
             } else load(LoadPurpose.REPLACE)
             else -> startCommand(action, accessGeneration)
@@ -872,11 +943,14 @@ internal class EditorViewModel @Inject constructor(
             baseline = loaded
             revision++
             validationJob?.cancel()
+            formBase = null
+            formEdits.clear()
             currentState = state.value.copy(relativePath = loaded.entry.relativePath,
                 selection = selection(loaded.entry), source = loaded.source, stamp = loaded.entry.stamp,
                 readOnlyReason = loaded.readOnlyReason, dirty = false, isNew = false, status = EditorStatus.READY,
                 conflict = null, failure = null, saveIssues = emptyList(), historyMaintenanceFailed = false,
-                provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null))
+                provenanceMaintenanceFailed = false, history = state.value.history.copy(currentProvenance = null),
+                formUpdating = false, formFailed = false)
             updateAccess(repository.accessSnapshot)
             applyProjection(loaded.projection)
         } finally { adoptingBaseline = previous }
@@ -914,11 +988,12 @@ internal class EditorViewModel @Inject constructor(
     private fun applyProjection(projection: EditorDocumentState) {
         currentState = state.value.copy(title = projection.title, issues = projection.issues,
             fields = projection.fields, preview = projection.preview, previewAvailable = projection.previewAvailable,
-            isPrivate = projection.isPrivate, fieldSettings = projection.fieldSettings, validating = false)
+            isPrivate = projection.isPrivate, fieldSettings = projection.fieldSettings, form = projection.form,
+            editMode = if (projection.form == null) EditorEditMode.SOURCE else state.value.editMode, validating = false)
     }
 
     private fun projectFromState() = EditorDocumentState(state.value.title, state.value.issues,
-        state.value.fields, state.value.preview, state.value.previewAvailable, state.value.isPrivate, state.value.fieldSettings)
+        state.value.fields, state.value.preview, state.value.previewAvailable, state.value.isPrivate, state.value.fieldSettings, state.value.form)
     private fun project(document: PromptDocument) = projectEditor(document, clock.now(), ZoneId.systemDefault())
     private fun selection(entry: LibraryEntry) = LibrarySelection(entry.identity, entry.relativePath)
     private fun current(snapshot: EditorSnapshot): Boolean = active && session == snapshot.session
@@ -942,6 +1017,8 @@ internal class EditorViewModel @Inject constructor(
         historyGeneration++
         loadJob?.cancel()
         validationJob?.cancel()
+        formBase = null
+        formEdits.clear()
         reading = false
         baseline = null
         runningCommand = null

@@ -1172,3 +1172,47 @@ These checks cover presentation and the exercised API 26 delivery routes,
 not the full minimum-API ICU/sync/entry matrices above. Physical TalkBack,
 external keyboards, OEM/gesture navigation and dynamic-color runtime remain
 owner checks. Software emulation is not performance evidence.
+
+### Everyday UI and visual editor (2026-10-23)
+
+The §25.8 pass used an isolated Android 8/API 26 x86_64 emulator at
+720×1560/320 dpi. Debug and signed/R8 release builds were exercised. The
+full five-task Android gate passed: 1,251 Core and 931 app JVM tests,
+zero failures/skips, lint and both APKs. The local release passed
+`apksigner verify`; its SHA-256 is
+`d595d197524df8e46e5a400b701ddd3894ac0c338dd95ea4ad04233f747c5df7`.
+
+- Inspected Library, the new visual editor, preview/history, Fill, Settings,
+  signed-out Account and the keyboard with synthetic data. Refined the first
+  rendered pass to bring writing ahead of metadata and tuck the new-file
+  location into an expandable control.
+- Created and saved a prompt through the form, reopened it, edited its body,
+  saved another revision, viewed history, filled its text field and copied it.
+  Checked the Copy dock above the ordinary software keyboard.
+- Exercised favourites, filtered emptiness and recovery with the system font
+  setting at 200%, plus light/dark palettes. Inspected a 960 dp-wide layout
+  with the browse sidebar. Emulator display overrides were letterboxed by
+  the physical framebuffer; they establish layout, not tablet hardware proof.
+- On the minified APK, opened the picker in the system Settings search field,
+  used a remembered field value and Insert. The exact single-line result
+  appeared once and AOSP input returned. Repeated in dark phone landscape
+  at 200% font setting; Insert/Copy remained reachable.
+- Cancelled the Forget remembered values confirmation natively. JVM tests
+  cover confirmed clearing, failure/retry, held-form retention and preservation
+  of prompt/history bytes without clipboard access.
+- Native typing exposed focus loss when a new validation row changed the
+  editor item's positional identity. Its boundary regression failed first;
+  a stable lazy-item key fixed it. Rechecked typing a complete placeholder
+  with the keyboard open, then saved and filled that prompt.
+- Regressions also cover rapid mixed form edits, path-validation interleaving,
+  exact body/header preservation, malformed-header repair, rejected Unicode,
+  save refusal and explicit last-applied-source recovery. The relevant failure
+  cases were observed before their fixes. A two-round independent source
+  review found no remaining important issue after the follow-up fixes.
+
+The software emulator dropped stale events from long `adb input text`
+batches and produced cold-start system delays. Small fresh-timestamp batches
+were used for typing checks; no performance result is claimed. Physical
+TalkBack, external keyboards, OEM/gesture navigation, Android 12+ dynamic
+colors, paid providers and deployed-server flows remain unverified here.
+These checks do not close the existing owner acceptance matrices.

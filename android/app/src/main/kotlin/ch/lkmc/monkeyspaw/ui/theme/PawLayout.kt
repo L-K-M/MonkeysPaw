@@ -21,6 +21,9 @@ internal object PawLayout {
     val expandedBreakpoint = 840.dp
     val navigationWidth = 240.dp
     val readingWidth = 840.dp
+    val formWidth = 680.dp
     val libraryWidth = 1040.dp
-    val contentPadding = PaddingValues(horizontal = PawSpacing.large, vertical = PawSpacing.large)
+    val contentPadding = PaddingValues(horizontal = pageGutter, vertical = PawSpacing.section)
+    val inputHeight = 56.dp
+    val bodyEditorHeight = 200.dp
 }

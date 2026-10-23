@@ -35,13 +35,15 @@ internal fun KeyboardTileSetupScreen(
         return
     }
     PawScreen(stringResource(R.string.design_setup_title), modifier, bottomBar = {
-        if (state.visible) Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-            FlowRow(Modifier.fillMaxWidth().padding(PawSpacing.large), horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
+        if (state.visible) PawActionDock {
                 TextButton(onClick = onSkip, enabled = state.canDecide) { Text(stringResource(R.string.setup_skip)) }
                 Button(onClick = onContinue, enabled = state.canContinue) {
-                    Text(stringResource(if (state.tile == TileSetupState.MANUAL) R.string.setup_tile_confirm else R.string.continue_to_library))
+                    Text(stringResource(when {
+                        state.step != KeyboardTileSetupStep.ADD_TILE -> R.string.design_setup_continue
+                        state.tile == TileSetupState.MANUAL -> R.string.setup_tile_confirm
+                        else -> R.string.continue_to_library
+                    }))
                 }
-            }
         }
     }) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawSpacing.section),

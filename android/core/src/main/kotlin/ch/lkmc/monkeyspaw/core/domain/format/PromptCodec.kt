@@ -9,6 +9,9 @@ import org.snakeyaml.engine.v2.exceptions.MarkedYamlEngineException
 import org.snakeyaml.engine.v2.exceptions.YamlEngineException
 
 object PromptCodec {
+    /** Read-only form projection; unsupported headers stay editable in Source. */
+    fun form(document: PromptDocument): PromptForm? = PromptForm.of(document)
+
     /** Null keeps malformed or future headers inspectable without enabling structured edits. */
     fun fieldSettings(document: PromptDocument): List<PromptFieldSettings>? = PromptForm.of(document)?.fieldSettings
 

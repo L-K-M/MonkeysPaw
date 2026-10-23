@@ -113,7 +113,9 @@ class ShareReceiverActivity : ComponentActivity() {
                         is ShareDestination.Editing -> {
                             val editor = destination.editor
                             EditorScreen(state = editor.state.collectAsStateWithLifecycle().value,
-                                onEdit = editor::edit, onEditField = editor::editField, onNewPath = editor::setNewPath, onTab = editor::setTab,
+                                onEdit = editor::edit, onEditForm = editor::editForm, onEditMode = editor::setEditMode,
+                                onDiscardFailedForm = editor::discardFailedForm,
+                                onEditField = editor::editField, onNewPath = editor::setNewPath, onTab = editor::setTab,
                                 onSave = editor::save, onBack = editor::close, onReload = editor::reload,
                                 onRename = editor::rename, onMove = editor::move,
                                 onPrivateCopy = editor::privateCopy, onDelete = editor::delete,

@@ -14,6 +14,7 @@ import java.time.format.FormatStyle
 import java.util.Locale
 
 internal enum class EditorTab { EDIT, PREVIEW, FIELDS, HISTORY }
+internal enum class EditorEditMode { FORM, SOURCE }
 internal enum class EditorStatus { CLOSED, LOADING, READY, SAVING, COMMAND }
 internal enum class EditorDecision { SAVE, DISCARD, CANCEL }
 internal enum class EditorConflictChoice { KEEP_MINE, TAKE_THEIRS, DISCARD, CANCEL, REVIEW }
@@ -58,6 +59,21 @@ internal data class EditorHistoryState(val revisions: List<EditorRevision> = emp
     val selectedRevision: EditorRevision? get() = revisions.firstOrNull { it.revision == selected }
 }
 
+/** Typed form input is immediate; the worker publishes its matching source separately. */
+internal data class EditorFormState(val title: String, val description: String, val tags: List<String>,
+    val isPrivate: Boolean, val body: String) {
+    fun editing(change: PromptEdit): EditorFormState = when (change) {
+        is PromptEdit.Title -> copy(title = change.value)
+        is PromptEdit.Description -> copy(description = change.value)
+        is PromptEdit.Tags -> copy(tags = change.value)
+        is PromptEdit.IsPrivate -> copy(isPrivate = change.value)
+        is PromptEdit.Body -> copy(body = change.value)
+        is PromptEdit.Field -> this
+    }
+
+    override fun toString(): String = "<editor form redacted>"
+}
+
 internal data class EditorUiState(
     val relativePath: String? = null,
     val selection: LibrarySelection? = null,
@@ -67,6 +83,10 @@ internal data class EditorUiState(
     val dirty: Boolean = false,
     val status: EditorStatus = EditorStatus.CLOSED,
     val tab: EditorTab = EditorTab.EDIT,
+    val editMode: EditorEditMode = EditorEditMode.FORM,
+    val form: EditorFormState? = null,
+    val formUpdating: Boolean = false,
+    val formFailed: Boolean = false,
     val title: String = "",
     val issues: List<PromptIssue> = emptyList(),
     val fields: List<PromptField> = emptyList(),
@@ -94,11 +114,11 @@ internal data class EditorUiState(
     val writing: Boolean get() = status == EditorStatus.SAVING || status == EditorStatus.COMMAND
     val canEdit: Boolean get() = source != null && readOnlyReason == null &&
         status != EditorStatus.LOADING && status != EditorStatus.COMMAND
-    val canSave: Boolean get() = canEdit && !writing && conflict == null && (isNew || stamp != null)
+    val canSave: Boolean get() = canEdit && !writing && !formUpdating && !formFailed && conflict == null && (isNew || stamp != null)
     val canCommand: Boolean get() = !isNew && stamp != null && readOnlyReason == null &&
         !writing && status != EditorStatus.LOADING && conflict == null
     val canPrivateCopy: Boolean get() = !isNew && source != null && previewAvailable && !validating &&
-        !writing && status == EditorStatus.READY && pendingDecision == null
+        !writing && !formFailed && status == EditorStatus.READY && pendingDecision == null
     val group: GroupAccessGroup? get() = (access as? PromptAccessState.Group)?.group
 
     override fun toString(): String = "<editor state redacted>"
@@ -106,7 +126,7 @@ internal data class EditorUiState(
 
 internal data class EditorDocumentState(val title: String, val issues: List<PromptIssue>,
     val fields: List<PromptField>, val preview: String, val previewAvailable: Boolean, val isPrivate: Boolean,
-    val fieldSettings: List<PromptFieldSettings>? = null)
+    val fieldSettings: List<PromptFieldSettings>? = null, val form: EditorFormState? = null)
 
 /** History rows show a localized medium date with a short time instead of the raw ISO instant. */
 internal fun editorTimestamp(instant: Instant, locale: Locale = Locale.getDefault(),
@@ -116,6 +136,7 @@ internal fun editorTimestamp(instant: Instant, locale: Locale = Locale.getDefaul
 
 /** Editor preview uses tokens directly: absent defaults remain markers, including choice fields. */
 internal fun projectEditor(document: PromptDocument, now: Instant, zone: ZoneId): EditorDocumentState {
+    val form = PromptCodec.form(document)
     val effective = document.effectiveFields
     val used = effective.map { it.name }.toSet()
     val fields = effective + document.frontMatter.fields.filterNot { it.name in used }
@@ -135,5 +156,7 @@ internal fun projectEditor(document: PromptDocument, now: Instant, zone: ZoneId)
         }
     }
     return EditorDocumentState(document.frontMatter.title, document.issues, fields, preview, document.canRender,
-        document.frontMatter.isPrivate, PromptCodec.fieldSettings(document))
+        document.frontMatter.isPrivate, form?.fieldSettings, form?.let {
+            EditorFormState(it.title, it.description, it.tags, it.isPrivate, it.body)
+        })
 }

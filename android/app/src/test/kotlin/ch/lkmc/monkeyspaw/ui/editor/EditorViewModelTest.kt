@@ -59,6 +59,172 @@ internal class EditorViewModelTest : TemporaryFiles() {
     private fun bytesAre(expected: ByteArray, path: String = "a.md") = assertTrue(bytes(path).contentEquals(expected), "Disk bytes differ.")
 
     @Test
+    fun `visual edits retain rapid mixed input and share the explicit source save guard`() = runTest {
+        val original = "---\n# keep header for body-only edits\ntitle: Original\ncustom: {nested: retain}\nfields:\n  topic: {default: Earth, custom: keep}\n---\nHello {{topic}}\r\n"
+        put(libraryDir.resolve("a.md"), original.encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        assertNotNull(model.state.value.form)
+        model.editForm(PromptEdit.Title("Updated"))
+        model.editForm(PromptEdit.Description("A useful description"))
+        model.editForm(PromptEdit.Tags(listOf("work", "a,b")))
+        model.editForm(PromptEdit.IsPrivate(true))
+        model.editForm(PromptEdit.Body("First {{topic}}"))
+        model.editForm(PromptEdit.Body("Latest {{topic}}\r\n"))
+        assertEquals("Latest {{topic}}\r\n", model.state.value.form?.body)
+        assertFalse(model.state.value.canSave)
+        bytesAre(original.encodeToByteArray())
+        model.close()
+        assertNotNull(model.state.value.pendingDecision)
+        runCurrent()
+        assertTrue(model.state.value.canSave)
+        val document = PromptCodec.parse(assertNotNull(model.state.value.source), "a.md")
+        assertEquals("Updated", document.frontMatter.title)
+        assertEquals("A useful description", document.frontMatter.description)
+        assertEquals(listOf("work", "a,b"), document.frontMatter.tags)
+        assertTrue(document.frontMatter.isPrivate)
+        assertEquals("Latest {{topic}}\r\n", document.body)
+        assertTrue("nested: retain" in document.source)
+        assertTrue("custom: keep" in document.source)
+        bytesAre(original.encodeToByteArray())
+        decide(model, EditorDecision.CANCEL)
+        model.setEditMode(EditorEditMode.SOURCE)
+        sourceIs(model, document.source)
+        model.setEditMode(EditorEditMode.FORM)
+        assertEquals("Updated", model.state.value.form?.title)
+        model.save()
+        runCurrent()
+        assertFalse(model.state.value.dirty)
+        assertEquals("Latest {{topic}}\r\n", library().load("a.md").document.body)
+    }
+
+    @Test
+    fun `visual body edits preserve exact header and malformed source remains repairable`() = runTest {
+        val original = "---\r\n# exact header\r\ntitle: 'Original'\r\ncustom: [a, b]\r\n---\r\nOld"
+        put(libraryDir.resolve("a.md"), original.encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        model.editForm(PromptEdit.Body("New {{incomplete"))
+        runCurrent()
+        sourceIs(model, original.removeSuffix("Old") + "New {{incomplete")
+        assertNotNull(model.state.value.form)
+        assertFalse(model.state.value.previewAvailable)
+        model.setEditMode(EditorEditMode.SOURCE)
+        model.edit("---\ntitle: [invalid\n---\nRetain me")
+        runCurrent()
+        assertNull(model.state.value.form)
+        val malformed = model.state.value
+        model.editForm(PromptEdit.Title("Must not replace"))
+        assertEquals(malformed, model.state.value)
+        model.edit("Repaired body")
+        runCurrent()
+        assertNotNull(model.state.value.form)
+        model.setEditMode(EditorEditMode.FORM)
+        assertEquals("Repaired body", model.state.value.form?.body)
+        bytesAre(original.encodeToByteArray())
+    }
+
+    @Test
+    fun `failed visual edits cannot save old source and later field correction retains the batch`() = runTest {
+        put(libraryDir.resolve("a.md"), "Original".encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        model.editForm(PromptEdit.Title("Kept title"))
+        model.editForm(PromptEdit.Description("x".repeat(Limits.maxPromptBytes + 1)))
+        runCurrent()
+        assertTrue(model.state.value.formFailed)
+        assertFalse(model.state.value.canSave)
+        model.save()
+        runCurrent()
+        bytesAre("Original".encodeToByteArray())
+        model.editForm(PromptEdit.Description("Shortened"))
+        runCurrent()
+        assertFalse(model.state.value.formFailed)
+        assertEquals("Kept title", model.state.value.title)
+        assertEquals("Shortened", PromptCodec.parse(assertNotNull(model.state.value.source), "a.md").frontMatter.description)
+        model.save()
+        runCurrent()
+        assertFalse(model.state.value.dirty)
+        assertEquals("Kept title", library().load("a.md").document.frontMatter.title)
+    }
+
+    @Test
+    fun `repairing an initially malformed header keeps source mode until an explicit switch`() = runTest {
+        put(libraryDir.resolve("a.md"), "---\ntitle: [broken\n---\nBody".encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        assertNull(model.state.value.form)
+        assertEquals(EditorEditMode.SOURCE, model.state.value.editMode)
+        model.edit("---\ntitle: Repaired\n---\nBody")
+        runCurrent()
+        assertNotNull(model.state.value.form)
+        assertEquals(EditorEditMode.SOURCE, model.state.value.editMode)
+    }
+
+    @Test
+    fun `path validation cannot drop immediately following form input`() = runTest {
+        val model = model()
+        model.createDraft()
+        runCurrent()
+        model.setNewPath("Notes/renamed.md")
+        assertTrue(model.state.value.validating)
+        model.editForm(PromptEdit.Body("Keep this input"))
+        runCurrent()
+        assertEquals("Keep this input", model.state.value.form?.body)
+        assertEquals("Keep this input", model.state.value.source)
+        assertEquals("renamed", model.state.value.form?.title)
+        assertEquals("Notes/renamed.md", model.state.value.relativePath)
+    }
+
+    @Test
+    fun `explicit failed-form recovery retains the earlier applied unsaved draft`() = runTest {
+        put(libraryDir.resolve("a.md"), "Saved body".encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        model.edit("Earlier unsaved draft")
+        runCurrent()
+        model.editForm(PromptEdit.Description("x".repeat(Limits.maxPromptBytes + 1)))
+        runCurrent()
+        assertTrue(model.state.value.formFailed)
+        assertFalse(model.state.value.canSave)
+        model.discardFailedForm()
+        runCurrent()
+        assertFalse(model.state.value.formFailed)
+        assertEquals(EditorEditMode.SOURCE, model.state.value.editMode)
+        sourceIs(model, "Earlier unsaved draft")
+        assertTrue(model.state.value.dirty)
+        bytesAre("Saved body".encodeToByteArray())
+        model.save()
+        runCurrent()
+        assertEquals("Earlier unsaved draft", library().load("a.md").document.body)
+    }
+
+    @Test
+    fun `invalid UTF16 form input cannot replace a draft with the codecs empty failure source`() = runTest {
+        put(libraryDir.resolve("a.md"), "Saved body".encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        model.editForm(PromptEdit.Body("Invalid \uD800 input"))
+        runCurrent()
+        assertTrue(model.state.value.formFailed)
+        sourceIs(model, "Saved body")
+        assertFalse(model.state.value.canSave)
+        model.save()
+        runCurrent()
+        bytesAre("Saved body".encodeToByteArray())
+        model.editForm(PromptEdit.Body("Corrected input"))
+        runCurrent()
+        assertFalse(model.state.value.formFailed)
+        sourceIs(model, "Corrected input")
+    }
+
+    @Test
     fun `placeholder apply updates the guarded draft before save and records history once`() = runTest {
         val original = "{{topic}}\r\n"
         put(libraryDir.resolve("a.md"), original.encodeToByteArray())

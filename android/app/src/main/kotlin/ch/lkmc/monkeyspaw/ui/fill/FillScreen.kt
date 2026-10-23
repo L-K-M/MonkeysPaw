@@ -47,7 +47,7 @@ internal fun FillScreen(
     val title = state.title.ifEmpty { stringResource(R.string.fill_title) }
     val density = if (state.input == FillInput.INLINE) PawContentDensity.COMPACT else PawContentDensity.COMFORTABLE
     Column(content) {
-        if (state.input != FillInput.INLINE) TopAppBar(title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        if (state.input != FillInput.INLINE) TopAppBar(title = { Text(stringResource(R.string.fill_title)) },
             navigationIcon = { IconButton(onClick = onCancel, enabled = state.cancelEnabled) {
                 Icon(Icons.AutoMirrored.Rounded.ArrowBack, stringResource(R.string.design_back))
             } }, windowInsets = WindowInsets(0, 0, 0, 0),
@@ -55,11 +55,14 @@ internal fun FillScreen(
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = PawLayout.readingWidth).fillMaxSize()) {
                 LazyColumn(Modifier.weight(1f), contentPadding = if (state.input == FillInput.INLINE)
-                    PaddingValues(horizontal = PawSpacing.medium, vertical = PawSpacing.small) else PaddingValues(PawSpacing.large),
-                    verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
+                    PaddingValues(horizontal = PawSpacing.medium, vertical = PawSpacing.small) else PawLayout.contentPadding,
+                    verticalArrangement = Arrangement.spacedBy(if (state.input == FillInput.INLINE) PawSpacing.medium else PawSpacing.section)) {
+                    if (state.input != FillInput.INLINE) item {
+                        Text(title, style = MaterialTheme.typography.headlineMedium)
+                    }
                     state.description?.let { description -> item {
                         Text(description, style = if (state.input == FillInput.INLINE) MaterialTheme.typography.bodySmall
-                            else MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            else MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = if (state.input == FillInput.INLINE) 2 else Int.MAX_VALUE, overflow = TextOverflow.Ellipsis)
                     } }
                     notice?.let { item { PawMessage(it, tone = PawMessageTone.WARNING) } }
@@ -100,6 +103,9 @@ internal fun FillScreen(
                         }
                         if (capture.candidates.isEmpty()) Text(stringResource(R.string.fill_capture_no_field), style = MaterialTheme.typography.bodySmall)
                     } }
+                    if (state.input != FillInput.INLINE && state.fields.isNotEmpty()) item {
+                        PawSectionHeading(stringResource(R.string.design_fill_fields), stringResource(R.string.design_fill_fields_help))
+                    }
                     items(state.fields, key = { it.field.name }) { field ->
                         val error = (state.preview as? FillPreview.Blocked)?.error
                         val invalid = (error is PromptRenderError.MissingRequiredValue && error.field == field.field.name) ||
@@ -112,7 +118,9 @@ internal fun FillScreen(
                         PawLoading(stringResource(R.string.fill_snapshot_pending), density = density)
                     }
                     state.preview?.let { preview -> item {
-                        PawSectionHeading(stringResource(R.string.fill_preview))
+                        PawSectionHeading(stringResource(if (state.fields.isEmpty() && state.input != FillInput.INLINE)
+                            R.string.design_fill_ready else R.string.fill_preview),
+                            supportingText = stringResource(R.string.design_fill_preview_help).takeIf { state.input != FillInput.INLINE })
                         Spacer(Modifier.height(PawSpacing.small))
                         when (preview) {
                             is FillPreview.Rendered -> {
@@ -139,10 +147,7 @@ internal fun FillScreen(
                         }
                     } }
                 }
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                    FlowRow(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.small),
-                        horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium, Alignment.End),
-                        verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
+                PawActionDock {
                         if (state.phase != FillPhase.DELIVERED) {
                             if (state.deliveryMode != DeliveryMode.COPY) Button(onClick = { onInsert?.invoke() },
                                 enabled = state.copyEnabled && onInsert != null, modifier = Modifier.heightIn(min = PawLayout.touchTarget)) {
@@ -151,7 +156,9 @@ internal fun FillScreen(
                                 Text(stringResource(R.string.fill_insert))
                             }
                             if (state.deliveryMode == DeliveryMode.COPY || onInsert == null) {
-                                Button(onClick = onCopy, enabled = state.copyEnabled, modifier = Modifier.heightIn(min = PawLayout.touchTarget)) {
+                                Button(onClick = onCopy, enabled = state.copyEnabled, modifier = Modifier
+                                    .then(if (state.input == FillInput.INLINE) Modifier else Modifier.fillMaxWidth())
+                                    .heightIn(min = PawLayout.touchTarget)) {
                                     Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp))
                                     Spacer(Modifier.width(PawSpacing.small))
                                     Text(stringResource(R.string.fill_copy))
@@ -160,7 +167,6 @@ internal fun FillScreen(
                                 modifier = Modifier.heightIn(min = PawLayout.touchTarget)) { Text(stringResource(R.string.fill_copy)) }
                         } else Button(onClick = onCancel, enabled = state.cancelEnabled,
                             modifier = Modifier.heightIn(min = PawLayout.touchTarget)) { Text(stringResource(R.string.fill_done)) }
-                    }
                 }
             }
         }
@@ -216,7 +222,8 @@ private fun FieldControl(state: FillFieldState, input: FillInput, enabled: Boole
                 supportingText = {
                     if (invalid) Text(stringResource(R.string.fill_invalid_choice))
                     else field.description?.let { Text(it) }
-                }, modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth())
+                }, modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium, colors = pawInputColors())
             ExposedDropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
                 if (field.optional) DropdownMenuItem(text = { Text(stringResource(R.string.fill_clear_choice)) },
                     onClick = { expanded = false; onValue("") })
@@ -245,8 +252,8 @@ private fun FieldControl(state: FillFieldState, input: FillInput, enabled: Boole
         }
         return
     }
-    OutlinedTextField(value = state.value, onValueChange = onValue, enabled = enabled, isError = invalid,
+    PawTextField(value = state.value, onValueChange = onValue, enabled = enabled, isError = invalid,
         singleLine = field.kind == FieldKind.TEXT, minLines = if (field.kind == FieldKind.MULTILINE) 3 else 1,
-        label = { Text(label) }, supportingText = field.description?.let { description -> { Text(description) } },
+        label = label, supportingText = field.description,
         modifier = Modifier.fillMaxWidth())
 }

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="design_prompt_details">Details</string>
+    <string name="design_prompt_name">Prompt name</string>
+    <string name="design_description">Description</string>
+    <string name="design_description_help">A short summary to help you find it later.</string>
+    <string name="design_prompt_body">Prompt</string>
+    <string name="design_prompt_body_help">Use {{field_name}} for values you fill in each time.</string>
+    <string name="design_prompt_body_example">Summarize {{text}} in three clear points.</string>
+    <string name="design_private_prompt">Private prompt</string>
+    <string name="design_private_prompt_help">Block assistant review and improvement. This prompt can still sync.</string>
+    <string name="design_tags">Tags</string>
+    <string name="design_add_tag">Add tag</string>
+    <string name="design_edit_tag">Edit tag</string>
+    <string name="design_remove_tag">Remove</string>
+    <string name="design_tag_name">Tag name</string>
+    <string name="design_form_mode">Form</string>
+    <string name="design_source_mode">Source</string>
+    <string name="design_form_unavailable">This header needs attention. Edit the source to repair it; your text is kept.</string>
+    <string name="design_form_failed">This change could not be applied. Correct or shorten the changed field, or review the last applied source. Your form is kept until you choose.</string>
+    <string name="design_review_last_source">Review last applied source</string>
+    <string name="design_recover_form_help">Return to the last applied draft? Form changes that could not be applied will be discarded. Earlier applied edits are kept, and your saved prompt is unchanged.</string>
+    <string name="design_use_last_source">Use last applied draft</string>
+    <string name="design_save_location">Save to %1$s</string>
+    <string name="design_fill_fields">Make it yours</string>
+    <string name="design_fill_fields_help">Fill in the details below. Your finished prompt updates as you type.</string>
+    <string name="design_fill_ready">Ready to copy</string>
+    <string name="design_fill_preview_help">Check the finished text before using it.</string>
+    <string name="design_settings_help">Make Monkey\'s Paw work for you.</string>
+    <string name="design_account_intro">Sync your library</string>
+    <string name="design_account_intro_help">Connect to your own server to use your prompts across devices.</string>
+    <string name="design_connection_security">Connection security</string>
+    <string name="design_assistant_intro">Start with an idea</string>
+    <string name="design_assistant_intro_help">Describe the task, audience and result you want. Review the draft before adding it to your library.</string>
+    <string name="design_setup_continue">Continue</string>
+    <string name="design_data_section">Your data</string>
+    <string name="design_forget_values">Forget remembered values</string>
+    <string name="design_forget_values_help">Clear saved field entries for every prompt.</string>
+    <string name="design_forget_values_confirm">Clear all remembered field values on this device? Your prompts, favourites and history are kept. Open forms keep their current entries until you close them.</string>
+    <string name="design_forget_values_failed">Remembered values could not be cleared. Try again.</string>
+    <string name="design_forget_action">Forget values</string>
+    <string name="design_forgetting_values">Clearing remembered values…</string>
+    <string name="design_values_forgotten">Remembered values cleared.</string>
+</resources>
