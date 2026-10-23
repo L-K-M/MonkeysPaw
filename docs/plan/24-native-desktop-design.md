@@ -118,7 +118,8 @@ The status item menu lists Show Picker with the global shortcut, Repeat
 Last Prompt, Library, Settings… ⌘,, Setup…, About and Quit.
 Its template icon is the paw silhouette in `media-sources/paw-symbol.svg`.
 `python3 scripts/generate-paw-icon.py` derives the macOS vector and Android
-tile, shortcut and Android 13+ themed-icon assets from that same source.
+tile and Android 13+ themed-icon assets from that source. Launcher shortcuts
+use the full-color paw app icon for contrast on light and dark menus.
 
 ### 24.5 Settings, picker and other windows
 

@@ -98,7 +98,7 @@ internal class EntryBoundaryTest {
         val shortcut = children(xml("res/xml/shortcuts.xml"), "shortcut").single()
         assertEquals("insert_prompt", shortcut.attr("shortcutId"))
         assertEquals("true", shortcut.attr("enabled"))
-        assertEquals("@drawable/ic_paw", shortcut.attr("icon"))
+        assertEquals("@mipmap/ic_launcher", shortcut.attr("icon"), "Launcher shortcut menus do not tint white monochrome icons")
         val intent = children(shortcut, "intent").single()
         assertEquals(EntrySource.SHORTCUT.action, intent.attr("action"))
         assertEquals("ch.lkmc.monkeyspaw", intent.attr("targetPackage"))
@@ -111,7 +111,7 @@ internal class EntryBoundaryTest {
     }
 
     @Test
-    fun `paw identity icon is one silhouette across tile shortcut and themed icon`() {
+    fun `paw identity icon shares the tile and themed silhouette while shortcuts retain contrast`() {
         val tile = (children(xml("AndroidManifest.xml"), "service")
             .single { it.attr("name") == ".entry.PromptTileService" })
         assertEquals("@drawable/ic_paw", tile.attr("icon"))

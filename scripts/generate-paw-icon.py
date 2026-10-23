@@ -9,7 +9,7 @@ One canonical silhouette feeds every template/monochrome surface:
 - MonkeysPaw/Resources/Assets.xcassets/MenuBarIcon.imageset/Contents.json:
   universal vector image kept as vector and rendered as a template.
 - android/app/src/main/res/drawable/ic_paw.xml: white VectorDrawable for the
-  Quick Settings tile, the tile-add dialog and the static shortcut.
+  Quick Settings tile and the tile-add dialog.
 - android/app/src/main/res/drawable/ic_paw_monochrome.xml: the same path on a
   108dp adaptive-icon canvas, scaled into the 66dp safe circle (API 33
   themed icon layer).

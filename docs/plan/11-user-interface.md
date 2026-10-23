@@ -461,6 +461,7 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   placeholders stay editable in the form. Unknown declaration and option keys
   survive setting edits; retained options keep their metadata when reordered
   or removed. Malformed/future headers remain inspectable, with settings disabled.
+  [Platform checks](../platform/placeholder-settings.md) record verification and owner checks.
   Preview renders with
   field defaults (or the field name when there is none), the real date and
   time, and a `{clipboard}` placeholder; browsing or typing never reads the
