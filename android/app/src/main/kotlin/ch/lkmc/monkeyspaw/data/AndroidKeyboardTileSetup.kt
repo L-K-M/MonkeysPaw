@@ -71,7 +71,7 @@ internal class AndroidKeyboardTileSetup(private val activity: Activity) : Keyboa
                 return
             }
             manager.requestAddTileService(ComponentName(activity, PromptTileService::class.java),
-                activity.getString(R.string.entry_insert_prompt), Icon.createWithResource(activity, R.drawable.ic_insert_prompt),
+                activity.getString(R.string.entry_insert_prompt), Icon.createWithResource(activity, R.drawable.ic_paw),
                 activity.mainExecutor) { result(KeyboardTileSetupApi.tileResult(it)) }
         } catch (_: Exception) { result(TileAddResult.ERROR) }
     }

@@ -62,6 +62,7 @@ internal object PromptMutations {
         val key: String
         val value: YamlNode
         when (edit) {
+            is PromptEdit.Field -> return PromptCodec.editingField(edit.settings, document, filename)
             is PromptEdit.Body -> {
                 val replacement = edit.value
                 if (replacement == document.body) return document

@@ -41,6 +41,8 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var editorFocusRevision: UInt64 = 0
     @Published private(set) var fileCommandRequest: LibraryFileCommandRequest?
     @Published private(set) var newPromptRequest: LibraryNewPromptRequest?
+    /// Staged placeholder-settings sheet content; nil presents no sheet.
+    @Published var fieldSettingsDraft: LibraryFieldSettingsDraft?
     @Published private(set) var commandMessage: String?
     @Published private(set) var assistant: LibraryAssistantViewState?
     @Published private(set) var assistantSaveMessage: String?
@@ -329,6 +331,7 @@ final class LibraryViewState: ObservableObject {
         editorMode = .edit
         fileCommandRequest = nil
         newPromptRequest = nil
+        fieldSettingsDraft = nil
         commandMessage = nil
         revertToSaved = .none
         focusAfterCreation = nil
@@ -361,6 +364,7 @@ final class LibraryViewState: ObservableObject {
         favoriteOutcome = nil
         fileCommandRequest = nil
         newPromptRequest = nil
+        fieldSettingsDraft = nil
         commandMessage = nil
         onEditorChange = nil
         onConflictRequested = nil
@@ -374,6 +378,7 @@ final class LibraryViewState: ObservableObject {
         imports?.setLibraryAvailable(available)
         assistant?.editorChanged(available: available && !isResolvingConflict)
         updateConflict()
+        updateFieldSheet()
         if !available { fileCommandRequest = nil; newPromptRequest = nil; retireScopeDrags() }
         if becameAvailable, isInspectorVisible && inspectorPane == .history { loadHistory() }
         onEditorChange?()
@@ -392,6 +397,7 @@ final class LibraryViewState: ObservableObject {
     func didHide() {
         isPresented = false
         newPromptRequest = nil
+        fieldSettingsDraft = nil
         syncStatus?.hide()
         retireScopeDrags()
         retireConflict()
@@ -578,6 +584,42 @@ final class LibraryViewState: ObservableObject {
         }
     }
 
+    /// Settings stage in the sheet like a command dialog; conflicts and guard
+    /// decisions suspend field edits the same way they suspend file commands.
+    var canEditFieldSettings: Bool {
+        canEditSource && editorMode == .edit && editorState.conflict == nil && editorState.pendingDecision == nil
+            && editorState.queuedActions.isEmpty && fileCommandRequest == nil && newPromptRequest == nil
+    }
+
+    func requestFieldSettings(_ field: PromptFieldSettings) {
+        guard canEditFieldSettings, fieldSettingsDraft == nil,
+              editorState.form?.fieldSettings.contains(where: { $0.name == field.name }) == true else { return }
+        fieldSettingsDraft = LibraryFieldSettingsDraft(field: field, prompt: editorState.prompt,
+            source: editorState.source, sourceRevision: sourceRevision)
+    }
+
+    func cancelFieldSettings() { fieldSettingsDraft = nil }
+
+    /// Apply emits one .field intent on the shared draft. The token rechecks
+    /// the same prompt and source the sheet was opened against, so a queued
+    /// Apply landing after a reload or conflict writes nothing.
+    func applyFieldSettings() {
+        guard let draft = fieldSettingsDraft else { return }
+        fieldSettingsDraft = nil
+        guard draft.issue == nil, !fieldSheetStale(draft),
+              editorState.form?.fieldSettings.contains(where: { $0.name == draft.fieldName }) == true else { return }
+        edit(.field(draft.staged))
+    }
+
+    private func updateFieldSheet() {
+        if let draft = fieldSettingsDraft, fieldSheetStale(draft) { fieldSettingsDraft = nil }
+    }
+
+    private func fieldSheetStale(_ draft: LibraryFieldSettingsDraft) -> Bool {
+        !canEditFieldSettings || draft.isStale(prompt: editorState.prompt,
+            source: editorState.source, sourceRevision: sourceRevision)
+    }
+
     private func commandCompletion(success: String) -> (PromptCommandOutcome) -> Void {
         commandMessage = nil
         let revision = bindingRevision
@@ -690,6 +732,8 @@ final class LibraryViewState: ObservableObject {
                 self.updateAssistantSession()
                 if let request = self.fileCommandRequest,
                    !request.matchesFile(state.prompt) || !self.canRunFileCommand { self.fileCommandRequest = nil }
+                // A sheet opened against another prompt, source or access is stale.
+                self.updateFieldSheet()
                 self.refreshPreview()
                 // Copy adoption selects a new path. An external deletion keeps
                 // the draft visible even when the browser clears its selection.
@@ -856,6 +900,7 @@ final class LibraryViewState: ObservableObject {
             view.onChange = { [weak self, weak view] in
                 guard let self, let view, self.isActive, self.conflict === view else { return }
                 self.objectWillChange.send()
+                self.updateFieldSheet()
                 self.assistant?.editorChanged(available: self.libraryAvailable && !view.isResolving)
             }
             conflict = view

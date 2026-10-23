@@ -40,6 +40,9 @@ FILES = {
     ".dockerignore": frozenset({"server-image", "compose-smoke", "android-sync"}),
     "update.sh": SERVER_JOBS | {"deb"},
     "media-sources/icon.png": LINUX_JOBS | MACOS_JOBS,
+    # The paw symbol feeds the macOS menu-bar imageset and Android drawables.
+    "media-sources/paw-symbol.svg": MACOS_JOBS | frozenset({"android", "android-sync"}),
+    "scripts/generate-paw-icon.py": MACOS_JOBS | frozenset({"android", "android-sync"}),
     "scripts/check-pbxproj.py": frozenset({"core-linux"}),
     "scripts/check-version.py": frozenset({"core-linux", "deb", "android"}),
     "scripts/linux-delivery-smoke.sh": frozenset({"linux-app"}),

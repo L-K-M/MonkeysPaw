@@ -26,18 +26,21 @@ import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueSeverity
+import ch.lkmc.monkeyspaw.core.domain.format.PromptFieldSettings
 import ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 
 private enum class FileDialog { RENAME, MOVE, DELETE, PRIVATE_COPY }
+private data class FieldSettingsRequest(val path: String, val source: String, val settings: PromptFieldSettings)
 
 /** Raw source stays in the ViewModel. Dialog input is local; only confirmed intents leave the view. */
 @Composable
 internal fun EditorScreen(
     state: EditorUiState,
     onEdit: (String) -> Unit,
+    onEditField: (String, String, PromptFieldSettings) -> Unit,
     onNewPath: (String) -> Unit,
     onTab: (EditorTab) -> Unit,
     onSave: () -> Unit,
@@ -64,6 +67,9 @@ internal fun EditorScreen(
     var destination by remember(state.relativePath) { mutableStateOf("") }
     var moveDestination by remember(state.relativePath) { mutableStateOf(EditorDestination()) }
     var menuOpen by remember { mutableStateOf(false) }
+    val canEditFields = state.canEdit && !state.writing && !state.validating &&
+        state.conflict == null && state.pendingDecision == null
+    var fieldRequest by remember(state.relativePath, state.source, canEditFields) { mutableStateOf<FieldSettingsRequest?>(null) }
     val privateCopyName = stringResource(R.string.editor_private_copy_filename,
         state.relativePath.orEmpty().substringAfterLast('/').removeSuffix(".md"))
     val title = state.title.ifEmpty {
@@ -252,12 +258,21 @@ internal fun EditorScreen(
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
-                                    Text(stringResource(if (field.optional) R.string.editor_optional
+                                     Text(stringResource(if (field.optional) R.string.editor_optional
                                         else R.string.editor_required) + " · " +
                                         stringResource(if (field.remember) R.string.editor_remembered
                                             else R.string.editor_not_remembered),
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    state.fieldSettings?.firstOrNull { it.name == field.name }?.let { settings ->
+                                        TextButton(onClick = {
+                                            val path = state.relativePath
+                                            val source = state.source
+                                            if (path != null && source != null) fieldRequest = FieldSettingsRequest(path, source, settings)
+                                        }, enabled = canEditFields, modifier = Modifier.align(Alignment.End)) {
+                                            Text(stringResource(R.string.field_settings))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -391,6 +406,12 @@ internal fun EditorScreen(
         }, dismissButton = { TextButton(onClick = { dialog = null }) { Text(stringResource(R.string.editor_cancel)) } })
     }
     EditorDecisionDialogs(state, onDecision, onConflict)
+    fieldRequest?.takeIf { it.path == state.relativePath && it.source == state.source && canEditFields }?.let { request ->
+        EditorFieldSettingsDialog(request.settings, onDismiss = { fieldRequest = null }, onApply = { settings ->
+            fieldRequest = null
+            onEditField(request.path, request.source, settings)
+        })
+    }
 }
 
 /** The assistant uses the editor's existing save/decision contract while its route is visible. */

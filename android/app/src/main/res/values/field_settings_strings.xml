@@ -1,0 +1,24 @@
+<resources>
+    <string name="field_settings">Placeholder settings</string>
+    <string name="field_settings_title">Placeholder: %1$s</string>
+    <string name="field_settings_type">Type</string>
+    <string name="field_settings_text">Text</string>
+    <string name="field_settings_multiline">Multiline</string>
+    <string name="field_settings_choice">Choice</string>
+    <string name="field_settings_label">Label</string>
+    <string name="field_settings_description">Description</string>
+    <string name="field_settings_use_default">Use a default value</string>
+    <string name="field_settings_default">Default value</string>
+    <string name="field_settings_options">Choices</string>
+    <string name="field_settings_option">Choice %1$d</string>
+    <string name="field_settings_option_label">Choice label</string>
+    <string name="field_settings_option_value">Choice value</string>
+    <string name="field_settings_remove_option">Remove choice %1$d</string>
+    <string name="field_settings_add_option">Add choice</string>
+    <string name="field_settings_optional">Optional</string>
+    <string name="field_settings_remember">Remember the last value</string>
+    <string name="field_settings_missing_options">Add at least one choice.</string>
+    <string name="field_settings_invalid_default">The default must match a choice value.</string>
+    <string name="field_settings_draft_hint">Apply updates this draft. Save commits your changes.</string>
+    <string name="field_settings_apply">Apply</string>
+</resources>

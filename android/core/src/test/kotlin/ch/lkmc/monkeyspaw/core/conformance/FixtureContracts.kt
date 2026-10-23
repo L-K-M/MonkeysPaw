@@ -162,6 +162,24 @@ internal object FixtureContracts {
                 "title", "description", "body" -> edit["value"].stringValue()
                 "tags" -> edit["value"].strings()
                 "private" -> edit["value"].booleanValue()
+                "field" -> {
+                    val field = edit["value"].objectValue()
+                    field.members(setOf("name", "type", "label", "description", "default", "options", "optional", "remember"))
+                    field["name"].stringValue()
+                    field["label"].stringValue()
+                    corpusRequire(field["type"].stringValue() in setOf("text", "multiline", "choice"), "Unknown field type")
+                    nullableString(field["description"])
+                    nullableString(field["default"])
+                    field["optional"].booleanValue()
+                    field["remember"].booleanValue()
+                    for (entry in field["options"].arrayValue()) {
+                        val option = entry.objectValue()
+                        option.members(setOf("label", "value"), setOf("sourceIndex"))
+                        option["label"].stringValue()
+                        option["value"].stringValue()
+                        option["sourceIndex"]?.let { corpusRequire(it.integerValue().signum() >= 0, "Negative option index") }
+                    }
+                }
                 else -> throw CorpusException("Unknown edit property")
             }
         }

@@ -376,6 +376,40 @@ internal class EditorViewModel @Inject constructor(
         validate()
     }
 
+    /** A staged settings sheet belongs to one exact buffer. Apply shares the save/discard draft. */
+    fun editField(expectedPath: String, expectedSource: String, settings: PromptFieldSettings) {
+        val captured = snapshot() ?: return
+        if (!active || !state.value.canEdit || state.value.writing || state.value.validating || state.value.conflict != null ||
+            state.value.pendingDecision != null || captured.relativePath != expectedPath ||
+            captured.source != expectedSource || settings.validationIssue != null ||
+            state.value.fieldSettings?.any { it.name == settings.name } != true) return
+        validationJob?.cancel()
+        currentState = state.value.copy(status = EditorStatus.COMMAND, failure = null)
+        validationJob = viewModelScope.launch {
+            val result = withContext(worker) {
+                runCatching {
+                    val filename = captured.relativePath.substringAfterLast('/')
+                    val changed = PromptCodec.editingField(settings, PromptCodec.parse(captured.source, filename), filename)
+                    changed.source to project(changed)
+                }
+            }
+            if (!current(captured) || captured.revision != revision) return@launch
+            currentState = state.value.copy(status = EditorStatus.READY, validating = false)
+            when {
+                state.value.readOnlyReason != null -> currentState = state.value.copy(failure = EditorFailure.READ_ONLY)
+                result.isSuccess -> {
+                    val (source, projection) = result.getOrThrow()
+                    if (source != captured.source) revision++
+                    currentState = state.value.copy(source = source,
+                        dirty = state.value.isNew || source != baseline?.source, saveIssues = emptyList())
+                    applyProjection(projection)
+                }
+                else -> currentState = state.value.copy(failure = EditorFailure.INVALID)
+            }
+            drain()
+        }
+    }
+
     fun setNewPath(path: String) {
         if (!active || !state.value.isNew || state.value.writing || state.value.relativePath == path) return
         revision++
@@ -880,11 +914,11 @@ internal class EditorViewModel @Inject constructor(
     private fun applyProjection(projection: EditorDocumentState) {
         currentState = state.value.copy(title = projection.title, issues = projection.issues,
             fields = projection.fields, preview = projection.preview, previewAvailable = projection.previewAvailable,
-            isPrivate = projection.isPrivate, validating = false)
+            isPrivate = projection.isPrivate, fieldSettings = projection.fieldSettings, validating = false)
     }
 
     private fun projectFromState() = EditorDocumentState(state.value.title, state.value.issues,
-        state.value.fields, state.value.preview, state.value.previewAvailable, state.value.isPrivate)
+        state.value.fields, state.value.preview, state.value.previewAvailable, state.value.isPrivate, state.value.fieldSettings)
     private fun project(document: PromptDocument) = projectEditor(document, clock.now(), ZoneId.systemDefault())
     private fun selection(entry: LibraryEntry) = LibrarySelection(entry.identity, entry.relativePath)
     private fun current(snapshot: EditorSnapshot): Boolean = active && session == snapshot.session

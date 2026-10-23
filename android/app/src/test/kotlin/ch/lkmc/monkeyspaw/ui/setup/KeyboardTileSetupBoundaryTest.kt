@@ -38,7 +38,7 @@ internal class KeyboardTileSetupBoundaryTest {
         assertTrue(source.contains("manager.showInputMethodPicker()"))
         assertTrue(source.contains("ComponentName(activity, PromptTileService::class.java)"))
         assertTrue(source.contains("R.string.entry_insert_prompt"))
-        assertTrue(source.contains("R.drawable.ic_insert_prompt"))
+        assertTrue(source.contains("R.drawable.ic_paw"))
         assertFalse(Regex("\\b(?:getId|SharedPreferences|DataStore|Logger|Log|HTTP|Gboard|Samsung)\\b").containsMatchIn(source))
     }
 

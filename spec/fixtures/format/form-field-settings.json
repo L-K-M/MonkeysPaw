@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "category": "format",
+  "filename": "Settings.md",
+  "edits": [{"property": "field", "value": {
+    "name": "topic", "type": "choice", "label": "Topic", "description": "Choose a topic",
+    "default": "beta", "options": [{"sourceIndex": 1, "label": "Bee", "value": "beta"}],
+    "optional": true, "remember": false
+  }}],
+  "expected": {
+    "metadata": {
+      "id": null, "title": "Settings", "description": null, "tags": [],
+      "favorite": false, "private": false, "format": "1",
+      "declarations": [{"name": "topic", "type": "choice", "label": "Topic", "description": "Choose a topic",
+        "default": "beta", "options": [{"label": "Bee", "value": "beta"}],
+        "optional": true, "remember": false, "implicit": false}]
+    },
+    "body": "{{topic}}\n",
+    "issues": [],
+    "canonical": "---\ntitle: Settings\nfields:\n  topic:\n    type: choice\n    options:\n    - label: Bee\n      value: beta\n      custom: keep-b\n    default: beta\n    hint: keep\n    label: Topic\n    description: Choose a topic\n    optional: true\n    remember: false\ncustom: metadata\n---\n{{topic}}\n"
+  }
+}

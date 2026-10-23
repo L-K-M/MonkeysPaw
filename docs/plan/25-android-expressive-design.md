@@ -37,8 +37,9 @@ browser inside half the display, leaving little space for prompts.
   checkbox rows. New prompt is the primary creation action; assistant and
   settings/account entry points remain discoverable.
 - **Editor.** Stable back/save chrome, a focused source canvas, proper
-  Edit/Preview/Fields/History tabs and contextual file commands. Preserve
-  validation, quotes, read-only access, history and all discard/conflict guards.
+   Edit/Preview/Fields/History tabs and contextual file commands. Preserve
+   validation, quotes, read-only access, history and all discard/conflict guards.
+   Fields opens staged placeholder settings (§11.7); Apply edits the same draft.
 - **Fill.** Readable fields and choices, a contained preview, and docked
   Copy/Insert/Done actions. Keep capture assignment and existing completion rules.
 - **Settings/account.** Preference-style groups with clear connection, provider,

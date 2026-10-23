@@ -95,6 +95,14 @@ final class LinuxLibraryWindow {
     private let source = LinuxLibrarySourceEditor()
     private let body = LinuxLibrarySourceEditor(kind: .body)
     private let formBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
+    private let fieldsSection = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4)!
+    private let fieldsRows = gtk_list_box_new()!
+    private var fieldButtons: [GTK.Widget] = []
+    private var fieldDialog: LinuxFieldSettingsDialog?
+    private var fieldDialogRevision: UInt64 = 0
+    private var fieldDialogName: String?
+    private var fieldDialogPrompt: LibraryPromptSelection?
+    private var fieldDialogSource: String?
     private let titleEntry = gtk_entry_new()!
     private let descriptionEntry = gtk_entry_new()!
     private let tagsFlow = gtk_flow_box_new()!
@@ -109,6 +117,8 @@ final class LinuxLibraryWindow {
     private var renderedTags: [String] = []
     private var renderedTagsRevision: UInt64?
     private var renderedFormRevision: UInt64?
+    private var renderedFieldSettings: [PromptFieldSettings]?
+    private var renderedFieldSettingsRevision: UInt64?
     private let readOnly = GTK.label("")
     private let readOnlyBar = gtk_info_bar_new()!
     private let validation = GTK.label("")
@@ -171,7 +181,8 @@ final class LinuxLibraryWindow {
                 self.newPromptRequest = nil
                 if case .newPrompt = self.activeDialog { self.endDialog() }
                 self.syncStatusView.suspend()
-                self.commands.cancelDialog(); self.assistantPanel.close(); self.conflictView.close()
+                self.commands.cancelDialog(); self.endFieldDialog()
+                self.assistantPanel.close(); self.conflictView.close()
             }
         }
         GTK.observeKeys(window) { [weak self] key, modifiers in
@@ -721,6 +732,7 @@ final class LinuxLibraryWindow {
         newPromptRequest = nil
         imports = nil
         endDialog()
+        endFieldDialog()
         commands.unbind()
         importView?.unbind()
         bindingRevision &+= 1
@@ -975,6 +987,17 @@ final class LinuxLibraryWindow {
         gtk_box_append(mp_box(privateRow), privateToggle)
         gtk_box_append(mp_box(privateRow), privateHint)
         gtk_box_append(mp_box(formBox), privateRow)
+        let fieldsHeading = GTK.label(LinuxEditorStrings.placeholders)
+        gtk_widget_add_css_class(fieldsHeading, "heading")
+        gtk_label_set_xalign(mp_label(fieldsHeading), 0)
+        gtk_box_append(mp_box(fieldsSection), fieldsHeading)
+        gtk_widget_set_name(fieldsRows, "library-form-fields")
+        mp_accessible_label(fieldsRows, LinuxEditorStrings.placeholders)
+        gtk_list_box_set_selection_mode(mp_list_box(fieldsRows), GTK_SELECTION_NONE)
+        gtk_widget_add_css_class(fieldsRows, "boxed-list")
+        gtk_box_append(mp_box(fieldsSection), fieldsRows)
+        gtk_widget_set_name(fieldsSection, "library-form-fields-section")
+        gtk_box_append(mp_box(formBox), fieldsSection)
         let bodyHeading = GTK.label(LinuxEditorStrings.promptBody)
         gtk_widget_add_css_class(bodyHeading, "heading")
         gtk_label_set_xalign(mp_label(bodyHeading), 0)
@@ -1080,6 +1103,98 @@ final class LinuxLibraryWindow {
                   let remove = gtk_widget_get_last_child(chip) else { continue }
             gtk_widget_set_sensitive(remove, sensitive ? 1 : 0)
         }
+        updateFieldRows(form?.fieldSettings ?? [], editable: sensitive, state: state)
+    }
+
+    /// Placeholder rows mirror the form's field projection. A staged dialog
+    /// stays open only while its prompt, field and editability still hold;
+    /// any lapse retires it so a stale Apply can never reach another draft.
+    private func updateFieldRows(_ settings: [PromptFieldSettings], editable: Bool, state: EditorState) {
+        if fieldDialog != nil,
+           !editable || state.prompt != fieldDialogPrompt || state.pendingDecision != nil
+                || state.source.map({ Data($0.utf8) }) != fieldDialogSource.map({ Data($0.utf8) })
+               || state.conflict != nil || !settings.contains(where: { $0.name == fieldDialogName }) {
+            endFieldDialog()
+        }
+        gtk_widget_set_visible(fieldsSection, settings.isEmpty ? 0 : 1)
+        if renderedFieldSettings != settings || renderedFieldSettingsRevision != sourceRevision {
+            renderedFieldSettings = settings
+            renderedFieldSettingsRevision = sourceRevision
+            fieldButtons = []
+            clear(fieldsRows)
+            let revision = sourceRevision
+            for field in settings {
+                let row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+                for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
+                             gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(row, 8) }
+                let text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3)!
+                gtk_widget_set_hexpand(text, 1)
+                let name = GTK.label(field.name)
+                gtk_widget_add_css_class(name, "monospace")
+                gtk_box_append(mp_box(text), name)
+                let summary = GTK.label(LinuxEditorStrings.fieldSummary(field))
+                gtk_widget_add_css_class(summary, "dim-label")
+                gtk_label_set_wrap(mp_label(summary), 0)
+                gtk_label_set_ellipsize(mp_label(summary), PANGO_ELLIPSIZE_END)
+                gtk_box_append(mp_box(text), summary)
+                mp_accessible_label(text, field.name + ", " + LinuxEditorStrings.fieldSummary(field))
+                gtk_box_append(mp_box(row), text)
+                let button = gtk_button_new_with_label(LinuxEditorStrings.fieldSettings)!
+                gtk_widget_set_name(button, "library-form-field-settings")
+                let accessible = LinuxEditorStrings.fieldSettingsLabel(field.name)
+                mp_accessible_label(button, accessible)
+                gtk_widget_set_tooltip_text(button, accessible)
+                gtk_widget_set_valign(button, GTK_ALIGN_CENTER)
+                GTK.onSignal(button, "clicked") { [weak self] in
+                    guard let self, self.sourceRevision == revision else { return }
+                    self.openFieldSettings(named: field.name)
+                }
+                fieldButtons.append(button)
+                gtk_box_append(mp_box(row), button)
+                gtk_list_box_append(mp_list_box(fieldsRows), row)
+            }
+        }
+        for button in fieldButtons { gtk_widget_set_sensitive(button, editable ? 1 : 0) }
+    }
+
+    private func openFieldSettings(named name: String) {
+        guard isVisible, available, !conflictView.isResolving, fieldDialog == nil,
+              activeDialog == nil, !hasModalChild(),
+              let state = editor?.state, state.canEdit,
+              state.pendingDecision == nil, state.conflict == nil,
+              let staged = state.form?.fieldSettings.first(where: { $0.name == name }) else { return }
+        let prompt = state.prompt
+        let source = state.source.map { Data($0.utf8) }
+        let revision = sourceRevision
+        fieldDialogRevision &+= 1
+        let dialogID = fieldDialogRevision
+        fieldDialogName = name
+        fieldDialogPrompt = prompt
+        fieldDialogSource = state.source
+        fieldDialog = LinuxFieldSettingsDialog(parent: window, settings: staged) { [weak self] response in
+            guard let self, !self.isDestroyed, self.fieldDialogRevision == dialogID else { return }
+            self.endFieldDialog()
+            self.updateActions()
+            guard let response else { return }
+            // A stale Apply must never reach another prompt or a republished draft.
+            guard self.sourceRevision == revision, self.available, !self.conflictView.isResolving,
+                  let state = self.editor?.state, state.prompt == prompt, state.canEdit,
+                  state.source.map({ Data($0.utf8) }) == source,
+                  state.pendingDecision == nil, state.conflict == nil,
+                  let current = state.form?.fieldSettings.first(where: { $0.name == response.name }),
+                  current == staged else { return }
+            self.formEdit(.field(response))
+        }
+        updateActions()
+    }
+
+    private func endFieldDialog() {
+        fieldDialogRevision &+= 1
+        fieldDialogName = nil
+        fieldDialogPrompt = nil
+        fieldDialogSource = nil
+        fieldDialog?.destroy()
+        fieldDialog = nil
     }
 
     private func configureEditor(in detail: GTK.Widget) {

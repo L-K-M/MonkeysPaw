@@ -50,6 +50,17 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertTrue(delegate.validateMenuItem(item))
     }
 
+    /// The status item shows the paw silhouette compiled from the vector
+    /// asset: a template image at menu-bar size.
+    func testStatusItemImageIsThe18PointTemplatePaw() throws {
+        let delegate = AppDelegate(libraryRoot: directory.appendingPathComponent("library"),
+                                   dataRoot: directory.appendingPathComponent("data"), launchURI: { _ in })
+        let image = try XCTUnwrap(delegate.makeStatusItemImage())
+        XCTAssertTrue(image.isTemplate)
+        XCTAssertEqual(image.size, NSSize(width: 18, height: 18))
+        XCTAssertEqual(image.accessibilityDescription, AppIdentity.displayName)
+    }
+
     func testAutomationFallbackHasUsageDescriptionInHostedApp() {
         let description = Bundle.main.object(forInfoDictionaryKey: "NSAppleEventsUsageDescription") as? String
         XCTAssertFalse(description?.isEmpty ?? true)

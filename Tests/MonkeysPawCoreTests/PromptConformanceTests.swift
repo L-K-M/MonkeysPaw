@@ -395,6 +395,7 @@ final class PromptConformanceTests: XCTestCase {
                                 throw CorpusError.unrecognizedCase
                             }
                             edit = .isPrivate(number.boolValue)
+                        case "field": edit = .field(try fieldSettingsEdit(item["value"], document: document))
                         default: throw CorpusError.unrecognizedCase
                         }
                         document = try PromptCodec.editing(edit, in: document, filename: filename)
@@ -611,6 +612,48 @@ final class PromptConformanceTests: XCTestCase {
          "description": value.description as Any? ?? NSNull(), "tags": value.tags,
          "favorite": value.favorite, "private": value.isPrivate, "format": value.format.decimalValue,
          "declarations": value.fields.map(field)]
+    }
+
+    private func fieldSettingsEdit(_ value: Any?, document: PromptDocument) throws -> PromptFieldSettings {
+        let item = try object(value)
+        try keys(item, required: ["name", "type", "label", "description", "default", "options", "optional", "remember"])
+        guard let name = item["name"] as? String,
+              var settings = PromptForm(document)?.fieldSettings.first(where: { $0.name == name }),
+              let type = item["type"] as? String, let kind = FieldKind(rawValue: type),
+              let label = item["label"] as? String else { throw CorpusError.unrecognizedCase }
+        func nullableString(_ value: Any?) throws -> String? {
+            if value is NSNull { return nil }
+            guard let value = value as? String else { throw CorpusError.unrecognizedCase }
+            return value
+        }
+        func boolean(_ value: Any?) throws -> Bool {
+            guard let number = value as? NSNumber, String(cString: number.objCType) == "c" else {
+                throw CorpusError.unrecognizedCase
+            }
+            return number.boolValue
+        }
+        settings.kind = kind
+        settings.label = label
+        settings.description = try nullableString(item["description"])
+        settings.defaultValue = try nullableString(item["default"])
+        settings.optional = try boolean(item["optional"])
+        settings.remember = try boolean(item["remember"])
+        let original = settings.options
+        settings.options = try array(item["options"]).map { element in
+            let option = try object(element)
+            try keys(option, required: ["label", "value"], optional: ["sourceIndex"])
+            guard let label = option["label"] as? String, let value = option["value"] as? String else {
+                throw CorpusError.unrecognizedCase
+            }
+            guard let index = option["sourceIndex"] else { return PromptFieldOptionSettings(label: label, value: value) }
+            let offset = try integer(index)
+            guard original.indices.contains(offset) else { throw CorpusError.unrecognizedCase }
+            var changed = original[offset]
+            changed.label = label
+            changed.value = value
+            return changed
+        }
+        return settings
     }
 
     private func field(_ value: PromptField) -> [String: Any] {

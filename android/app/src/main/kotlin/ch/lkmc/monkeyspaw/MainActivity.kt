@@ -231,7 +231,7 @@ class MainActivity : ComponentActivity() {
                             onTest = assistantSettings::testConnection, onCancelTest = assistantSettings::cancelTest,
                             modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                         ) else if (editing.isOpen) EditorScreen(
-                            state = editing, onEdit = editor::edit, onNewPath = editor::setNewPath,
+                            state = editing, onEdit = editor::edit, onEditField = editor::editField, onNewPath = editor::setNewPath,
                             onTab = editor::setTab, onSave = editor::save,
                             onBack = { if (reviewing.isOpen) assistantReview.open() else editor.close() },
                             onReload = editor::reload, onRename = editor::rename, onMove = editor::move,
