@@ -379,9 +379,11 @@ final class MacUITourTests: XCTestCase {
         let axName = button.accessibilityLabel() ?? ""
         windowNotes.append("status-item-\(appearance): live NSStatusBarButton window=\(type(of: buttonWindow)) "
             + "frame=\(NSStringFromRect(buttonWindow.frame)) level=\(buttonWindow.level.rawValue) "
-            + "visible=\(buttonWindow.isVisible) axName=\"\(axName)\" "
+            + "number=\(buttonWindow.windowNumber) visible=\(buttonWindow.isVisible) axName=\"\(axName)\" "
             + "effectiveAppearance=\(button.effectiveAppearance.name.rawValue)")
         XCTAssertFalse(axName.isEmpty, "The live status button needs an accessibility name")
+        try windowNotes.joined(separator: "\n").write(to: output.appendingPathComponent("windows.txt"),
+            atomically: true, encoding: .utf8)
         capture(buttonWindow, as: "status-item-\(appearance)")
 
         let shown = Set(NSApp.windows.filter { $0.isVisible }.map(ObjectIdentifier.init))
@@ -480,12 +482,13 @@ final class MacUITourTests: XCTestCase {
     /// Swift marks CGWindowListCreateImage obsoleted, but the window server
     /// still renders an app's own windows without a capture grant.
     private static func compositedImage(of window: NSWindow) -> CGImage? {
-        guard let library = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW),
+        guard let windowID = CGWindowID(exactly: window.windowNumber), windowID != 0,
+              let library = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW),
               let symbol = dlsym(library, "CGWindowListCreateImage") else { return nil }
         let function = unsafeBitCast(symbol, to: WindowImageFunction.self)
         let options = CGWindowImageOption.boundsIgnoreFraming.rawValue | CGWindowImageOption.bestResolution.rawValue
         return function(.null, CGWindowListOption.optionIncludingWindow.rawValue,
-                        CGWindowID(window.windowNumber), options)?.takeRetainedValue()
+                        windowID, options)?.takeRetainedValue()
     }
 
     // MARK: - Accessibility
