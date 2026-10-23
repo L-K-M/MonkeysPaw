@@ -12,6 +12,8 @@ Checked on 2026-10-23 for [PR #315](https://github.com/L-K-M/MonkeysPaw/pull/315
   their fixes, then passed. The host used a private D-Bus session and Xvfb.
 - Android: the full Core/app JVM, lint, debug and R8 release gate passed.
   A shortcut-resource regression failed before the contrast fix, then passed.
+  Delayed-choice callback regressions also failed before stable row IDs were
+  added, then passed through staged settings, Apply, Save and metadata checks.
 - Script tests: 204 passed; Xcode object-ID validation passed.
 - macOS: CI built the app, ran hosted tests and packaged universal artifacts.
   The hosted icon test loads the compiled 18-point template paw asset.

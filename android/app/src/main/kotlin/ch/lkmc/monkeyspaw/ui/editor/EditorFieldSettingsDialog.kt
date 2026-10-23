@@ -16,7 +16,6 @@ import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.format.FieldKind
 import ch.lkmc.monkeyspaw.core.domain.format.PromptFieldSettings
 import ch.lkmc.monkeyspaw.core.domain.format.PromptFieldSettingsIssue
-import ch.lkmc.monkeyspaw.core.domain.format.PromptFieldOptionSettings
 import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 
@@ -24,7 +23,8 @@ import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 @Composable
 internal fun EditorFieldSettingsDialog(initial: PromptFieldSettings, onDismiss: () -> Unit,
     onApply: (PromptFieldSettings) -> Unit) {
-    var draft by remember(initial) { mutableStateOf(initial) }
+    var staged by remember(initial) { mutableStateOf(StagedFieldSettings.of(initial)) }
+    val draft = staged.settings
     AlertDialog(onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.field_settings_title, initial.name)) },
         text = {
@@ -33,50 +33,50 @@ internal fun EditorFieldSettingsDialog(initial: PromptFieldSettings, onDismiss: 
                 Text(stringResource(R.string.field_settings_type), style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
                     for (kind in FieldKind.entries) FilterChip(selected = draft.kind == kind,
-                        onClick = { draft = draft.copy(kind = kind) },
+                        onClick = { staged = staged.edit { it.copy(kind = kind) } },
                         label = { Text(stringResource(when (kind) {
                             FieldKind.TEXT -> R.string.field_settings_text
                             FieldKind.MULTILINE -> R.string.field_settings_multiline
                             FieldKind.CHOICE -> R.string.field_settings_choice
                         })) })
                 }
-                OutlinedTextField(draft.label, { draft = draft.copy(label = it) }, singleLine = true,
+                OutlinedTextField(draft.label, { staged = staged.edit { s -> s.copy(label = it) } }, singleLine = true,
                     label = { Text(stringResource(R.string.field_settings_label)) }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(draft.description.orEmpty(), { draft = draft.copy(description = it.ifEmpty { null }) },
+                OutlinedTextField(draft.description.orEmpty(), { staged = staged.edit { s -> s.copy(description = it.ifEmpty { null }) } },
                     label = { Text(stringResource(R.string.field_settings_description)) }, modifier = Modifier.fillMaxWidth())
                 FieldToggle(stringResource(R.string.field_settings_use_default), draft.defaultValue != null) {
-                    draft = draft.copy(defaultValue = if (it) "" else null)
+                    staged = staged.edit { s -> s.copy(defaultValue = if (it) "" else null) }
                 }
                 if (draft.defaultValue != null) OutlinedTextField(draft.defaultValue.orEmpty(),
-                    { draft = draft.copy(defaultValue = it) }, singleLine = draft.kind != FieldKind.MULTILINE,
+                    { staged = staged.edit { s -> s.copy(defaultValue = it) } }, singleLine = draft.kind != FieldKind.MULTILINE,
                     label = { Text(stringResource(R.string.field_settings_default)) }, modifier = Modifier.fillMaxWidth())
                 if (draft.kind == FieldKind.CHOICE) {
                     Text(stringResource(R.string.field_settings_options), style = MaterialTheme.typography.labelLarge)
-                    for ((index, option) in draft.options.withIndex()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(stringResource(R.string.field_settings_option, index + 1), Modifier.weight(1f))
-                                IconButton(onClick = { draft = draft.copy(options = draft.options.filterIndexed { at, _ -> at != index }) }) {
-                                    Icon(Icons.Rounded.Close, stringResource(R.string.field_settings_remove_option, index + 1))
+                    for ((index, row) in staged.rows.withIndex()) {
+                        key(row.id) {
+                            Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stringResource(R.string.field_settings_option, index + 1), Modifier.weight(1f))
+                                    IconButton(onClick = { staged = staged.removeOption(row.id) }) {
+                                        Icon(Icons.Rounded.Close, stringResource(R.string.field_settings_remove_option, index + 1))
+                                    }
                                 }
+                                OutlinedTextField(row.option.label, { label ->
+                                    staged = staged.editOption(row.id) { it.copy(label = label) }
+                                }, singleLine = true, label = { Text(stringResource(R.string.field_settings_option_label)) },
+                                    modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(row.option.value, { value ->
+                                    staged = staged.editOption(row.id) { it.copy(value = value) }
+                                }, label = { Text(stringResource(R.string.field_settings_option_value)) }, modifier = Modifier.fillMaxWidth())
                             }
-                            OutlinedTextField(option.label, { label ->
-                                draft = draft.copy(options = draft.options.mapIndexed { at, item ->
-                                    if (at == index) item.copy(label = label) else item })
-                            }, singleLine = true, label = { Text(stringResource(R.string.field_settings_option_label)) },
-                                modifier = Modifier.fillMaxWidth())
-                            OutlinedTextField(option.value, { value ->
-                                draft = draft.copy(options = draft.options.mapIndexed { at, item ->
-                                    if (at == index) item.copy(value = value) else item })
-                            }, label = { Text(stringResource(R.string.field_settings_option_value)) }, modifier = Modifier.fillMaxWidth())
                         }
                     }
-                    TextButton(onClick = { draft = draft.copy(options = draft.options + PromptFieldOptionSettings("", "")) }) {
+                    TextButton(onClick = { staged = staged.addOption() }) {
                         Text(stringResource(R.string.field_settings_add_option))
                     }
                 }
-                FieldToggle(stringResource(R.string.field_settings_optional), draft.optional) { draft = draft.copy(optional = it) }
-                FieldToggle(stringResource(R.string.field_settings_remember), draft.remember) { draft = draft.copy(remember = it) }
+                FieldToggle(stringResource(R.string.field_settings_optional), draft.optional) { staged = staged.edit { s -> s.copy(optional = it) } }
+                FieldToggle(stringResource(R.string.field_settings_remember), draft.remember) { staged = staged.edit { s -> s.copy(remember = it) } }
                 draft.validationIssue?.let { issue ->
                     Text(stringResource(when (issue) {
                         PromptFieldSettingsIssue.MISSING_OPTIONS -> R.string.field_settings_missing_options
@@ -87,7 +87,7 @@ internal fun EditorFieldSettingsDialog(initial: PromptFieldSettings, onDismiss: 
             }
         },
         confirmButton = {
-            TextButton(onClick = { onApply(draft) }, enabled = draft.validationIssue == null) {
+            TextButton(onClick = { onApply(staged.settings) }, enabled = draft.validationIssue == null) {
                 Text(stringResource(R.string.field_settings_apply))
             }
         }, dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.editor_cancel)) } })

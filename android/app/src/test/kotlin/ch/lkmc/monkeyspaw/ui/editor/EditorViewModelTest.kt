@@ -120,6 +120,38 @@ internal class EditorViewModelTest : TemporaryFiles() {
     }
 
     @Test
+    fun `choice option edits follow their row identity through removal before apply`() = runTest {
+        val original = "---\nfields:\n  topic:\n    type: choice\n    options:\n    - {label: A, value: a, custom: keep-a}\n    - {label: B, value: b, custom: keep-b}\n    - {label: C, value: c, custom: keep-c}\n---\n{{topic}}"
+        put(libraryDir.resolve("a.md"), original.encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        var staged = StagedFieldSettings.of(assertNotNull(model.state.value.fieldSettings).single())
+        val ids = staged.rows.map { it.id }
+        // The sheet binds callbacks to the row's identity; commits can land after a removal.
+        val delayedB: () -> Unit = { staged = staged.editOption(ids[1]) { it.copy(label = "Bee") } }
+        val lateA: () -> Unit = { staged = staged.editOption(ids[0]) { it.copy(label = "Late A") } }
+        staged = staged.removeOption(ids[0])
+        delayedB()
+        staged = staged.addOption()
+        staged = staged.editOption(staged.rows.last().id) { it.copy(label = "Dee", value = "d") }
+        lateA()
+        model.editField("a.md", original, staged.settings)
+        runCurrent()
+        assertEquals(listOf(FieldOption("Bee", "b"), FieldOption("C", "c"), FieldOption("Dee", "d")),
+            model.state.value.fields.single().options)
+        val source = checkNotNull(model.state.value.source)
+        assertTrue("custom: keep-b" in source && "custom: keep-c" in source, "Retained option metadata lost.")
+        assertFalse("keep-a" in source)
+        model.save()
+        runCurrent()
+        assertFalse(model.state.value.dirty)
+        val saved = library().load("a.md")
+        assertEquals(listOf(FieldOption("Bee", "b"), FieldOption("C", "c"), FieldOption("Dee", "d")),
+            saved.document.effectiveFields.single().options)
+    }
+
+    @Test
     fun `create commits exact body and unknown metadata before publishing index and favourite`() = runTest {
         val model = model()
         model.createDraft("Notes/new.md")
