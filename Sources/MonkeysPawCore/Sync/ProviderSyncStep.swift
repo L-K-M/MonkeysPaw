@@ -70,9 +70,13 @@ final class ProviderSyncStep: @unchecked Sendable {
     }
 
     func run(client: SyncHTTPClient, identity: SyncAccountIdentity, permit: SyncWorkPermit) async throws -> ProviderSyncOutcome {
+        // Without a key nothing can be decrypted or sealed, so the account is
+        // reported key-required before the endpoint is ever contacted: accounts
+        // that never provision a key keep working against servers that predate
+        // the provider-settings routes.
+        guard let key = try keys.keyBytes(userID: identity.userID) else { return .keyRequired }
         let remote = try await client.providerSettings()
         try permit.check()
-        guard let key = try keys.keyBytes(userID: identity.userID) else { return .keyRequired }
 
         var baseline = try records.load()
         if baseline?.serverURL != identity.serverURL.absoluteString || baseline?.userID != identity.userID.rawValue {

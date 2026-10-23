@@ -132,7 +132,7 @@ final class ProviderSyncStepTests: XCTestCase {
         let before = rig.files.attemptedWrites.count
         await expect(.keyRequired, from: rig)
         XCTAssertEqual(rig.remote.puts, 0)
-        XCTAssertEqual(rig.remote.gets, 1)
+        XCTAssertEqual(rig.remote.gets, 0)
         XCTAssertEqual(rig.files.attemptedWrites.count, before)
         XCTAssertNil(try rig.record())
     }

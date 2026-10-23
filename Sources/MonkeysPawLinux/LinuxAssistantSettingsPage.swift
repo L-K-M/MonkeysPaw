@@ -151,8 +151,9 @@ final class LinuxAssistantSettingsPage {
         gtk_label_set_wrap(mp_label(syncReveal), 1)
         gtk_widget_set_visible(syncReveal, 0)
         gtk_box_append(mp_box(syncGroup), syncReveal)
+        let syncList = LinuxSettingsLayout.list(in: syncGroup)
         syncEntry = Self.entryRow("settings-assistant-sync-entry",
-            title: LinuxAssistantSettingsStrings.syncEnter, in: syncGroup)
+            title: LinuxAssistantSettingsStrings.syncEnter, in: syncList)
         gtk_entry_set_visibility(mp_entry(syncEntry), 0)
         gtk_entry_set_input_purpose(mp_entry(syncEntry), GTK_INPUT_PURPOSE_PASSWORD)
         gtk_entry_set_placeholder_text(mp_entry(syncEntry), LinuxAssistantSettingsStrings.syncEntryPlaceholder)

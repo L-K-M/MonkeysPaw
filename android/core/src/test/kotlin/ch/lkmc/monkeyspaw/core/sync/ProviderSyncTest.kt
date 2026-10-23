@@ -177,7 +177,7 @@ class ProviderSyncTest {
     @Test fun keyRequiredWithoutProvisioning() = runTest {
         val rig = Rig()
         assertEquals(ProviderSyncOutcome.KEY_REQUIRED, rig.step.run(rig.client, rig.identity, rig.permit))
-        assertTrue(rig.requests.none { it.method != HttpMethod.GET })
+        assertTrue(rig.requests.isEmpty())
     }
 
     @Test fun decryptFailedOnOpaqueRemote() = runTest {

@@ -203,9 +203,13 @@ internal class ProviderSyncStep(
     private val records = SyncPersistence(files, operations, "sync/provider-settings.json", ProviderSyncRecord.codec)
 
     suspend fun run(client: SyncHTTPClient, identity: SyncAccountIdentity, permit: SyncWorkPermit): ProviderSyncOutcome {
+        // Without a key nothing can be decrypted or sealed, so the account is
+        // reported key-required before the endpoint is ever contacted: accounts
+        // that never provision a key keep working against servers that predate
+        // the provider-settings routes.
+        val key = keys.keyBytes(identity.userID) ?: return ProviderSyncOutcome.KEY_REQUIRED
         val remote = client.providerSettings()
         permit.check()
-        val key = keys.keyBytes(identity.userID) ?: return ProviderSyncOutcome.KEY_REQUIRED
 
         var baseline = records.load()
         if (baseline?.serverURL != identity.serverURL || baseline?.userID != identity.userID.rawValue) baseline = null
