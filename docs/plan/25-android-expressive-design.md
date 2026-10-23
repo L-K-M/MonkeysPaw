@@ -130,6 +130,7 @@ The existing JVM, lint, APK and privacy/session gates remain required.
   beside the scrolling filter rail. Browse retains conflicts, folders, groups
   and tags; no filter is removed. Keyboard loading/empty states use compact
   type and spacing so the state and recovery action fit the available panel.
+  A new Browse selection resets the chip rail to expose its selected label.
 - Empty/filtered recovery views place creation inline instead of floating it
   over recovery controls at large text sizes. Creating in the current folder
   or group keeps the existing destination intent.

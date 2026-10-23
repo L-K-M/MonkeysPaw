@@ -1153,6 +1153,8 @@ failures/errors/skips, plus lint and both APK variants.
   the message updated the preview; Copy finished through the existing route.
 - Inspected light/dark and ordinary/200% keyboard renders, compact empty
   Favourites recovery, and the pinned Browse control beside the filter rail.
+  Choosing a tag exposed a retained horizontal anchor clipping its newly
+  inserted chip; keying that rail by the Browse selection resets it to the label.
 - Scrolled a longer editor source while the tabs remained visible. Save,
   History and selected revision source worked; the date rendered as localized
   text on API 26. Selected history rows now expose selected semantics; this

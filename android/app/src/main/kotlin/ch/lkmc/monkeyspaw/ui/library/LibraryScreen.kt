@@ -146,13 +146,16 @@ private fun LibraryFilters(state: LibraryUiState, onFilter: (LibraryFilter) -> U
     val activeTitle = activeBrowse?.let { sectionTitle(it) }
     var expanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(end = gutter), verticalAlignment = Alignment.CenterVertically) {
-        LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(start = gutter, end = PawSpacing.small),
-            horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-            activeBrowse?.let { section -> item(key = sectionKey(section.filter)) {
-                LibraryFilterChip(section, selected = true, onClick = { expanded = true })
-            } }
-            items(sections.quick, key = { sectionKey(it.filter) }) { section ->
-                LibraryFilterChip(section, selected = state.filter == section.filter, onClick = { onFilter(section.filter) })
+        // A newly inserted selection must not inherit the old first-visible chip's scroll anchor.
+        key(activeBrowse?.filter) {
+            LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(start = gutter, end = PawSpacing.small),
+                horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                activeBrowse?.let { section -> item(key = sectionKey(section.filter)) {
+                    LibraryFilterChip(section, selected = true, onClick = { expanded = true })
+                } }
+                items(sections.quick, key = { sectionKey(it.filter) }) { section ->
+                    LibraryFilterChip(section, selected = state.filter == section.filter, onClick = { onFilter(section.filter) })
+                }
             }
         }
         if (sections.browse.isNotEmpty()) {
