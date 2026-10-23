@@ -629,7 +629,7 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
     }
 
-    func testAutomaticSidebarCollapseDoesNotBecomeANewWindowsPreference() throws {
+    func testAutomaticSidebarCollapseRestoresAfterReopeningAndClosingTheInspector() throws {
         try put("Body", at: "one.md")
         try start()
         delegate.showLibrary()
@@ -651,8 +651,15 @@ final class MacLibraryWindowTests: XCTestCase {
                 setPolicy: { _ in }, activate: {}), revealLibrary: {})
         defer { next.tearDown() }
         next.show()
-        XCTAssertFalse(try XCTUnwrap(next.splitController?.splitViewItems.first).isCollapsed,
-            "Only an explicit sidebar choice should survive a new window")
+        let restoredSidebar = try XCTUnwrap(next.splitController?.splitViewItems.first)
+        let inspectorWasVisible = next.presentation.isInspectorVisible
+        XCTAssertTrue(!restoredSidebar.isCollapsed || inspectorWasVisible,
+            "A restored sidebar may yield only to a visible inspector")
+        next.presentation.setInspectorVisible(false)
+        next.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertFalse(restoredSidebar.isCollapsed,
+            "Closing the restored inspector must restore navigation; inspector was visible: \(inspectorWasVisible)")
     }
 
     func testPlaceholderSettingsRemainAvailableInSourceAndPreview() throws {

@@ -521,8 +521,10 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         self.splitController = split
         self.promptList = list
         self.inspectorItem = inspectorItem
-        sidebarObservation = sidebarItem.observe(\.isCollapsed, options: [.new]) { [weak self] _, _ in
-            guard let self, !self.isAdaptingColumns else { return }
+        // Repeating an autosaved value is not a new sidebar choice.
+        sidebarObservation = sidebarItem.observe(\.isCollapsed, options: [.new, .old]) { [weak self] _, change in
+            guard let self, !self.isTornDown, !self.isAdaptingColumns,
+                  change.oldValue != change.newValue else { return }
             self.restoresSidebarAfterInspector = false
         }
         inspectorObservation = inspectorItem.observe(\.isCollapsed, options: [.new, .prior]) { [weak self] item, change in
