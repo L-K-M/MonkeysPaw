@@ -8,7 +8,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -19,7 +18,6 @@ import ch.lkmc.monkeyspaw.core.domain.llm.AssistantEffort
 import ch.lkmc.monkeyspaw.core.domain.llm.LlmArtifact
 import ch.lkmc.monkeyspaw.core.domain.llm.PlaceholderChange
 import ch.lkmc.monkeyspaw.core.services.*
-import ch.lkmc.monkeyspaw.ui.components.PawActionBar
 import ch.lkmc.monkeyspaw.ui.components.PawLoading
 import ch.lkmc.monkeyspaw.ui.components.PawMessage
 import ch.lkmc.monkeyspaw.ui.components.PawMessageTone
@@ -30,14 +28,16 @@ import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 
 /**
  * Shared chrome for the three assistant routes: a stable back/title/settings
- * app bar, a bounded reading column and a docked session footer.
+ * app bar, a bounded reading column, a scrollable session header and a docked
+ * bar carrying the current state's primary actions.
  */
 @Composable
 internal fun AssistantScaffold(
     title: String,
     onBack: () -> Unit,
     onSettings: () -> Unit,
-    footer: @Composable () -> Unit,
+    header: @Composable () -> Unit,
+    dock: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     content: LazyListScope.() -> Unit,
 ) {
@@ -47,9 +47,22 @@ internal fun AssistantScaffold(
                 Icon(Icons.Rounded.Settings, stringResource(R.string.assistant_settings_title))
             }
         },
-        bottomBar = { PawActionBar { footer() } }) {
+        bottomBar = { AssistantActionDock { dock() } }) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PawLayout.contentPadding,
-            verticalArrangement = Arrangement.spacedBy(PawSpacing.large), content = content)
+            verticalArrangement = Arrangement.spacedBy(PawSpacing.large)) {
+            item { header() }
+            content()
+        }
+    }
+}
+
+/** Docked actions wrap onto extra rows, so large font scales keep every action reachable. */
+@Composable
+private fun AssistantActionDock(content: @Composable () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        FlowRow(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.medium),
+            horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium),
+            verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) { content() }
     }
 }
 
@@ -77,15 +90,10 @@ internal fun AssistantLoading() {
     PawLoading(stringResource(R.string.assistant_graph_loading))
 }
 
-/** Indeterminate work; cancel stays the only offered action. */
+/** Indeterminate work; the dock keeps cancel as the only offered action. */
 @Composable
-internal fun AssistantBusy(onCancel: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-        LinearProgressIndicator(Modifier.fillMaxWidth())
-        TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.End)) {
-            Text(stringResource(R.string.assistant_cancel))
-        }
-    }
+internal fun AssistantBusy() {
+    LinearProgressIndicator(Modifier.fillMaxWidth())
 }
 
 @Composable
@@ -102,7 +110,7 @@ internal fun ArtifactDraft(artifact: LlmArtifact) {
         Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
             SelectionContainer {
                 Text(artifact.body, Modifier.fillMaxWidth().padding(PawSpacing.large),
-                    fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+                    style = MaterialTheme.typography.bodyLarge)
             }
         }
     }

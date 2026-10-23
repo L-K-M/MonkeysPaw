@@ -34,7 +34,28 @@ internal fun WriteScreen(
         title = stringResource(R.string.assistant_write_title),
         onBack = onBack,
         onSettings = onSettings,
-        footer = { AssistantFooter(state.assistant) },
+        header = { AssistantFooter(state.assistant) },
+        dock = {
+            if (state.isWorking || state.isAccepting) {
+                TextButton(onClick = onCancel) {
+                    Text(stringResource(R.string.assistant_cancel))
+                }
+            } else if (state.assistant?.artifact != null) {
+                OutlinedButton(onClick = onShowDiff, enabled = state.canShowDiff) {
+                    Text(stringResource(R.string.assistant_show_diff))
+                }
+                Button(onClick = onAccept, enabled = state.canAccept) {
+                    Text(stringResource(R.string.assistant_accept))
+                }
+                TextButton(onClick = onReject) {
+                    Text(stringResource(R.string.assistant_reject))
+                }
+            } else {
+                Button(onClick = onWrite, enabled = state.canWrite) {
+                    Text(stringResource(R.string.assistant_write_send))
+                }
+            }
+        },
         modifier = modifier,
     ) {
         item {
@@ -47,8 +68,10 @@ internal fun WriteScreen(
                     label = { Text(stringResource(R.string.assistant_write_brief)) }, minLines = 3,
                     modifier = Modifier.fillMaxWidth())
                 AssistantEffortControl(state.effort, state.canEdit, onEffort)
-                Button(onClick = onWrite, enabled = state.canWrite, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.assistant_write_send))
+                if (state.assistant?.artifact != null && !state.isWorking && !state.isAccepting) {
+                    TextButton(onClick = onWrite, enabled = state.canWrite, modifier = Modifier.align(Alignment.End)) {
+                        Text(stringResource(R.string.assistant_write_send))
+                    }
                 }
                 state.unavailable?.let { reason ->
                     val providerDown = reason == AssistantUnavailable.PROVIDER
@@ -75,20 +98,7 @@ internal fun WriteScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (state.isWorking || state.isAccepting) {
-                    AssistantBusy(onCancel)
-                } else if (state.assistant?.artifact != null) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        OutlinedButton(onClick = onShowDiff, enabled = state.canShowDiff) {
-                            Text(stringResource(R.string.assistant_show_diff))
-                        }
-                        Button(onClick = onAccept, enabled = state.canAccept) {
-                            Text(stringResource(R.string.assistant_accept))
-                        }
-                        TextButton(onClick = onReject) {
-                            Text(stringResource(R.string.assistant_reject))
-                        }
-                    }
+                    AssistantBusy()
                 }
                 if (state.canRetry) {
                     Text(stringResource(R.string.assistant_retry_help),

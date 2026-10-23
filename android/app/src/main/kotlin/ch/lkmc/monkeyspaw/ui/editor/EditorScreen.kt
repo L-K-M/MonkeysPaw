@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
+import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueSeverity
 import ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawLayout
@@ -68,7 +69,7 @@ internal fun EditorScreen(
     }
 
     PawScreen(title, modifier, onBack = onBack, actions = {
-        TextButton(onClick = onSave, enabled = state.canSave) { Text(stringResource(R.string.editor_save)) }
+        FilledTonalButton(onClick = onSave, enabled = state.canSave) { Text(stringResource(R.string.editor_save)) }
         if (!state.isNew || onReview != null || onImprove != null) Box {
             IconButton(onClick = { menuOpen = true }) {
                 Icon(Icons.Rounded.MoreVert, stringResource(R.string.design_more_options))
@@ -185,6 +186,12 @@ internal fun EditorScreen(
             }
             when (state.tab) {
                 EditorTab.EDIT -> {
+                    // Put validation before the growing source canvas so recovery stays discoverable.
+                    items(state.issues) { issue ->
+                        PawMessage(listOfNotNull(issue.message, issue.location?.toString()).joinToString("\n"),
+                            tone = if (issue.severity == PromptIssueSeverity.ERROR) PawMessageTone.ERROR else PawMessageTone.WARNING,
+                            announcement = PawMessageAnnouncement.NONE)
+                    }
                     item {
                         when {
                             state.status == EditorStatus.LOADING -> PawLoading(stringResource(R.string.editor_loading))
@@ -194,16 +201,6 @@ internal fun EditorScreen(
                                 if (state.validating) Text(stringResource(R.string.editor_validating),
                                     Modifier.padding(top = PawSpacing.small),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    }
-                    items(state.issues) { issue ->
-                        Column {
-                            Text(issue.message, color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodyMedium)
-                            issue.location?.let {
-                                Text(it.toString(), style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -220,7 +217,7 @@ internal fun EditorScreen(
                                 modifier = Modifier.fillMaxWidth()) {
                                 SelectionContainer {
                                     Text(state.preview, Modifier.padding(PawSpacing.large),
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace))
+                                        style = MaterialTheme.typography.bodyLarge)
                                 }
                             }
                             else -> PawMessage(stringResource(R.string.editor_preview_invalid))
@@ -288,7 +285,10 @@ internal fun EditorScreen(
                         }
                     }
                     items(state.history.revisions, key = { it.revision.filename }) { entry ->
-                        OutlinedCard(onClick = { onRevision(entry) }, modifier = Modifier.fillMaxWidth()) {
+                        Surface(onClick = { onRevision(entry) }, modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.medium,
+                            color = if (entry.revision == state.history.selected) MaterialTheme.colorScheme.secondaryContainer
+                                else MaterialTheme.colorScheme.surfaceContainerLow) {
                             ListItem(headlineContent = { Text(entry.revision.timestamp.toString()) },
                                 supportingContent = {
                                     Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {

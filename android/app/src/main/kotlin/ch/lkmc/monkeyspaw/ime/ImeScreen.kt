@@ -1,5 +1,6 @@
 package ch.lkmc.monkeyspaw.ime
 
+import android.os.Build
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,25 +54,24 @@ internal fun ImeScreen(
         stringResource(R.string.ime_switch_unavailable).takeIf { state.switchUnavailable },
         stringResource(R.string.ime_handoff_failed).takeIf { state.handoffFailed },
     )
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
         // Use display configuration: measuring the wrapping IME window would feed back into its height.
         Column(Modifier.fillMaxWidth().height(height).navigationBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.xs),
+            Row(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.medium, vertical = PawSpacing.xs),
                 horizontalArrangement = Arrangement.spacedBy(PawSpacing.small), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.ime_picker_title), style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!state.password && !state.inFillActivity && library != null && (fill == null || fill.phase == FillPhase.PICKING)) {
                     IconButton(onClick = onRefresh, enabled = !library.refreshing) { Icon(Icons.Rounded.Refresh, stringResource(R.string.library_refresh)) }
-                    IconButton(onClick = onHandoff) { Icon(Icons.Rounded.Search, stringResource(R.string.ime_search_in_app)) }
+                    FilledTonalIconButton(onClick = onHandoff) { Icon(Icons.Rounded.Search, stringResource(R.string.ime_search_in_app)) }
                 } else if (!state.password && !state.inFillActivity && fill?.phase == FillPhase.EDITING) {
                     IconButton(onClick = onHandoff, enabled = fill.builtinsResolved) {
                         Icon(Icons.AutoMirrored.Rounded.OpenInNew, stringResource(R.string.fill_in_app))
                     }
                 }
-                FilledTonalIconButton(onClick = onSwitch) { Icon(Icons.Rounded.Language, stringResource(R.string.ime_switch_keyboard)) }
+                FilledIconButton(onClick = onSwitch) { Icon(Icons.Rounded.Language, stringResource(R.string.ime_switch_keyboard)) }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             if (state.password) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(PawSpacing.large),
                     verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
@@ -106,3 +106,9 @@ internal fun imePickerHeight(widthDp: Int, heightDp: Int, fontScale: Float): Int
     val bounded = if (landscape) scaled.coerceIn(180, 260) else scaled.coerceIn(300, 400)
     return bounded.coerceAtMost((heightDp * 0.7f).toInt()).coerceAtLeast(0)
 }
+
+internal enum class ImeNavigationBarTone { LIGHT, DARK }
+
+/** The surface and icon treatment must agree, including the legacy dark fallback. */
+internal fun imeNavigationBarTone(api: Int, requested: ImeNavigationBarTone): ImeNavigationBarTone =
+    if (api < Build.VERSION_CODES.O_MR1) ImeNavigationBarTone.DARK else requested

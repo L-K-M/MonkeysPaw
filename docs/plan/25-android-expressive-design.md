@@ -91,3 +91,31 @@ References: [Android UI design](https://developer.android.com/design/ui),
 and [Apple HIG](https://developer.apple.com/design/human-interface-guidelines/).
 The Android presentation follows the Expressive design direction through
 public APIs available in the current Material 3 dependency.
+
+### 25.6 Refinement pass
+
+The first rendered pass still gives metadata and utility controls too much
+weight. Refine composition without changing session or storage contracts:
+
+- Emphasize overview titles, soften search/filter chrome, and align content
+  to a shared page gutter. Give prompt descriptions the full reading width;
+  keep favourite and file commands in a compact title row and metadata quiet.
+- Use a neutral canvas with restrained tonal groups. Preference icons use
+  small tonal wells; section labels remain subordinate to row titles.
+- Search and filters scroll with the library in one stable layout, preserving
+  input focus through software-keyboard resizing and making short windows usable.
+- Render keyboard results as compact, inset prompt keys on a tonal keybed.
+  Keep Search and Switch distinct, filters scrollable, and 48 dp targets.
+- Use proportional text for rendered prompt previews; monospace remains for
+  editable source and forensic revisions. Dock and emphasize delivery actions.
+- Keep the sync footer concise when there is nothing to resolve. Counts and
+  diagnostics remain available in sync details; nonzero problems stay visible.
+- Dock assistant actions and show a unified diff on narrow or large-text
+  screens. Confirm saved-provider deletion before removing its API key; an
+  unsaved profile still discards directly. Account choices select by whole row.
+- Keep a concise encryption/outbound-data summary before provider inputs;
+  the full existing disclosure opens in a scrollable Data and privacy dialog.
+
+Acceptance is rendered light/dark phone, large-text, landscape and wide-screen
+inspection, plus browse/edit/fill and IME insertion, menu and switch-back checks.
+The existing JVM, lint, APK and privacy/session gates remain required.

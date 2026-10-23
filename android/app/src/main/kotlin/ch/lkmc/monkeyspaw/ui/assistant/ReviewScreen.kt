@@ -45,7 +45,22 @@ internal fun ReviewScreen(
         title = stringResource(R.string.assistant_review_title),
         onBack = onBack,
         onSettings = onSettings,
-        footer = { AssistantFooter(result) },
+        header = { AssistantFooter(result) },
+        dock = {
+            if (state.isWorking) {
+                TextButton(onClick = onCancel) {
+                    Text(stringResource(R.string.assistant_cancel))
+                }
+            } else if (result?.review != null) {
+                Button(onClick = onImprove, enabled = state.canImproveWithThese) {
+                    Text(stringResource(R.string.assistant_improve_selected))
+                }
+            } else {
+                Button(onClick = onReview, enabled = state.canReview) {
+                    Text(stringResource(R.string.assistant_review_send))
+                }
+            }
+        },
         modifier = modifier,
     ) {
         item {
@@ -55,8 +70,10 @@ internal fun ReviewScreen(
                 Text(stringResource(R.string.assistant_key_disclosure),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 AssistantEffortControl(state.effort, !state.isWorking, onEffort)
-                Button(onClick = onReview, enabled = state.canReview, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.assistant_review_send))
+                if (result?.review != null && !state.isWorking) {
+                    TextButton(onClick = onReview, enabled = state.canReview, modifier = Modifier.align(Alignment.End)) {
+                        Text(stringResource(R.string.assistant_review_send))
+                    }
                 }
                 state.unavailable?.let { reason ->
                     val providerDown = reason == ReviewUnavailable.PROVIDER
@@ -91,7 +108,7 @@ internal fun ReviewScreen(
                         result?.review != null -> AssistantTone.SUCCESS
                         else -> AssistantTone.INFO
                     })
-                if (state.isWorking) AssistantBusy(onCancel)
+                if (state.isWorking) AssistantBusy()
             }
         }
         item {
@@ -112,9 +129,6 @@ internal fun ReviewScreen(
                     if (review.findings.isEmpty()) {
                         Text(stringResource(R.string.assistant_review_empty),
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Button(onClick = onImprove, enabled = state.canImproveWithThese, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.assistant_improve_selected))
                     }
                 }
             }

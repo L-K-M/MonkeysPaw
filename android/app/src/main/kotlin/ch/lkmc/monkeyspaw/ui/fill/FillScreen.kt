@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -15,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupProperties
@@ -127,7 +127,7 @@ internal fun FillScreen(
                                 var truncated by remember(preview.text) { mutableStateOf(false) }
                                 Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
                                     Column(Modifier.padding(PawSpacing.large)) {
-                                        SelectionContainer { Text(preview.text, style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                                         SelectionContainer { Text(preview.text, style = MaterialTheme.typography.bodyLarge,
                                             maxLines = if (state.input == FillInput.INLINE && !expanded) 5 else Int.MAX_VALUE,
                                             overflow = TextOverflow.Ellipsis, onTextLayout = { if (!expanded) truncated = it.hasVisualOverflow }) }
                                         if (state.input == FillInput.INLINE && (truncated || expanded)) TextButton(onClick = { expanded = !expanded }) {
@@ -147,18 +147,24 @@ internal fun FillScreen(
                     } }
                 }
                 Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                    FlowRow(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.small),
-                        horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium), verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
+                     FlowRow(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.small),
+                         horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium, Alignment.End),
+                         verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
                         if (state.phase != FillPhase.DELIVERED) {
                             if (state.deliveryMode != DeliveryMode.COPY) Button(onClick = { onInsert?.invoke() },
-                                enabled = state.copyEnabled && onInsert != null) { Text(stringResource(R.string.fill_insert)) }
+                                 enabled = state.copyEnabled && onInsert != null, modifier = Modifier.heightIn(min = PawLayout.touchTarget)) {
+                                 Icon(Icons.AutoMirrored.Rounded.Send, null, Modifier.size(18.dp))
+                                 Spacer(Modifier.width(PawSpacing.small))
+                                 Text(stringResource(R.string.fill_insert))
+                             }
                             if (state.deliveryMode == DeliveryMode.COPY || onInsert == null) {
-                                Button(onClick = onCopy, enabled = state.copyEnabled) {
+                                 Button(onClick = onCopy, enabled = state.copyEnabled, modifier = Modifier.heightIn(min = PawLayout.touchTarget)) {
                                     Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp))
                                     Spacer(Modifier.width(PawSpacing.small))
                                     Text(stringResource(R.string.fill_copy))
                                 }
-                            } else OutlinedButton(onClick = onCopy, enabled = state.copyEnabled) { Text(stringResource(R.string.fill_copy)) }
+                             } else OutlinedButton(onClick = onCopy, enabled = state.copyEnabled,
+                                 modifier = Modifier.heightIn(min = PawLayout.touchTarget)) { Text(stringResource(R.string.fill_copy)) }
                         } else Button(onClick = onCancel, enabled = state.cancelEnabled) { Text(stringResource(R.string.fill_done)) }
                     }
                 }

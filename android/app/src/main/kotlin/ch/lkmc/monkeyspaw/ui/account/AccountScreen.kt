@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.ui.account
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -15,6 +16,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -22,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
+import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 
 @Composable
 internal fun AccountScreen(
@@ -188,11 +191,13 @@ internal fun AccountScreen(
             }
             items(state.holds, key = { "hold:" + it.identity.storageKey }) { hold ->
                 val description = stringResource(R.string.account_select_hold, hold.path)
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = hold.identity in state.selectedHolds, onCheckedChange = { onSelectHold(hold.identity) },
-                            enabled = state.busy == null && state.account.enabled,
-                            modifier = Modifier.semantics { contentDescription = description })
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.medium) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = PawLayout.touchTarget)
+                        .toggleable(value = hold.identity in state.selectedHolds, enabled = state.busy == null && state.account.enabled,
+                            role = Role.Checkbox, onValueChange = { onSelectHold(hold.identity) })
+                        .semantics { contentDescription = description }, verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = hold.identity in state.selectedHolds, onCheckedChange = null,
+                            enabled = state.busy == null && state.account.enabled)
                         Text(hold.path, style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f).padding(end = PawSpacing.large))
                     }
@@ -226,7 +231,15 @@ internal fun AccountScreen(
             state.signOutConfirmation -> onSignOut
             revoke != null -> onRevoke
             else -> onInclude
-        }) { Text(stringResource(R.string.account_confirm)) } },
+        }, enabled = state.busy == null,
+            colors = if (state.signOutConfirmation || revoke != null)
+                ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error) else ButtonDefaults.textButtonColors()) {
+            Text(stringResource(when {
+                state.signOutConfirmation -> R.string.account_sign_out
+                revoke != null -> R.string.account_revoke
+                else -> R.string.account_include
+            }))
+        } },
         dismissButton = { TextButton(onClick = onDismissConfirmation) { Text(stringResource(R.string.fill_cancel)) } },
     )
 }
