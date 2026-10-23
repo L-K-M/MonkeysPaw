@@ -283,6 +283,32 @@ final class MacLibraryEditorTests: XCTestCase {
         XCTAssertFalse(presentation.editorState.isDirty)
     }
 
+    func testSearchReturnWaitsForTheSaveBeforeOpeningAndFocusingItsResult() throws {
+        try put("---\ntitle: Beta\n---\nSecond", at: "two.md")
+        let presentation = try open("---\ntitle: Alpha\n---\nOriginal")
+        presentation.edit("Saved before navigation")
+        presentation.save()
+        XCTAssertEqual(presentation.editorState.status, .saving)
+        let controller = try XCTUnwrap(delegate.libraryWindow)
+        let input = try LibrarySearchTestSupport.type("Beta", in: controller)
+        XCTAssertEqual(presentation.snapshot.rows.map(\.relativePath), ["two.md"])
+        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+            doCommandBy: #selector(NSResponder.insertNewline(_:))))
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "one.md")
+        XCTAssertTrue(try window().firstResponder === input.editor)
+        work.drain()
+        let native = try window()
+        let text = try waitForNativeEditor("library-body", in: native)
+        let deadline = Date(timeIntervalSinceNow: 2)
+        while (native.firstResponder !== text || text.string != "Second"), Date() < deadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        XCTAssertEqual(try body(), "Saved before navigation")
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "two.md")
+        XCTAssertEqual(text.string, "Second")
+        XCTAssertTrue(native.firstResponder === text, "One Return must survive the in-flight save")
+    }
+
     func testCommandSSavesAndFavouriteChangesTheOpenDraft() throws {
         let presentation = try open()
         presentation.edit("Draft")
