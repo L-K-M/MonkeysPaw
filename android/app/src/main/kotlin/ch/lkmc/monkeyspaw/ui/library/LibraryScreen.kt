@@ -7,11 +7,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.ShortText
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -58,19 +61,20 @@ internal fun LibraryScreen(
 
     var menuOpen by remember { mutableStateOf(false) }
     PawScreen(stringResource(R.string.design_library_title), modifier, contentMaxWidth = PawLayout.libraryWidth,
+        style = PawScreenStyle.OVERVIEW,
         actions = {
             if (mode == LibraryMode.BROWSER) {
                 onWrite?.let { write ->
                     IconButton(onClick = write) { Icon(Icons.Rounded.AutoAwesome, stringResource(R.string.assistant_write_title)) }
-                }
-                IconButton(onClick = onRefresh, enabled = !state.refreshing) {
-                    Icon(Icons.Rounded.Refresh, stringResource(R.string.library_refresh))
                 }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Rounded.MoreVert, stringResource(R.string.design_more_options))
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) },
+                            leadingIcon = { Icon(Icons.Rounded.Refresh, null) }, enabled = !state.refreshing,
+                            onClick = { menuOpen = false; onRefresh() })
                         onSettings?.let { settings -> DropdownMenuItem(text = { Text(stringResource(R.string.settings_title)) },
                             leadingIcon = { Icon(Icons.Rounded.Settings, null) }, onClick = { menuOpen = false; settings() }) }
                         onAccount?.let { account -> DropdownMenuItem(text = { Text(stringResource(R.string.account_title)) },
@@ -87,10 +91,10 @@ internal fun LibraryScreen(
         },
     ) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val wide = maxWidth >= 840.dp
+            val wide = maxWidth >= PawLayout.expandedBreakpoint
             Row(Modifier.fillMaxSize()) {
                 if (wide) {
-                    Surface(Modifier.width(232.dp).fillMaxHeight().padding(PawSpacing.medium),
+                    Surface(Modifier.width(PawLayout.navigationWidth).fillMaxHeight().padding(PawSpacing.medium),
                         shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow) {
                         LazyColumn(contentPadding = PaddingValues(PawSpacing.small)) {
                             items(state.sections, key = { sectionKey(it.filter) }) { section ->
@@ -110,9 +114,10 @@ internal fun LibraryScreen(
                         trailingIcon = { if (state.query.isNotEmpty()) IconButton(onClick = { onQuery("") }) {
                             Icon(Icons.Rounded.Close, stringResource(R.string.design_clear_search))
                         } }, shape = MaterialTheme.shapes.extraLarge,
-                        colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.small))
+                         colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                             focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                             unfocusedBorderColor = Color.Transparent),
+                         modifier = Modifier.fillMaxWidth().padding(horizontal = PawLayout.pageGutter, vertical = PawSpacing.small))
                     if (!wide) LibraryFilters(state, onFilter, mode)
                     if (state.refreshing) LinearProgressIndicator(Modifier.fillMaxWidth())
                     LibraryResults(state, mode, onSelect, onOpen, onToggleFavorite, onClearFilters, onRefresh,
@@ -125,11 +130,17 @@ internal fun LibraryScreen(
 
 @Composable
 private fun LibraryFilters(state: LibraryUiState, onFilter: (LibraryFilter) -> Unit, mode: LibraryMode) {
-    LazyRow(contentPadding = PaddingValues(horizontal = PawSpacing.large), horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+    val gutter = if (mode == LibraryMode.IME_PICKER) PawSpacing.medium else PawLayout.pageGutter
+    LazyRow(contentPadding = PaddingValues(horizontal = gutter), horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
         items(state.sections.filter { it.filter.isPrimary() }, key = { sectionKey(it.filter) }) { section ->
             FilterChip(selected = state.filter == section.filter, onClick = { onFilter(section.filter) },
                 label = { Text(sectionTitle(section)) },
-                leadingIcon = { Icon(sectionIcon(section.filter), null, Modifier.size(18.dp)) })
+                shape = MaterialTheme.shapes.extraLarge, border = null,
+                colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
+                leadingIcon = if (state.filter == section.filter) {
+                    { Icon(Icons.Rounded.Check, null, Modifier.size(18.dp)) }
+                } else null)
         }
         val browse = state.sections.filterNot { it.filter.isPrimary() }
         if (browse.isNotEmpty()) item {
@@ -138,6 +149,8 @@ private fun LibraryFilters(state: LibraryUiState, onFilter: (LibraryFilter) -> U
                 FilterChip(selected = !state.filter.isPrimary(), onClick = { expanded = true },
                     label = { Text(browse.firstOrNull { it.filter == state.filter }?.let { sectionTitle(it) }
                         ?: stringResource(R.string.design_browse)) },
+                    shape = MaterialTheme.shapes.extraLarge, border = null,
+                    colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                     leadingIcon = { Icon(Icons.Rounded.FolderOpen, null, Modifier.size(18.dp)) },
                     trailingIcon = { Icon(Icons.Rounded.ExpandMore, null, Modifier.size(18.dp)) })
                 // The external editor must remain the input target while the keyboard's menu is open.
@@ -162,6 +175,11 @@ private fun LibraryResults(
     onResolve: ((LibrarySelection) -> Unit)? = null, notice: String? = null,
 ) {
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = if (onCreate != null) 96.dp else PawSpacing.large)) {
+        if (mode == LibraryMode.BROWSER && state.content == LibraryContent.READY) item {
+            Text(pluralStringResource(R.plurals.design_prompt_count, state.rows.size, state.rows.size),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = PawLayout.pageGutter, vertical = PawSpacing.medium))
+        }
         notice?.let { item { PawMessage(it, Modifier.padding(PawSpacing.medium), PawMessageTone.WARNING) } }
         state.failure?.let { failure -> item {
             PawMessage(stringResource(when (failure) {
@@ -203,7 +221,8 @@ private fun LibraryResults(
                 onResolve = onResolve?.takeIf { row.syncOrigin != null }?.let { resolve ->
                     { onSelect(row.selection); resolve(row.selection) }
                 })
-            HorizontalDivider(Modifier.padding(horizontal = PawSpacing.large), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            if (mode == LibraryMode.BROWSER) HorizontalDivider(Modifier.padding(horizontal = PawLayout.pageGutter),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
         }
     }
 }
@@ -211,50 +230,76 @@ private fun LibraryResults(
 @Composable
 private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, favoriteEnabled: Boolean,
     onOpen: () -> Unit, onToggleFavorite: () -> Unit, onEdit: (() -> Unit)?, onClearSelection: (() -> Unit)?, onResolve: (() -> Unit)?) {
+    if (mode == LibraryMode.IME_PICKER) {
+        Surface(onClick = onOpen, modifier = Modifier.fillMaxWidth()
+            .padding(horizontal = PawSpacing.small, vertical = PawLayout.connectedGap).semantics { this.selected = selected },
+            shape = MaterialTheme.shapes.small,
+            color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest) {
+            Row(Modifier.heightIn(min = 64.dp).padding(horizontal = PawSpacing.medium, vertical = PawSpacing.small),
+                horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (row.favorite) Icons.Rounded.Star else Icons.AutoMirrored.Rounded.ShortText, null,
+                    Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
+                    Text(row.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    row.description?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        return
+    }
+
     Surface(onClick = onOpen, modifier = Modifier.fillMaxWidth().semantics { this.selected = selected },
         color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
-        Row(Modifier.heightIn(min = 64.dp).padding(start = PawSpacing.large, end = PawSpacing.xs, top = PawSpacing.medium, bottom = PawSpacing.medium),
-            horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
-                Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(start = PawLayout.pageGutter, end = PawSpacing.small, top = PawSpacing.small, bottom = PawSpacing.large)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f))
+                IconToggleButton(checked = row.favorite, onCheckedChange = { onToggleFavorite() }, enabled = favoriteEnabled) {
+                    Icon(if (row.favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                        stringResource(if (row.favorite) R.string.library_remove_favourite else R.string.library_add_favourite, row.title),
+                        tint = if (row.favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                PromptOptions(row.title, onEdit, onResolve, onClearSelection)
+            }
+            Column(Modifier.padding(end = PawSpacing.large), verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
                 row.description?.takeIf { it.isNotBlank() }?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = if (mode == LibraryMode.IME_PICKER) 1 else 2, overflow = TextOverflow.Ellipsis)
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 if (mode == LibraryMode.BROWSER) {
                     val details = listOfNotNull(row.group?.let { stringResource(R.string.library_group_role, it.name, it.role.wireValue) }
                         ?: row.folder.takeIf { it.isNotEmpty() },
                         stringResource(R.string.library_read_only).takeIf { row.isReadOnly },
                         stringResource(R.string.library_private_copy).takeIf { row.syncOrigin != null })
-                    if (details.isNotEmpty()) Text(details.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (row.tags.isNotEmpty()) Text(row.tags.joinToString("  ") { "#$it" }, style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val metadata = details + row.tags.map { "#$it" }
+                    if (metadata.isNotEmpty()) Text(metadata.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     for (issue in row.issues) Text(issue.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            if (mode == LibraryMode.BROWSER) {
-                IconToggleButton(checked = row.favorite, onCheckedChange = { onToggleFavorite() }, enabled = favoriteEnabled) {
-                    Icon(if (row.favorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                        stringResource(if (row.favorite) R.string.library_remove_favourite else R.string.library_add_favourite, row.title))
-                }
-                if (onEdit != null || onResolve != null || onClearSelection != null) {
-                    var expanded by remember { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { expanded = true }) { Icon(Icons.Rounded.MoreVert,
-                            stringResource(R.string.design_prompt_options, row.title)) }
-                        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                            onEdit?.let { edit -> DropdownMenuItem(text = { Text(stringResource(R.string.editor_edit)) },
-                                leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { expanded = false; edit() }) }
-                            onResolve?.let { resolve -> DropdownMenuItem(text = { Text(stringResource(R.string.resolve_open)) },
-                                leadingIcon = { Icon(Icons.Rounded.Difference, null) }, onClick = { expanded = false; resolve() }) }
-                            onClearSelection?.let { clear -> DropdownMenuItem(text = { Text(stringResource(R.string.library_clear_selection)) },
-                                leadingIcon = { Icon(Icons.Rounded.Close, null) }, onClick = { expanded = false; clear() }) }
-                        }
-                    }
-                }
-            } else Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, Modifier.padding(end = PawSpacing.medium).size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun PromptOptions(title: String, onEdit: (() -> Unit)?, onResolve: (() -> Unit)?, onClearSelection: (() -> Unit)?) {
+    if (onEdit == null && onResolve == null && onClearSelection == null) return
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) { Icon(Icons.Rounded.MoreVert,
+            stringResource(R.string.design_prompt_options, title), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            onEdit?.let { edit -> DropdownMenuItem(text = { Text(stringResource(R.string.editor_edit)) },
+                leadingIcon = { Icon(Icons.Rounded.Edit, null) }, onClick = { expanded = false; edit() }) }
+            onResolve?.let { resolve -> DropdownMenuItem(text = { Text(stringResource(R.string.resolve_open)) },
+                leadingIcon = { Icon(Icons.Rounded.Difference, null) }, onClick = { expanded = false; resolve() }) }
+            onClearSelection?.let { clear -> DropdownMenuItem(text = { Text(stringResource(R.string.library_clear_selection)) },
+                leadingIcon = { Icon(Icons.Rounded.Close, null) }, onClick = { expanded = false; clear() }) }
         }
     }
 }

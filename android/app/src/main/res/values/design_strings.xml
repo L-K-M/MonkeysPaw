@@ -4,7 +4,7 @@
     <string name="design_close">Close</string>
     <string name="design_more_options">More options</string>
     <string name="design_clear_search">Clear search</string>
-    <string name="design_browse">Browse library</string>
+    <string name="design_browse">Browse</string>
     <string name="design_library_title">Library</string>
     <string name="design_setup_title">Quick setup</string>
     <string name="design_setup_loading">Checking your setup…</string>
@@ -19,4 +19,12 @@
     <string name="design_prompt_options">Options for %1$s</string>
     <string name="design_full_preview">Show full preview</string>
     <string name="design_show_less">Show less</string>
+    <string name="design_delete_profile">Delete %1$s?</string>
+    <string name="design_delete_profile_body">This removes the profile and its saved API key.</string>
+    <string name="design_provider_privacy">Keys stay encrypted on this device. You choose what to send to your assistant provider.</string>
+    <string name="design_privacy_details">Data and privacy</string>
+    <plurals name="design_prompt_count">
+        <item quantity="one">%1$d prompt</item>
+        <item quantity="other">%1$d prompts</item>
+    </plurals>
 </resources>

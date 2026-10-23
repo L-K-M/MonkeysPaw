@@ -36,7 +36,28 @@ internal fun ImproveScreen(
         title = stringResource(if (state.isPrivateCopy) R.string.assistant_improve_copy else R.string.assistant_improve_title),
         onBack = onBack,
         onSettings = onSettings,
-        footer = { AssistantFooter(result) },
+        header = { AssistantFooter(result) },
+        dock = {
+            if (state.isWorking || state.isAccepting) {
+                TextButton(onClick = onCancel) {
+                    Text(stringResource(R.string.assistant_cancel))
+                }
+            } else if (result?.artifact != null) {
+                OutlinedButton(onClick = onShowDiff, enabled = state.canShowDiff) {
+                    Text(stringResource(R.string.assistant_show_diff))
+                }
+                Button(onClick = onAccept, enabled = state.canAccept) {
+                    Text(stringResource(R.string.assistant_accept))
+                }
+                TextButton(onClick = onReject) {
+                    Text(stringResource(R.string.assistant_reject))
+                }
+            } else {
+                Button(onClick = onImprove, enabled = state.canImprove) {
+                    Text(stringResource(if (state.isPrivateCopy) R.string.assistant_improve_copy else R.string.assistant_improve_send))
+                }
+            }
+        },
         modifier = modifier,
     ) {
         item {
@@ -54,8 +75,10 @@ internal fun ImproveScreen(
                 Text(stringResource(R.string.assistant_improve_help),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 AssistantEffortControl(state.effort, state.canEdit, onEffort)
-                Button(onClick = onImprove, enabled = state.canImprove, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(if (state.isPrivateCopy) R.string.assistant_improve_copy else R.string.assistant_improve_send))
+                if (result?.artifact != null && !state.isWorking && !state.isAccepting) {
+                    TextButton(onClick = onImprove, enabled = state.canImprove, modifier = Modifier.align(Alignment.End)) {
+                        Text(stringResource(if (state.isPrivateCopy) R.string.assistant_improve_copy else R.string.assistant_improve_send))
+                    }
                 }
                 state.unavailable?.let { reason ->
                     val providerDown = reason == ReviewUnavailable.PROVIDER
@@ -100,12 +123,9 @@ internal fun ImproveScreen(
                 }
             }
         }
-        item {
-            if (result?.failure == null && result?.artifact == null && result?.isStale != true && !state.isWorking &&
-                !state.isAccepting && state.acceptanceOutcome == null) {
-                Text(stringResource(R.string.assistant_improve_help),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else AssistantResult(result, state.acceptanceOutcome)
+        if (result?.failure != null || result?.artifact != null || result?.isStale == true || state.isWorking ||
+            state.isAccepting || state.acceptanceOutcome != null) {
+            item { AssistantResult(result, state.acceptanceOutcome) }
         }
         result?.artifact?.let { artifact ->
             item { ArtifactDraft(artifact) }
@@ -120,20 +140,7 @@ internal fun ImproveScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (state.isWorking || state.isAccepting) {
-                    AssistantBusy(onCancel)
-                } else if (result?.artifact != null) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        OutlinedButton(onClick = onShowDiff, enabled = state.canShowDiff) {
-                            Text(stringResource(R.string.assistant_show_diff))
-                        }
-                        Button(onClick = onAccept, enabled = state.canAccept) {
-                            Text(stringResource(R.string.assistant_accept))
-                        }
-                        TextButton(onClick = onReject) {
-                            Text(stringResource(R.string.assistant_reject))
-                        }
-                    }
+                    AssistantBusy()
                 }
                 if (state.canRetry) {
                     Text(stringResource(R.string.assistant_improve_retry_help),

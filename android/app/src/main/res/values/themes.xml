@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.MonkeysPaw.Base" parent="android:style/Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#FBF8FF</item>
+        <item name="android:windowBackground">#F9F9FD</item>
         <item name="android:colorAccent">#4355A1</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>

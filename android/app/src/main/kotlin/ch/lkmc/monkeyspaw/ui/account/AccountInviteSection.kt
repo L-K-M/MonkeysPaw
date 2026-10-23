@@ -1,19 +1,21 @@
 package ch.lkmc.monkeyspaw.ui.account
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
+import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 
 @Composable
 internal fun AccountInviteSection(
@@ -50,14 +52,15 @@ internal fun AccountInviteSection(
                     if (invite.usesHTTP) {
                         PawMessage(stringResource(R.string.invite_http_warning), tone = PawMessageTone.WARNING)
                     }
-                    Column {
+                    Column(Modifier.selectableGroup()) {
                         for (mode in InviteMode.entries) {
                             val description = stringResource(if (mode == InviteMode.EXISTING_ACCOUNT) R.string.invite_existing
                                 else R.string.invite_new)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = state.inviteMode == mode, onClick = { onMode(mode) },
-                                    enabled = state.busy == null,
-                                    modifier = Modifier.semantics { contentDescription = description })
+                            Row(Modifier.fillMaxWidth().heightIn(min = PawLayout.touchTarget)
+                                .selectable(selected = state.inviteMode == mode, enabled = state.busy == null,
+                                    role = Role.RadioButton, onClick = { onMode(mode) }),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = state.inviteMode == mode, onClick = null, enabled = state.busy == null)
                                 Text(description, style = MaterialTheme.typography.bodyLarge)
                             }
                         }

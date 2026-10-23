@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
+import ch.lkmc.monkeyspaw.core.domain.sync.SyncStatus
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 
@@ -22,12 +23,15 @@ import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
 internal fun SyncFooter(state: SyncStatusUiState, onDetails: () -> Unit, modifier: Modifier = Modifier) {
     Surface(onClick = onDetails, modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.medium),
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = PawSpacing.large, vertical = PawSpacing.small),
             horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Rounded.Sync, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+            Icon(Icons.Rounded.Sync, null, Modifier.size(20.dp), tint = if (state.blockingText != null ||
+                state.status == SyncStatus.SYNC_ERROR || state.status == SyncStatus.NEEDS_SIGN_IN)
+                MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             Column(Modifier.weight(1f)) {
                 Text(stringResource(state.title), style = MaterialTheme.typography.labelLarge)
-                state.counts?.let {
+                // Keep actionable counts visible; zero-count diagnostics belong in Details.
+                state.counts?.takeIf { listOf(it.fileErrors, it.conflicts, it.held, it.pending).any { count -> count > 0 } }?.let {
                     Text(stringResource(R.string.sync_footer_counts, it.fileErrors, it.conflicts, it.held, it.pending),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

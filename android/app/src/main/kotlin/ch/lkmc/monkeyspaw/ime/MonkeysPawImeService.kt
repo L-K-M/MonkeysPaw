@@ -1,18 +1,25 @@
 package ch.lkmc.monkeyspaw.ime
 
 import android.inputmethodservice.InputMethodService
+import android.os.Build
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import ch.lkmc.monkeyspaw.ui.theme.MonkeysPawTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.SideEffect
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.platform.createLifecycleAwareWindowRecomposer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.repeatOnLifecycle
 import ch.lkmc.monkeyspaw.data.AndroidImeGateway
 import ch.lkmc.monkeyspaw.data.ImeSwitchBack
@@ -62,6 +69,19 @@ class MonkeysPawImeService : InputMethodService() {
             val fill = models?.fill?.state?.collectAsStateWithLifecycle()?.value
             val epoch = state.generation
             MonkeysPawTheme {
+                val keybed = MaterialTheme.colorScheme.surfaceContainer.toArgb()
+                val dark = isSystemInDarkTheme()
+                val requestedTone = if (dark) ImeNavigationBarTone.DARK else ImeNavigationBarTone.LIGHT
+                val navigationTone = imeNavigationBarTone(Build.VERSION.SDK_INT, requestedTone)
+                SideEffect {
+                    // Blend the system switcher strip into the keybed; API 26 needs light icons on dark.
+                    window?.window?.let { inputWindow ->
+                        inputWindow.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+                        @Suppress("DEPRECATION")
+                        inputWindow.navigationBarColor = if (navigationTone == requestedTone) keybed else android.graphics.Color.BLACK
+                        WindowInsetsControllerCompat(inputWindow, view).isAppearanceLightNavigationBars = navigationTone == ImeNavigationBarTone.LIGHT
+                    }
+                }
                 ImeScreen(state, library, fill,
                     onSwitch = { sessions.switch(epoch) },
                     onOpen = { sessions.open(epoch, it) },

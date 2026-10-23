@@ -93,6 +93,33 @@ internal class AssistantScreenBoundaryTest {
         assertTrue(strings.contains("Selected findings are reused only while their source is unchanged"))
     }
 
+    @Test fun `per-state primary actions dock in a wrapping bar while session metadata scrolls`() {
+        val controls = sources.resolve("ui/assistant/ArtifactControls.kt").readText()
+        assertTrue(controls.contains("bottomBar = {"), "the state actions stay docked at the bottom")
+        assertTrue(controls.contains("FlowRow("), "the action dock must wrap instead of clipping at large font scales")
+        for (name in listOf("WriteScreen.kt", "ImproveScreen.kt", "ReviewScreen.kt")) {
+            val screen = sources.resolve("ui/assistant/$name").readText()
+            assertTrue(screen.contains("dock ="), "$name must pass its state actions to the scaffold dock")
+            val disclosure = screen.indexOf("_disclosure")
+            val field = screen.indexOf("OutlinedTextField")
+            assertTrue(disclosure >= 0 && field > disclosure, "$name must disclose before the first editable field")
+        }
+    }
+
+    @Test fun `improve help renders once and narrow widths fall back to a unified diff`() {
+        val screen = sources.resolve("ui/assistant/ImproveScreen.kt").readText()
+        assertEquals(1, Regex("R\\.string\\.assistant_improve_help\\b").findAll(screen).count(),
+            "the improve help must not render twice")
+        val diff = sources.resolve("ui/assistant/ImproveDiffView.kt").readText()
+        assertTrue(diff.contains("fontScale"), "the two-pane cutoff must account for font scale")
+        assertTrue(diff.contains("UnifiedDiffRow("), "narrow widths need a unified list with explicit markers")
+        assertTrue(diff.contains("unifiedDiffLineNumbers(line.originalLine, line.mergedLine)"),
+            "the unified list must carry both line numbers")
+        assertEquals("12→·", unifiedDiffLineNumbers(12, null))
+        assertEquals("·→45", unifiedDiffLineNumbers(null, 45))
+        assertEquals("7→7", unifiedDiffLineNumbers(7, 7))
+    }
+
     @Test fun `diff display preserves Unicode and shows exact LF CRLF and missing newline distinctions`() {
         assertEquals("😀 e\u0301 ↵", displayDiffLine("😀 e\u0301\n", "no newline"))
         assertEquals("😀 e\u0301 ␍↵", displayDiffLine("😀 e\u0301\r\n", "no newline"))

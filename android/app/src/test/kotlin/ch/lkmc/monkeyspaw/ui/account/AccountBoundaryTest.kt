@@ -24,7 +24,9 @@ internal class AccountBoundaryTest {
         assertTrue(invite.contains("R.string.invite_destination, invite.serverURL"))
         assertTrue(invite.contains("current.username, current.identity.serverURL"))
         assertTrue(invite.contains("R.string.invite_new_destination, state.draft.username, invite.serverURL"))
-        assertTrue(invite.contains("contentDescription = description"))
+        assertTrue(invite.contains("role = Role.RadioButton"))
+        assertTrue(invite.contains("Text(description,"))
+        assertTrue(invite.contains("RadioButton(selected = state.inviteMode == mode, onClick = null"))
         assertFalse(Regex("contentDescription\\s*=\\s*state\\.").containsMatchIn(invite))
     }
 

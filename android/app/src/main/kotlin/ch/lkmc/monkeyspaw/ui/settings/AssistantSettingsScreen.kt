@@ -52,6 +52,8 @@ internal fun AssistantSettingsScreen(
     BackHandler(onBack = onBack)
     DisposableEffect(Unit) { onDispose { onKeyInputDiscarded() } }
     var menuOpen by remember { mutableStateOf(false) }
+    var privacyDetails by remember { mutableStateOf(false) }
+    var deleteConfirmation by remember(state.draft?.id) { mutableStateOf<ProviderProfileID?>(null) }
     PawScreen(stringResource(R.string.assistant_settings_title), modifier, onBack = onBack,
         actions = {
             Box {
@@ -73,10 +75,9 @@ internal fun AssistantSettingsScreen(
             // Disclose storage and outbound data before the first editable control.
             Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.padding(PawSpacing.large), verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-                    Text(stringResource(R.string.assistant_key_disclosure), style = MaterialTheme.typography.bodySmall,
+                    Text(stringResource(R.string.design_provider_privacy), style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(stringResource(R.string.assistant_outbound_disclosure), style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { privacyDetails = true }) { Text(stringResource(R.string.design_privacy_details)) }
                 }
             }
             AssistantSection(stringResource(R.string.assistant_profiles)) {
@@ -112,7 +113,10 @@ internal fun AssistantSettingsScreen(
                     FilledTonalButton(onClick = onAdd, enabled = state.canChangeProfiles) {
                         Text(stringResource(R.string.assistant_add))
                     }
-                    TextButton(onClick = { state.draft?.id?.let(onDelete) }, enabled = state.canSave,
+                    TextButton(onClick = {
+                        val id = state.draft?.id ?: return@TextButton
+                        if (state.isNewProfile) onDelete(id) else deleteConfirmation = id
+                    }, enabled = state.canSave,
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
                         Text(stringResource(R.string.assistant_delete))
                     }
@@ -201,6 +205,28 @@ internal fun AssistantSettingsScreen(
             }
         }
     }
+    if (privacyDetails) AlertDialog(onDismissRequest = { privacyDetails = false },
+        title = { Text(stringResource(R.string.design_privacy_details)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PawSpacing.large)) {
+                Text(stringResource(R.string.assistant_key_disclosure))
+                Text(stringResource(R.string.assistant_outbound_disclosure))
+            }
+        }, confirmButton = {
+            TextButton(onClick = { privacyDetails = false }) { Text(stringResource(R.string.design_close)) }
+        })
+    val deleting = state.profiles.firstOrNull { it.id == deleteConfirmation }
+    if (deleting != null) AlertDialog(onDismissRequest = { deleteConfirmation = null },
+        title = { Text(stringResource(R.string.design_delete_profile, deleting.displayName)) },
+        text = { Text(stringResource(R.string.design_delete_profile_body)) },
+        confirmButton = {
+            TextButton(onClick = { deleteConfirmation = null; onDelete(deleting.id) }, enabled = state.canSave,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                Text(stringResource(R.string.assistant_delete))
+            }
+        }, dismissButton = {
+            TextButton(onClick = { deleteConfirmation = null }) { Text(stringResource(R.string.fill_cancel)) }
+        })
 }
 
 @Composable

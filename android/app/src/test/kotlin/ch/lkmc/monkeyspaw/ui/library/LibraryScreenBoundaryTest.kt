@@ -72,9 +72,12 @@ internal class LibraryScreenBoundaryTest {
         assertTrue(picker >= 0 && pickerExit > picker && chrome > pickerExit)
         assertFalse(screen.substring(picker, pickerExit).contains("OutlinedTextField"))
         val row = screen.substringAfter("private fun PromptRow(")
-        val browser = row.indexOf("if (mode == LibraryMode.BROWSER)", row.indexOf("Column("))
-        assertTrue(browser >= 0 && row.indexOf("IconToggleButton") > browser)
-        assertTrue(row.indexOf("onEdit?.let") > browser)
+        val inline = row.indexOf("if (mode == LibraryMode.IME_PICKER)")
+        val inlineExit = row.indexOf("return", inline)
+        assertTrue(inline >= 0 && inlineExit > inline)
+        assertTrue(row.indexOf("IconToggleButton") > inlineExit)
+        assertTrue(row.indexOf("PromptOptions(row.title") > inlineExit)
+        assertTrue(row.indexOf("onEdit?.let") > inlineExit)
     }
 
     private fun validateView(source: String) {
@@ -84,6 +87,8 @@ internal class LibraryScreenBoundaryTest {
             it == "ch.lkmc.monkeyspaw.R" || it == "ch.lkmc.monkeyspaw.ui.assistant.ImproveDiffView" ||
             it in setOf("ch.lkmc.monkeyspaw.core.domain.format.FieldKind",
                 "ch.lkmc.monkeyspaw.core.domain.format.PromptRenderError", "ch.lkmc.monkeyspaw.core.services.FillPreview",
+                "ch.lkmc.monkeyspaw.core.domain.format.PromptIssueSeverity",
+                "ch.lkmc.monkeyspaw.core.domain.sync.SyncStatus",
                 "ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance",
                 "ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason",
                 "ch.lkmc.monkeyspaw.core.ports.DeliveryMode",

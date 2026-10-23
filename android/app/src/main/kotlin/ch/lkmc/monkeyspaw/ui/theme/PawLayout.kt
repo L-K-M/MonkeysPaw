@@ -14,6 +14,11 @@ internal object PawSpacing {
 
 internal object PawLayout {
     val touchTarget = 48.dp
+    val pageGutter = 24.dp
+    val iconWell = 40.dp
+    val connectedGap = 2.dp
+    val expandedBreakpoint = 840.dp
+    val navigationWidth = 240.dp
     val readingWidth = 840.dp
     val libraryWidth = 1040.dp
     val contentPadding = PaddingValues(horizontal = PawSpacing.large, vertical = PawSpacing.large)

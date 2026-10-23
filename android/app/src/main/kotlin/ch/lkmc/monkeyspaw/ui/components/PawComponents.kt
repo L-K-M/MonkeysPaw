@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -26,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
+
+internal enum class PawScreenStyle { STANDARD, OVERVIEW }
 
 /** Activity insets are consumed by the host; nested app bars add no second inset. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -38,6 +41,7 @@ internal fun PawScreen(
     bottomBar: @Composable () -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
     contentMaxWidth: Dp = PawLayout.readingWidth,
+    style: PawScreenStyle = PawScreenStyle.STANDARD,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Scaffold(modifier.fillMaxSize().imePadding(), contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -45,7 +49,10 @@ internal fun PawScreen(
         topBar = {
             TopAppBar(title = {
                 Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+                    style = if (style == PawScreenStyle.OVERVIEW) MaterialTheme.typography.headlineLarge
+                        else MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.padding(start = if (style == PawScreenStyle.OVERVIEW && onBack == null)
+                        PawSpacing.small else 0.dp).semantics { heading() })
             }, navigationIcon = {
                 onBack?.let { back ->
                     IconButton(onClick = back) {
@@ -63,6 +70,7 @@ internal fun PawScreen(
 }
 
 internal enum class PawMessageTone { INFO, WARNING, ERROR, SUCCESS }
+internal enum class PawMessageAnnouncement { POLITE, NONE }
 
 @Composable
 internal fun PawMessage(
@@ -71,6 +79,7 @@ internal fun PawMessage(
     tone: PawMessageTone = PawMessageTone.INFO,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    announcement: PawMessageAnnouncement = PawMessageAnnouncement.POLITE,
 ) {
     val colors = MaterialTheme.colorScheme
     val (container, foreground, icon) = when (tone) {
@@ -79,7 +88,9 @@ internal fun PawMessage(
         PawMessageTone.ERROR -> Triple(colors.errorContainer, colors.onErrorContainer, Icons.Rounded.ErrorOutline)
         PawMessageTone.SUCCESS -> Triple(colors.primaryContainer, colors.onPrimaryContainer, Icons.Rounded.CheckCircle)
     }
-    Surface(modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
+    Surface(modifier.fillMaxWidth().semantics {
+        if (announcement == PawMessageAnnouncement.POLITE) liveRegion = LiveRegionMode.Polite
+    },
         shape = MaterialTheme.shapes.medium, color = container, contentColor = foreground) {
         Column(Modifier.padding(PawSpacing.large), verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
             Row(horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium), verticalAlignment = Alignment.Top) {
@@ -96,7 +107,7 @@ internal fun PawMessage(
 @Composable
 internal fun PawSectionHeading(title: String, supportingText: String? = null, modifier: Modifier = Modifier) {
     Column(modifier.padding(top = PawSpacing.small), verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
-        Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
+        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.semantics { heading() })
         supportingText?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
@@ -132,10 +143,16 @@ internal fun PawEmptyState(
 internal fun PawSettingRow(
     title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier,
 ) {
-    ListItem(modifier = modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 76.dp),
+    ListItem(modifier = modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).heightIn(min = 76.dp),
         headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
         supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodyMedium) },
-        leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
+        leadingContent = {
+            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.secondaryContainer) {
+                Box(Modifier.size(PawLayout.iconWell), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                }
+            }
+        },
         trailingContent = { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
         colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow))
 }

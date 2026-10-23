@@ -10,10 +10,11 @@
     <string name="assistant_improve_findings">Selected review findings</string>
     <string name="assistant_improve_no_findings">No current findings selected. Improve will use your instruction alone.</string>
     <string name="assistant_improve_invalid">Fix the editor validation errors before improving it.</string>
-    <string name="assistant_improve_disclosure">Improve sends the current template front matter and body, your instruction and selected findings to the provider shown below when you tap Improve. Explicit retries send the current template and instruction, current findings, session transcript and feedback. Fill previews and remembered values are never sent. Private templates cannot be improved. Providers see what you send. No telemetry.</string>
+    <string name="assistant_improve_disclosure">Improve sends the current template front matter and body, your instruction and selected findings to the provider shown on this screen when you tap Improve. Explicit retries send the current template and instruction, current findings, session transcript and feedback. Fill previews and remembered values are never sent. Private templates cannot be improved. Providers see what you send. No telemetry.</string>
     <string name="assistant_improve_retry_help">Retry sends a fresh template and current instruction with the session transcript and feedback, using the last sent effort. Selected findings are reused only while their source is unchanged.</string>
     <string name="assistant_diff_title">Merged diff</string>
-    <string name="assistant_diff_help">Front matter and body compare separately. Both sides remain available by scrolling horizontally. ↵ marks LF; ␍↵ marks CRLF.</string>
+    <string name="assistant_diff_help">Front matter and body compare separately. Wide screens show both versions side by side; narrower screens show one list of - removed and + added lines, numbered current → candidate. ↵ marks LF; ␍↵ marks CRLF.</string>
+    <string name="assistant_diff_line_numbers">%1$s → %2$s</string>
     <string name="assistant_diff_current">Current</string>
     <string name="assistant_diff_candidate">Candidate</string>
     <string name="assistant_diff_front_matter">Front matter</string>
@@ -22,7 +23,7 @@
     <string name="assistant_diff_warning">Placeholder change</string>
     <string name="assistant_review_title">Review prompt</string>
     <string name="assistant_review_send">Review</string>
-    <string name="assistant_review_disclosure">Review sends the current template front matter and body to the provider shown below when you tap Review. Explicit retries send the current template, session transcript and feedback. Fill previews and remembered values are never sent. Private templates cannot be reviewed. Providers see what you send. No telemetry.</string>
+    <string name="assistant_review_disclosure">Review sends the current template front matter and body to the provider shown on this screen when you tap Review. Explicit retries send the current template, session transcript and feedback. Fill previews and remembered values are never sent. Private templates cannot be reviewed. Providers see what you send. No telemetry.</string>
     <string name="assistant_review_help">Review the current template against the prompt rubric.</string>
     <string name="assistant_review_complete">Review complete. Select findings or show a quote in the editor.</string>
     <string name="assistant_review_stale">These findings refer to an older source. Review again before selecting or highlighting them.</string>
@@ -57,7 +58,7 @@
     <string name="assistant_write_back">Back</string>
     <string name="assistant_write_brief">Describe the reusable prompt you want to write</string>
     <string name="assistant_write_send">Write</string>
-    <string name="assistant_write_disclosure">Write sends your brief to the provider shown below when you tap Write. Explicit retries send the session transcript and feedback. Open templates, Fill previews and remembered values are never sent by Write. Providers see what you send. No telemetry.</string>
+    <string name="assistant_write_disclosure">Write sends your brief to the provider shown on this screen when you tap Write. Explicit retries send the session transcript and feedback. Open templates, Fill previews and remembered values are never sent by Write. Providers see what you send. No telemetry.</string>
     <string name="assistant_effort">Reasoning effort</string>
     <string name="assistant_effort_default">Provider default</string>
     <string name="assistant_effort_low">Low</string>
