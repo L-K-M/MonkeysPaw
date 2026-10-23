@@ -20,6 +20,7 @@ final class MacUITourTests: XCTestCase {
     private var originalMenu: NSMenu?
     private var originalAppearance: NSAppearance?
     private var windowNotes: [String] = []
+    private var statusItem: NSStatusItem?
 
     override func setUpWithError() throws {
         guard let path = ProcessInfo.processInfo.environment[Self.directoryKey], !path.isEmpty else {
@@ -34,6 +35,9 @@ final class MacUITourTests: XCTestCase {
     }
 
     override func tearDown() {
+        statusItem?.menu?.cancelTracking()
+        if let item = statusItem { NSStatusBar.system.remove(item) }
+        statusItem = nil
         delegate?.pickerModel?.dismiss()
         for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
         delegate?.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
@@ -48,14 +52,18 @@ final class MacUITourTests: XCTestCase {
 
         tourOnboarding()
         tourLibrary(appearance: "light")
+        try tourFieldSettings(appearance: "light")
         tourSettings(appearance: "light")
         tourPicker(appearance: "light")
+        try tourStatusItem(appearance: "light")
 
         NSApp.appearance = NSAppearance(named: .darkAqua)
         settle()
         tourLibrary(appearance: "dark")
+        try tourFieldSettings(appearance: "dark")
         tourSettings(appearance: "dark")
         tourPicker(appearance: "dark")
+        try tourStatusItem(appearance: "dark")
 
         try windowNotes.joined(separator: "\n").write(to: output.appendingPathComponent("windows.txt"),
             atomically: true, encoding: .utf8)
@@ -262,6 +270,141 @@ final class MacUITourTests: XCTestCase {
         settle()
     }
 
+    /// The placeholder-settings sheet is a real attached window presented by
+    /// the form. The tour drives it through production intents, records its
+    /// accessibility tree and presses its own controls.
+    private func tourFieldSettings(appearance: String) throws {
+        guard let controller = delegate.libraryWindow, let window = controller.window else {
+            windowNotes.append("field-settings-\(appearance): no library window")
+            XCTFail("The tour's library window is not available")
+            return
+        }
+        let presentation = controller.presentation
+        presentation.editorMode = .edit
+        presentation.selectPath("draft-a-prompt.md")
+        settle()
+        if let decision = presentation.editorState.pendingDecision {
+            presentation.editor.resolveDecision(.save, id: decision.id)
+            settle()
+        }
+        // "success" carries a declared default to inspect; "task" stays
+        // implicit so toggling a default on writes a real declaration.
+        let fieldName = appearance == "dark" ? "task" : "success"
+        guard presentation.canEditFieldSettings, presentation.fieldSettingsDraft == nil,
+              let field = presentation.editorState.form?.fieldSettings.first(where: { $0.name == fieldName }) else {
+            windowNotes.append("field-settings-\(appearance): cannot request settings for \(fieldName)")
+            XCTFail("The tour cannot open placeholder settings for \(fieldName)")
+            return
+        }
+        presentation.requestFieldSettings(field)
+        settle()
+        let sheet = try XCTUnwrap(window.attachedSheet, "requestFieldSettings attaches a real sheet")
+        XCTAssertTrue(sheet.sheetParent === window)
+        capture(sheet, as: "library-\(appearance)-field-settings-sheet")
+        describe(sheet, as: "field-settings-\(appearance)")
+        let elements = describeAccessibility(of: sheet, as: "field-settings-\(appearance)")
+        XCTAssertFalse(elements.isEmpty, "The settings sheet exposes no accessibility elements")
+
+        let named = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-name"))
+        XCTAssertTrue(accessibilityText(named).contains(fieldName), "The sheet must name its field")
+        let type = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-type"))
+        XCTAssertEqual(accessibility(type, #selector(NSAccessibilityProtocol.accessibilityLabel)),
+            EditorStrings.fieldType)
+        if appearance != "dark" {
+            let label = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-label"))
+            XCTAssertEqual(accessibility(label, Selector(("accessibilityValue"))), field.label)
+        }
+        let apply = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-settings-apply"))
+        let cancel = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-settings-cancel"))
+        // A control's accessible name can land in its title instead of its label.
+        XCTAssertEqual(accessibility(apply, Selector(("accessibilityRole"))), "AXButton")
+        XCTAssertTrue(accessibilityText(apply).contains(LibraryFieldStrings.apply))
+        XCTAssertEqual(accessibility(cancel, Selector(("accessibilityRole"))), "AXButton")
+        XCTAssertTrue(accessibilityText(cancel).contains(LibraryDialogStrings.cancel))
+
+        if appearance == "dark" {
+            let draft = try XCTUnwrap(presentation.fieldSettingsDraft)
+            XCTAssertFalse(draft.hasDefault)
+            let toggle = try XCTUnwrap(accessibilityElement(in: sheet, identifier: "library-field-default-toggle"))
+            XCTAssertTrue(accessibilityPress(toggle), "The default toggle does not accept AXPress")
+            settle()
+            XCTAssertTrue(draft.hasDefault, "AXPress on the default toggle did not stage a default")
+            XCTAssertTrue(accessibilityPress(apply), "Apply does not accept AXPress")
+            settle()
+            XCTAssertNil(presentation.fieldSettingsDraft)
+            XCTAssertNil(window.attachedSheet)
+            XCTAssertTrue(presentation.editorState.isDirty, "Applying a staged setting must dirty the draft")
+            presentation.save()
+            settle()
+            XCTAssertFalse(presentation.editorState.isDirty, "The applied setting did not save")
+        } else {
+            XCTAssertTrue(accessibilityPress(cancel), "Cancel does not accept AXPress")
+            settle()
+            XCTAssertNil(presentation.fieldSettingsDraft)
+            XCTAssertNil(window.attachedSheet)
+            XCTAssertFalse(presentation.editorState.isDirty, "Cancel must leave the draft untouched")
+        }
+    }
+
+    /// The real NSStatusItem assembled here once and reused for both passes.
+    /// The button lives in a real status-bar window, so these captures are the
+    /// live menu-bar rendering, not a synthetic MenuBarIcon draw. The
+    /// system-owned menu-bar tint is out of the test's control; the button's
+    /// appearance is forced to match the tour's window passes.
+    private func tourStatusItem(appearance: String) throws {
+        if statusItem == nil {
+            // The isRunningTests launch guard keeps installStatusItem() off, so
+            // the tour builds a real item through the same production seams.
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            statusItem?.button?.image = delegate.makeStatusItemImage()
+            statusItem?.menu = delegate.makeStatusMenu()
+        }
+        let item = try XCTUnwrap(statusItem, "the tour's live status item could not be created")
+        let button = try XCTUnwrap(item.button, "The live status item exposes a real button")
+        let named: NSAppearance.Name = appearance == "dark" ? .darkAqua : .aqua
+        button.appearance = NSAppearance(named: named)
+        settle()
+
+        XCTAssertTrue(item.isVisible)
+        let image = try XCTUnwrap(button.image, "The live status button carries the production image")
+        XCTAssertTrue(image.isTemplate)
+        XCTAssertEqual(image.size, NSSize(width: 18, height: 18))
+        XCTAssertEqual(image.accessibilityDescription, AppIdentity.displayName)
+        let buttonWindow = try XCTUnwrap(button.window, "The live status button is not attached to a window")
+        let axName = button.accessibilityLabel() ?? ""
+        windowNotes.append("status-item-\(appearance): live NSStatusBarButton window=\(type(of: buttonWindow)) "
+            + "frame=\(NSStringFromRect(buttonWindow.frame)) level=\(buttonWindow.level.rawValue) "
+            + "visible=\(buttonWindow.isVisible) axName=\"\(axName)\" "
+            + "effectiveAppearance=\(button.effectiveAppearance.name.rawValue)")
+        XCTAssertFalse(axName.isEmpty, "The live status button needs an accessibility name")
+        capture(buttonWindow, as: "status-item-\(appearance)")
+
+        let shown = Set(NSApp.windows.filter { $0.isVisible }.map(ObjectIdentifier.init))
+        // Menu tracking can block performClick; its run-loop timer owns capture and dismissal.
+        let probe = Timer(timeInterval: Self.settleTime, repeats: false) { [weak self] _ in
+            defer { item.menu?.cancelTracking() }
+            guard let self else { return }
+            let menus = NSApp.windows.filter { $0.isVisible && !shown.contains(ObjectIdentifier($0)) }
+            if menus.isEmpty {
+                self.windowNotes.append("status-menu-\(appearance): no tracking window exposed; menu capture unavailable")
+            }
+            for (index, menuWindow) in menus.enumerated() {
+                menuWindow.appearance = NSAppearance(named: named)
+                self.capture(menuWindow, as: "status-menu-\(appearance)-\(index)")
+                self.describe(menuWindow, as: "status-menu-\(appearance)")
+                self.windowNotes.append("status-menu-\(appearance)-\(index): class=\(type(of: menuWindow))")
+            }
+        }
+        RunLoop.main.add(probe, forMode: .common)
+        RunLoop.main.add(probe, forMode: .eventTracking)
+        defer { probe.invalidate(); item.menu?.cancelTracking() }
+        button.performClick(nil)
+        settle()
+        item.menu?.cancelTracking()
+        settle()
+        button.appearance = nil
+    }
+
     // MARK: - Capture
 
     private func settle(_ seconds: TimeInterval = MacUITourTests.settleTime) {
@@ -338,6 +481,78 @@ final class MacUITourTests: XCTestCase {
         let options = CGWindowImageOption.boundsIgnoreFraming.rawValue | CGWindowImageOption.bestResolution.rawValue
         return function(.null, CGWindowListOption.optionIncludingWindow.rawValue,
                         CGWindowID(window.windowNumber), options)?.takeRetainedValue()
+    }
+
+    // MARK: - Accessibility
+
+    /// In-process NSAccessibility reads only; CI grants no AX trust and these
+    /// checks say nothing about VoiceOver. SwiftUI children can expose the
+    /// selectors without adopting NSAccessibilityProtocol, so reads go through
+    /// responds/perform as in the Settings tests.
+    private func accessibilityElements(in root: NSObject, depth: Int = 14) -> [NSObject] {
+        let children = #selector(NSAccessibilityProtocol.accessibilityChildren)
+        guard depth > 0, root.responds(to: children),
+              let descendants = root.perform(children)?.takeUnretainedValue() as? [Any] else { return [] }
+        return descendants.flatMap { descendant -> [NSObject] in
+            guard let node = descendant as? NSObject else { return [] }
+            return [node] + accessibilityElements(in: node, depth: depth - 1)
+        }
+    }
+
+    private func accessibility(_ element: NSObject, _ selector: Selector) -> String? {
+        guard element.responds(to: selector),
+              let value = element.perform(selector)?.takeUnretainedValue() else { return nil }
+        if let string = value as? String { return string.isEmpty ? nil : string }
+        if let string = value as? NSAttributedString { return string.string.isEmpty ? nil : string.string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    private func accessibilityText(_ element: NSObject) -> String {
+        [#selector(NSAccessibilityProtocol.accessibilityLabel),
+         #selector(NSAccessibilityProtocol.accessibilityTitle),
+         Selector(("accessibilityValue"))]
+            .compactMap { accessibility(element, $0) }
+            .joined(separator: " ")
+    }
+
+    /// Windows may expose their SwiftUI tree through the content view instead.
+    private func accessibilityElements(under window: NSWindow) -> [NSObject] {
+        let elements = accessibilityElements(in: window)
+        if !elements.isEmpty { return elements }
+        guard let contentView = window.contentView else { return [] }
+        return accessibilityElements(in: contentView)
+    }
+
+    private func accessibilityElement(in window: NSWindow, identifier: String) -> NSObject? {
+        // SwiftUI exposes the identifier selector without protocol conformance.
+        accessibilityElements(under: window).first {
+            accessibility($0, Selector(("accessibilityIdentifier"))) == identifier
+        }
+    }
+
+    /// AXPress lands as the control's real action; its BOOL result is not read.
+    private func accessibilityPress(_ element: NSObject) -> Bool {
+        let press = Selector(("accessibilityPerformPress"))
+        guard element.responds(to: press) else { return false }
+        _ = element.perform(press)
+        return true
+    }
+
+    private func describeAccessibility(of window: NSWindow, as name: String) -> [NSObject] {
+        let elements = accessibilityElements(under: window)
+        if elements.isEmpty {
+            windowNotes.append("\(name): no accessibility elements")
+            return elements
+        }
+        for (index, element) in elements.enumerated() {
+            let parts = ["id=\(accessibility(element, Selector(("accessibilityIdentifier"))) ?? "-")",
+                "role=\(accessibility(element, Selector(("accessibilityRole"))) ?? "-")",
+                "label=\(accessibility(element, #selector(NSAccessibilityProtocol.accessibilityLabel)) ?? "-")",
+                "value=\(accessibility(element, Selector(("accessibilityValue"))) ?? "-")"]
+            windowNotes.append("\(name) ax[\(index)]: " + parts.joined(separator: " "))
+        }
+        return elements
     }
 
     // MARK: - Text descriptions
