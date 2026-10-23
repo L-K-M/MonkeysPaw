@@ -21,6 +21,12 @@ data class SyncCounts internal constructor(
     val conflicts: Int = 0, val held: Int = 0, val pending: Int = 0,
 )
 
+/** §26 S9: the last completed provider-settings step outcome on this pass. */
+enum class ProviderSyncOutcome(val rawValue: String) {
+    SYNCED("synced"), UNCHANGED("unchanged"), KEY_REQUIRED("keyRequired"),
+    DECRYPT_FAILED("decryptFailed"), APPLY_FAILED("applyFailed")
+}
+
 /** A partial pass never advances lastSuccess. Enabled is independent of status. */
 class SyncReport internal constructor(
     val enabled: Boolean = false,
@@ -32,6 +38,7 @@ class SyncReport internal constructor(
     val needsSignIn: Boolean = false,
     val offline: Boolean = false,
     val retrying: Boolean = false,
+    val providerSync: ProviderSyncOutcome? = null,
 ) {
     val details = details.syncListCopy()
     val status: SyncStatus get() = when {
@@ -49,12 +56,16 @@ class SyncReport internal constructor(
         counts: SyncCounts = this.counts, details: List<SyncFileDetail> = this.details,
         blockingIssue: SyncBlockingIssue? = this.blockingIssue, needsSignIn: Boolean = this.needsSignIn,
         offline: Boolean = this.offline, retrying: Boolean = this.retrying,
-    ) = SyncReport(enabled, phase, lastSuccess, counts, details, blockingIssue, needsSignIn, offline, retrying)
+        providerSync: ProviderSyncOutcome? = this.providerSync,
+    ) = SyncReport(enabled, phase, lastSuccess, counts, details, blockingIssue, needsSignIn, offline, retrying,
+        providerSync)
 
     override fun equals(other: Any?): Boolean = other is SyncReport && enabled == other.enabled && phase == other.phase &&
         lastSuccess == other.lastSuccess && counts == other.counts && details == other.details &&
-        blockingIssue == other.blockingIssue && needsSignIn == other.needsSignIn && offline == other.offline && retrying == other.retrying
-    override fun hashCode(): Int = listOf(enabled, phase, lastSuccess, counts, details, blockingIssue, needsSignIn, offline, retrying).hashCode()
+        blockingIssue == other.blockingIssue && needsSignIn == other.needsSignIn && offline == other.offline &&
+        retrying == other.retrying && providerSync == other.providerSync
+    override fun hashCode(): Int = listOf(enabled, phase, lastSuccess, counts, details, blockingIssue, needsSignIn,
+        offline, retrying, providerSync).hashCode()
     override fun toString(): String = "<sync report>"
 }
 

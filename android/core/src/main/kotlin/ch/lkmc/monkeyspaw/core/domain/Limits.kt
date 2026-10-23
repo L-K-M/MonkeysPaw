@@ -65,4 +65,12 @@ object Limits {
     // Foundation's provider-state reader accepts at most 512 open containers.
     internal const val providerStateJSONNestingCap = 512
     internal const val providerSettingsJSONNestingCap = 512
+
+    const val providerSyncRecordVersion = 1
+    const val providerSyncKeyBytes = 32
+    const val providerSyncNonceBytes = 12
+    const val providerSyncTagBytes = 16
+    const val providerSyncPayloadMaxBytes = 256 * 1024
+    const val providerSyncSecretEntries = 256
+    const val providerSyncSecretBytes = 64 * 1024
 }

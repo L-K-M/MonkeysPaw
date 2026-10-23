@@ -98,6 +98,19 @@ final class AssistantSettingsProviderFake: AssistantSettingsProviding {
         if let tierError { throw tierError }
         return tiers[id]
     }
+
+    private var observers: [UUID: @Sendable () -> Void] = [:]
+
+    func observe(_ observer: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        observers[id] = observer
+        return id
+    }
+
+    func removeObserver(_ id: UUID) { observers[id] = nil }
+
+    /// Simulates a committed write landing while the model is open.
+    func notifyChanged() { observers.values.forEach { $0() } }
 }
 
 final class AssistantSettingsTestFake: AssistantSettingsTest {

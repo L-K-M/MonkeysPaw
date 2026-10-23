@@ -57,6 +57,9 @@ extension SyncAPI {
         .init(name: RevisionOrigin.schemaName, schema: RevisionOrigin.schema),
         .init(name: Mode.schemaName, schema: Mode.schema),
         .init(name: Severity.schemaName, schema: Severity.schema),
-        .init(name: PromptScope.schemaName, schema: PromptScope.schema)
+        .init(name: PromptScope.schemaName, schema: PromptScope.schema),
+        .init(name: ProviderSettingsDocument.schemaName, schema: ProviderSettingsDocument.schema),
+        .init(name: PutProviderSettingsRequest.schemaName, schema: PutProviderSettingsRequest.schema),
+        .init(name: ProviderSettingsResponse.schemaName, schema: ProviderSettingsResponse.schema)
     ]
 }

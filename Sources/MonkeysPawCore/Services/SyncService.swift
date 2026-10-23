@@ -17,6 +17,7 @@ public final class SyncService {
     private let scheduler: Scheduler
     private let main: MainThread
     private let clock: WallClock
+    private let providerSyncStep: ProviderSyncStep?
     private let freshID: () throws -> ULID
     private let now: () -> ContinuousClock.Instant
     private let lock = NSRecursiveLock()
@@ -43,7 +44,8 @@ public final class SyncService {
     public init(library: LibraryService, libraryOperations: SyncFileOperations,
                 dataFiles: FileStore, dataOperations: SyncFileOperations,
                 states: SyncStateStore, accounts: SyncAccountStore,
-                scheduler: Scheduler, mainThread: MainThread, clock: WallClock, entropy: EntropySource) throws {
+                scheduler: Scheduler, mainThread: MainThread, clock: WallClock, entropy: EntropySource,
+                providerSettings: ProviderSyncInput? = nil) throws {
         files = dataFiles
         self.states = states
         self.accounts = accounts
@@ -54,6 +56,10 @@ public final class SyncService {
         self.scheduler = scheduler
         main = mainThread
         self.clock = clock
+        providerSyncStep = providerSettings.map {
+            ProviderSyncStep(files: dataFiles, operations: dataOperations,
+                providers: $0.providers, keys: $0.keys, entropy: entropy)
+        }
         freshID = { try ULID.generate(at: clock.now(), entropy: entropy.bytes(count: Limits.ulidEntropyBytes)) }
         now = { ContinuousClock.now }
     }
@@ -74,6 +80,7 @@ public final class SyncService {
         self.clock = clock
         self.freshID = freshID
         self.now = now
+        providerSyncStep = nil
     }
 
     public var report: SyncReport { locked { current } }
@@ -392,6 +399,7 @@ public final class SyncService {
         guard let session else { return nil }
         return try SyncCoordinator(binding: session.binding, epoch: epoch, client: session.client,
             files: files, states: states, accounts: accounts, mutations: mutations, journal: journal, pending: pending,
+            providerSettings: providerSyncStep,
             device: session.device, freshID: freshID, date: clock.now, now: now)
     }
 
@@ -413,6 +421,7 @@ public final class SyncService {
                         guard let self, self.epoch == generation, self.eligible else { return }
                         self.current.counts = result.counts
                         self.current.details = result.details
+                        if let outcome = result.providerSync { self.current.providerSync = outcome }
                         self.publish()
                     }
                 }) { [weak self] phase in self?.setPhase(phase, epoch: generation) }

@@ -35,6 +35,9 @@ snapshots(database_id, scope_key, head_seq, manifest BLOB, created_at, expires_a
 snapshot_cursor_key(singleton PK CHECK(singleton = 1), secret BLOB)
                                          -- durable 256-bit HMAC key, never sent or logged
 devices(id, user_id, name, token_hash UNIQUE, created_at, last_seen_at, revoked_at NULL)
+provider_settings(user_id PK FK users, rev INTEGER CHECK (rev >= 1),
+                  document,                       -- opaque base64url ciphertext (§26 S5)
+                  updated_at)
 invites(token_hash PK, group_id NULL, role NULL, created_by, expires_at, consumed_at NULL)
 login_account_buckets(username PK, failures, locked_until NULL, updated_at)
 login_ip_buckets(ip PK, failures, locked_until NULL, updated_at)
@@ -86,6 +89,12 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 - **One blob column.** `content` is the whole canonical file, so end-to-end
   encryption could be added later as an opaque payload without a schema
   break.
+- **Provider settings.** One row per user holds the encrypted provider
+  settings document (§26). `rev` is a monotone ordering cursor raised by
+  every accepted PUT; it is not a write precondition, so concurrent PUTs
+  resolve by commit order (last writer wins). The server never decodes
+  `document`: it enforces only the wire grammar (unpadded base64url,
+  bounded length) and stores the ciphertext verbatim.
 - **Retention.** Change rows and tombstones older than
   `CHANGE_RETENTION_DAYS = 90` are purged, and `scope_floors` is raised in
   the same transaction.
@@ -223,6 +232,8 @@ CREATE UNIQUE INDEX prompts_group_path ON prompts(group_id, path_key) WHERE dele
 | `POST /api/v1/auth/password` `{current_password, new_password}` | Change own password; revokes all other devices; `200 {}` (B9) |
 | `GET /api/v1/me` | `{user, groups, devices}`; caller's own devices only, including revoked devices (B9) |
 | `DELETE /api/v1/me/devices/{id}` | Revoke a caller device; `200 {}` (B9) |
+| `GET /api/v1/me/provider-settings` | `{rev, document, updated_at}`; `rev` 0 and null fields when none exists (§26 S1) |
+| `PUT /api/v1/me/provider-settings` `{document}` | Unconditional store of opaque ciphertext; `200 {rev}` (§26 S1/S2) |
 | `POST /api/v1/sync/pull` `{database_id, cursors: {scope_key: cursor}}` | Per-scope feed (§8.4). Cursors are opaque strings: a seq, or `snap:…` for an unfinished snapshot. |
 | `GET /api/v1/prompts/{id}` | `{id, rev, scope, group_id?, path, content}`, or 404 out of scope or tombstoned (B13) |
 | `PUT /api/v1/prompts/{id}` `{base_rev, scope, group_id?, path, content}` | Create (`base_rev: 0`) or update with compare-and-swap. On update, `scope` and `group_id` must equal the current values; scope changes go through `/move`. |

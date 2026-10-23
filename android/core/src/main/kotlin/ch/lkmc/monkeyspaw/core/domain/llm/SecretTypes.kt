@@ -1,5 +1,7 @@
 package ch.lkmc.monkeyspaw.core.domain.llm
 
+import ch.lkmc.monkeyspaw.core.domain.ULID
+
 /** AndroidKeyStore encryption, with no plaintext fallback. This tier alone does not prove hardware backing. */
 enum class SecretTier(val rawValue: String) { KEYSTORE("keystore") }
 
@@ -16,6 +18,8 @@ data class SecretAccount(val namespace: String, val name: String) {
         private const val accountCharacters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_."
 
         fun provider(id: ProviderProfileID): SecretAccount = SecretAccount("provider", id.rawValue)
+
+        fun providerSync(userID: ULID): SecretAccount = SecretAccount("provider-sync", userID.rawValue)
 
         fun device(id: java.util.UUID): SecretAccount = SecretAccount("device", id.toString())
 

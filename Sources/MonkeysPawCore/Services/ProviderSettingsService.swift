@@ -24,6 +24,14 @@ public final class ProviderSettingsService {
 
     public var snapshot: ProviderSettingsSnapshot { store.snapshot }
 
+    /// §26 S10: remote applies and committed edits notify on the UI-agnostic
+    /// observer path. Call from composition; the token removes the observer.
+    @discardableResult public func observe(_ observer: @escaping @Sendable () -> Void) -> UUID {
+        store.observe(observer)
+    }
+
+    public func removeObserver(_ id: UUID) { store.removeObserver(id) }
+
     public func save(_ draft: ProviderDraft) throws {
         var undo: (() throws -> Void)?
         try store.update({ settings in
@@ -103,6 +111,54 @@ public final class ProviderSettingsService {
                                       modelID: profile.modelID, key: key)
         }
     }
+
+    /// §26 S4/S6: the stored object verbatim, plus the persisted bound envelope
+    /// for each referenced account. A missing persisted value falls back to the
+    /// last decrypted remote document; environment overrides never upload.
+    func exportSyncPayload(remoteSecrets: [String: String]) throws -> ProviderSyncPayload {
+        try store.withDocument { object, settings in
+            let stored = object.isEmpty ? ProviderSettingsService.defaultObject : object
+            var secrets: [String: String] = [:]
+            for profile in settings.profiles {
+                guard let account = profile.secretReference, account.namespace == "provider" else { continue }
+                if let persisted = try readSecret(account, source: .persisted) {
+                    persisted.value.withValue { secrets[account.rawValue] = $0 }
+                } else if let carried = remoteSecrets[account.rawValue] {
+                    secrets[account.rawValue] = carried
+                }
+            }
+            return ProviderSyncPayload(settings: stored, secrets: secrets)
+        }
+    }
+
+    /// §26 S7: write the payload's secrets for referenced provider accounts and
+    /// drop local provider secrets the remote metadata no longer references,
+    /// then commit the metadata object verbatim.
+    func applySynced(settings object: [String: Any], secrets payload: [String: String]) throws {
+        try store.applySynced(object) { current, remote in
+            let referenced = Set(remote.profiles.compactMap(\.secretReference).filter { $0.namespace == "provider" })
+            for account in referenced {
+                guard let envelope = payload[account.rawValue] else { continue }
+                // An environment override pins the device; leave it alone.
+                if try readForEdit(account, source: .effective).stored?.tier == .environment { continue }
+                do { _ = try secrets.write(SecretValue(envelope), account: account) }
+                catch let error as SecretStoreError { throw ProviderSettingsError.secret(error) }
+                catch { throw ProviderSettingsError.secret(.writeFailed) }
+            }
+            let previous = Set(current.profiles.compactMap(\.secretReference).filter { $0.namespace == "provider" })
+            for account in previous.subtracting(referenced) {
+                do { try secrets.delete(account: account) }
+                catch let error as SecretStoreError { throw ProviderSettingsError.secret(error) }
+                catch { throw ProviderSettingsError.secret(.deleteFailed) }
+            }
+        }
+    }
+
+    /// A missing file exports the canonical empty settings document.
+    static let defaultObject: [String: Any] = [
+        "version": ProviderSettings.currentVersion, "profiles": [[String: Any]](),
+        "selectedProfileID": NSNull(),
+    ]
 
     /// UI receives a tier without receiving the stored value.
     public func secretTier(for id: ProviderProfileID) throws -> SecretTier? {

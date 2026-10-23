@@ -39,6 +39,8 @@ public struct SyncReport: Equatable, Sendable {
     public internal(set) var needsSignIn = false
     public internal(set) var offline = false
     public internal(set) var retrying = false
+    /// §26 S9: the latest pass's provider-settings step outcome, if configured.
+    public internal(set) var providerSync: ProviderSyncOutcome?
 
     public var status: SyncStatus {
         if needsSignIn { return .needsSignIn }

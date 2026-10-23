@@ -276,6 +276,20 @@ saves, and on demand.
    local file (read + hash) immediately before replacing it, under a
    per-file lock. An edit made in between is never lost: it becomes a
    conflict.
+5. **Provider settings.** After the prompt push phase, the same pass runs
+   the §26 step under the same work permit: `GET` the account's provider
+   document, decrypt it with the provisioned `provider-sync` key, apply a
+   newer `rev` (metadata plus the referenced credential envelopes),
+   re-export local settings carrying forward any remote secret envelopes
+   the local store lacks, and `PUT` the sealed document when it differs
+   from the `sync/provider-settings.json` baseline record. The server
+   `rev` is an ordering cursor: there is no precondition and the last
+   committing writer wins. A missing key reports `keyRequired`;
+   decrypt/apply failures produce typed outcomes on the pass result and
+   leave the baseline untouched, so the next pass resumes from the last
+   acknowledged `rev`. Transport/auth failures propagate like any pass
+   failure. A successful apply notifies the open settings surfaces to
+   reload.
 
 Errors back off exponentially from `SYNC_BACKOFF_MIN = 5 s` to
 `SYNC_BACKOFF_MAX = 10 min`. `401` stops syncing and asks the user to sign

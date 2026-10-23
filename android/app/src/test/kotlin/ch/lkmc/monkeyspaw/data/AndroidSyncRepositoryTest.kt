@@ -86,6 +86,8 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
                     listOf(Device(deviceID, "Android", timestamp, null, null, true)))))
                 request.url.endsWith("/auth/logout") -> HttpResponse(200, body = EmptyResponse.codec.encode(EmptyResponse))
                 request.url.endsWith("/sync/pull") -> pull()
+                request.url.endsWith("/me/provider-settings") -> HttpResponse(200,
+                    body = ProviderSettingsDocument.codec.encode(ProviderSettingsDocument(0, null, timestamp)))
                 request.method == HttpMethod.PUT -> {
                     val put = PutPromptRequest.codec.decode(request.body!!)
                     val id = request.url.substringAfterLast('/')
@@ -98,7 +100,9 @@ internal class AndroidSyncRepositoryTest : TemporaryFiles() {
         }
         val sync = AppModule.syncRepository(startup, library, repository, scope, dispatcher,
             Clock { Instant.ofEpochMilli(workTime) }, Entropy { ByteArray(it) { index -> index.toByte() } }, mono,
-            Lazy { secretConstructions++; secrets }, Lazy { transportConstructions++; transport }, settings, hooks)
+            Lazy { secretConstructions++; secrets }, Lazy { transportConstructions++; transport },
+            Lazy { ProviderSettingsService(ProviderSettingsStore(files), secrets, dispatcher) },
+            Lazy { ProviderSyncKeyService(secrets, Entropy { count -> ByteArray(count) }) }, settings, hooks)
 
         private fun user() = User(userID, "person", null, AccountKind.MEMBER, timestamp, null)
         private fun pull(): HttpResponse {

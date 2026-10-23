@@ -45,6 +45,15 @@ final class LinuxAssistantSettingsPage {
     private var test: GTK.Widget!
     private var cancelTest: GTK.Widget!
     private var refresh: GTK.Widget!
+    private var syncSection: GTK.Widget!
+    private var syncStatus: GTK.Widget!
+    private var syncNotice: GTK.Widget!
+    private var syncReveal: GTK.Widget!
+    private var syncEntry: GTK.Widget!
+    private var syncGenerate: GTK.Widget!
+    private var syncEnter: GTK.Widget!
+    private var syncRemove: GTK.Widget!
+    private var syncDismissReveal: GTK.Widget!
 
     init(makeModel: @escaping () -> AssistantSettingsModel?) {
         self.makeModel = makeModel
@@ -131,6 +140,50 @@ final class LinuxAssistantSettingsPage {
         refresh = button("settings-assistant-refresh", title: LinuxAssistantSettingsStrings.refresh, in: column) { $0.refresh() }
         gtk_widget_set_halign(refresh, GTK_ALIGN_START)
 
+        let syncGroup = LinuxSettingsLayout.group(LinuxAssistantSettingsStrings.syncGroup, in: column)
+        syncSection = syncGroup
+        syncStatus = LinuxSettingsLayout.caption(name: "settings-assistant-sync-status", in: syncGroup)
+        syncNotice = LinuxSettingsLayout.caption(name: "settings-assistant-sync-notice", in: syncGroup)
+        gtk_widget_add_css_class(syncNotice, "error")
+        syncReveal = gtk_label_new(nil)!
+        gtk_widget_set_name(syncReveal, "settings-assistant-sync-reveal")
+        gtk_label_set_selectable(mp_label(syncReveal), 1)
+        gtk_label_set_wrap(mp_label(syncReveal), 1)
+        gtk_widget_set_visible(syncReveal, 0)
+        gtk_box_append(mp_box(syncGroup), syncReveal)
+        syncEntry = Self.entryRow("settings-assistant-sync-entry",
+            title: LinuxAssistantSettingsStrings.syncEnter, in: syncGroup)
+        gtk_entry_set_visibility(mp_entry(syncEntry), 0)
+        gtk_entry_set_input_purpose(mp_entry(syncEntry), GTK_INPUT_PURPOSE_PASSWORD)
+        gtk_entry_set_placeholder_text(mp_entry(syncEntry), LinuxAssistantSettingsStrings.syncEntryPlaceholder)
+        let syncButtons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
+        gtk_box_append(mp_box(syncGroup), syncButtons)
+        syncGenerate = GTK.button(LinuxAssistantSettingsStrings.syncGenerate) { [weak self] in
+            self?.model?.syncKey?.generate()
+        }
+        gtk_widget_set_name(syncGenerate, "settings-assistant-sync-generate")
+        mp_accessible_label(syncGenerate, LinuxAssistantSettingsStrings.syncGenerate)
+        gtk_box_append(mp_box(syncButtons), syncGenerate)
+        syncEnter = GTK.button(LinuxAssistantSettingsStrings.syncEnter) { [weak self] in
+            guard let self else { return }
+            self.model?.syncKey?.enterKey(String(cString: mp_entry_text(self.syncEntry)))
+        }
+        gtk_widget_set_name(syncEnter, "settings-assistant-sync-enter")
+        mp_accessible_label(syncEnter, LinuxAssistantSettingsStrings.syncEnter)
+        gtk_box_append(mp_box(syncButtons), syncEnter)
+        syncRemove = GTK.button(LinuxAssistantSettingsStrings.syncRemove) { [weak self] in
+            self?.model?.syncKey?.remove()
+        }
+        gtk_widget_set_name(syncRemove, "settings-assistant-sync-remove")
+        mp_accessible_label(syncRemove, LinuxAssistantSettingsStrings.syncRemove)
+        gtk_box_append(mp_box(syncButtons), syncRemove)
+        syncDismissReveal = GTK.button(LinuxAssistantSettingsStrings.syncDismissReveal) { [weak self] in
+            self?.model?.syncKey?.dismissRevealed()
+        }
+        gtk_widget_set_name(syncDismissReveal, "settings-assistant-sync-dismiss")
+        mp_accessible_label(syncDismissReveal, LinuxAssistantSettingsStrings.syncDismissReveal)
+        gtk_box_append(mp_box(syncButtons), syncDismissReveal)
+
         GTK.onRow(profiles, "row-selected") { [weak self] index in
             guard let self, !self.isRendering, self.canChangeProfiles, let index,
                   self.renderedProfiles.indices.contains(index) else { return }
@@ -167,6 +220,7 @@ final class LinuxAssistantSettingsPage {
             self?.refreshIfNeeded()
             self?.render()
         }
+        model?.syncKey?.onChange = { [weak self] in self?.render() }
         refreshIfNeeded()
         render()
     }
@@ -176,6 +230,7 @@ final class LinuxAssistantSettingsPage {
         guard isShown || reason == .destroyed else { return }
         isShown = false
         model?.onChange = nil
+        model?.syncKey?.onChange = nil
         model?.cancelTest()
         model?.keepKey()
         keyInputReset = nil
@@ -274,6 +329,24 @@ final class LinuxAssistantSettingsPage {
         }
         setMessage(error, messages.isEmpty ? nil : messages.joined(separator: "\n"))
         setMessage(testResult, state?.testResult.map(LinuxAssistantSettingsStrings.testResult))
+
+        let sync = model?.syncKey
+        gtk_widget_set_visible(syncSection, isShown && sync != nil ? 1 : 0)
+        if let keyState = sync?.state {
+            setMessage(syncStatus, LinuxAssistantSettingsStrings.syncStatus(keyState.status))
+            setMessage(syncNotice, keyState.notice.map(LinuxAssistantSettingsStrings.syncNotice))
+            gtk_label_set_text(mp_label(syncReveal), keyState.revealedKey.map {
+                LinuxAssistantSettingsStrings.syncReveal + "\n" + $0
+            } ?? "")
+            gtk_widget_set_visible(syncReveal, keyState.revealedKey != nil ? 1 : 0)
+            let busy = keyState.busy
+            gtk_widget_set_sensitive(syncGenerate, !busy ? 1 : 0)
+            gtk_widget_set_sensitive(syncEnter, !busy ? 1 : 0)
+            gtk_widget_set_sensitive(syncEntry, !busy ? 1 : 0)
+            gtk_widget_set_sensitive(syncRemove, !busy && keyState.status != .noAccount
+                && keyState.status != .missing ? 1 : 0)
+            gtk_widget_set_sensitive(syncDismissReveal, keyState.revealedKey != nil ? 1 : 0)
+        }
 
         for control in [profiles, add!, disable!] { gtk_widget_set_sensitive(control, canChangeProfiles ? 1 : 0) }
         gtk_widget_set_sensitive(delete, canChangeProfiles && draft != nil ? 1 : 0)

@@ -2,13 +2,17 @@ package ch.lkmc.monkeyspaw.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.services.AssistantConnectionService
 import ch.lkmc.monkeyspaw.core.services.AssistantConnectionTest
 import ch.lkmc.monkeyspaw.core.services.ProviderSettingsService
+import ch.lkmc.monkeyspaw.core.services.ProviderSyncKeyError
+import ch.lkmc.monkeyspaw.core.services.ProviderSyncKeyService
 import ch.lkmc.monkeyspaw.di.ApplicationScope
 import ch.lkmc.monkeyspaw.di.AssistantProviderChanges
 import ch.lkmc.monkeyspaw.di.IoDispatcher
+import ch.lkmc.monkeyspaw.di.SyncAccountUser
 import dagger.Lazy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.*
@@ -24,6 +28,8 @@ internal class AssistantSettingsViewModel @Inject constructor(
     @IoDispatcher private val worker: CoroutineDispatcher,
     @ApplicationScope private val applicationScope: CoroutineScope,
     private val providerChanges: AssistantProviderChanges,
+    private val syncKeys: Lazy<ProviderSyncKeyService>,
+    private val syncAccount: SyncAccountUser,
 ) : ViewModel() {
     private enum class KeyInputHandling { PRESERVE, RESET }
 
@@ -34,7 +40,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
     private var picker: AssistantModelPickerState? = null
     private var connectionService: AssistantConnectionService? = null
     private var isOpen = false
-    private var operation: AssistantSettingsOperation? = null
+    @Volatile private var operation: AssistantSettingsOperation? = null
     private var error: ProviderSettingsError? = null
     private var keyStorage: AssistantKeyStorage = AssistantKeyStorage.None
     private var keyInputReset = 0L
@@ -46,6 +52,13 @@ internal class AssistantSettingsViewModel @Inject constructor(
     private var activeTest: ConnectionTestRequestID? = null
     private var test: AssistantConnectionTest? = null
     private var alive = true
+    private var syncKey = AssistantSyncKey()
+    private var syncKeyInput = ""
+    private var syncKeyInputReset = 0L
+    private var syncKeyRevision = 0L
+    private var syncKeyJob: Job? = null
+    private var observedSettings: ProviderSettingsService? = null
+    private var storeObserver: Long? = null
     private val canChangeProfiles: Boolean get() = operation == null && !snapshot.isReadOnly
     private val canEditDraft: Boolean get() = draft != null && !snapshot.isReadOnly &&
         (operation == null || operation == AssistantSettingsOperation.SAVING)
@@ -66,6 +79,10 @@ internal class AssistantSettingsViewModel @Inject constructor(
         isOpen = false
         keyStorage = AssistantKeyStorage.None
         error = null
+        syncKeyInput = ""
+        syncKeyRevision++
+        syncKeyJob?.cancel()
+        syncKey = syncKey.copy(notice = null, revealedKey = null)
         if (operation == AssistantSettingsOperation.LOADING) operation = null
         publish()
     }
@@ -80,7 +97,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
         if (!isOpen || navigation != navigationRevision) return
         loadJob = viewModelScope.launch {
             // Hilt's Lazy keeps synchronous ProviderSettingsStore construction off UI.
-            val loaded = try { withContext(worker) { settings.get().snapshot to testing.get() } }
+            val loaded = try { withContext(worker) { settings.get().let { it to (it.snapshot to testing.get()) } } }
             catch (failure: CancellationException) { throw failure }
             catch (failure: Exception) {
                 if (navigation != navigationRevision) return@launch
@@ -93,12 +110,26 @@ internal class AssistantSettingsViewModel @Inject constructor(
                 return@launch
             }
             if (navigation != navigationRevision) return@launch
-            snapshot = loaded.first
-            connectionService = loaded.second
+            // A remote apply rewrites the file out-of-band; the open page reloads.
+            if (storeObserver == null) {
+                observedSettings = loaded.first
+                storeObserver = loaded.first.observeChanges { onSettingsStoreChange() }
+            }
+            snapshot = loaded.second.first
+            connectionService = loaded.second.second
             operation = null
             error = snapshot.readOnlyError
             useDraft(selectedDraft())
             reloadStorage()
+            refreshSyncKey()
+        }
+    }
+
+    /** Store writes during an admitted operation are covered by its completion. */
+    private fun onSettingsStoreChange() {
+        if (operation != null || !alive) return
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+            if (alive && isOpen && operation == null) refresh()
         }
     }
 
@@ -187,6 +218,77 @@ internal class AssistantSettingsViewModel @Inject constructor(
     }
 
     fun cancelTest() { stopTest(); publish() }
+
+    /** Raw entry text stays in the ViewModel until Enter commits it, like the draft key. */
+    fun setSyncKeyInput(text: String) { syncKeyInput = text }
+    fun syncKeyGenerate() = syncKeyOperation { keys, userID -> keys.generateKey(userID) }
+    fun syncKeyEnter() { val text = syncKeyInput; syncKeyOperation { keys, userID -> keys.enterKey(userID, text) } }
+    fun syncKeyRemove() = syncKeyOperation { keys, userID -> keys.removeKey(userID); null }
+
+    fun syncKeyDismissReveal() {
+        if (syncKey.revealedKey == null) return
+        syncKey = syncKey.copy(revealedKey = null)
+        publish()
+    }
+
+    private fun refreshSyncKey() {
+        val revision = ++syncKeyRevision
+        syncKeyJob?.cancel()
+        syncKeyJob = viewModelScope.launch {
+            val status = try { withContext(worker) { readSyncKeyStatus() } }
+            catch (error: CancellationException) { throw error }
+            catch (error: Exception) { AssistantSyncKeyStatus.UNAVAILABLE }
+            if (!alive || revision != syncKeyRevision) return@launch
+            syncKey = syncKey.copy(status = status, busy = false)
+            publish()
+        }
+    }
+
+    private suspend fun readSyncKeyStatus(): AssistantSyncKeyStatus {
+        val userID = try { syncAccount.userID() }
+        catch (error: CancellationException) { throw error }
+        catch (error: Exception) { return AssistantSyncKeyStatus.UNAVAILABLE }
+            ?: return AssistantSyncKeyStatus.NO_ACCOUNT
+        return try {
+            if (syncKeys.get().tier(userID) != null) AssistantSyncKeyStatus.PROVISIONED else AssistantSyncKeyStatus.MISSING
+        } catch (error: CancellationException) { throw error }
+        catch (error: Exception) { AssistantSyncKeyStatus.UNAVAILABLE }
+    }
+
+    /** Accepted key operations outlive this screen and ViewModel, like profile saves. */
+    private fun syncKeyOperation(operation: suspend (ProviderSyncKeyService, ULID) -> String?) {
+        if (syncKey.busy) return
+        val revision = ++syncKeyRevision
+        syncKeyJob?.cancel()
+        syncKey = syncKey.copy(busy = true, notice = null, revealedKey = null)
+        val previousStatus = syncKey.status
+        publish()
+        applicationScope.launch(worker) {
+            var status = previousStatus
+            var revealed: String? = null
+            var notice: AssistantSyncKeyNotice? = null
+            try {
+                val userID = syncAccount.userID()
+                if (userID == null) status = AssistantSyncKeyStatus.NO_ACCOUNT
+                else {
+                    revealed = operation(syncKeys.get(), userID)
+                    status = readSyncKeyStatus()
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (error: ProviderSyncKeyError) {
+                notice = if (error is ProviderSyncKeyError.InvalidKey) AssistantSyncKeyNotice.INVALID_KEY
+                    else AssistantSyncKeyNotice.OPERATION_FAILED
+            } catch (error: Exception) { notice = AssistantSyncKeyNotice.OPERATION_FAILED }
+            withContext(Dispatchers.Main.immediate) {
+                if (!alive || revision != syncKeyRevision) return@withContext
+                syncKeyInput = ""
+                syncKeyInputReset++
+                syncKey = syncKey.copy(status = status, busy = false, notice = notice,
+                    revealedKey = revealed, inputReset = syncKeyInputReset)
+                publish()
+            }
+        }
+    }
 
     private fun editDraft(keyInput: KeyInputHandling = KeyInputHandling.PRESERVE, edit: (ProviderDraft) -> ProviderDraft) {
         if (!isOpen || !canEditDraft) return
@@ -296,12 +398,15 @@ internal class AssistantSettingsViewModel @Inject constructor(
                 ProviderKeyEdit.Clear -> AssistantKeyEdit.CLEAR
                 is ProviderKeyEdit.Replace -> AssistantKeyEdit.REPLACE
             }, availableModels = picker?.availableModels.orEmpty(), testResult = picker?.lastResult,
-            isTesting = picker?.isTesting == true)
+            isTesting = picker?.isTesting == true, syncKey = syncKey.copy(inputReset = syncKeyInputReset))
     }
 
     override fun onCleared() {
         alive = false
         close()
+        storeObserver?.let { observedSettings?.removeObserver(it) }
+        storeObserver = null
+        observedSettings = null
         connectionService = null
         super.onCleared()
     }

@@ -32,6 +32,7 @@ func makeApplication(
         GroupRoutes(groups: groups ?? .init(database: accounts.repository.database, clock: accounts.clock), sessions: sessions).add(to: router)
         InviteRoutes(invites: invites ?? .init(accounts: accounts, sessions: sessions, publicURL: configuration.publicURL), sessions: sessions).add(to: router)
         PromptRoutes(prompts: prompts ?? .init(database: accounts.repository.database, clock: accounts.clock), sessions: sessions).add(to: router)
+        ProviderSettingsRoutes(settings: .init(database: accounts.repository.database, clock: accounts.clock), sessions: sessions).add(to: router)
         SyncFeedRoutes(feed: .init(database: accounts.repository.database, clock: accounts.clock), sessions: sessions).add(to: router)
     }
 

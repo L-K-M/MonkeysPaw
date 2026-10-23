@@ -35,6 +35,13 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
     private val models = ViewModelStore()
     private val changes = AssistantProviderChanges()
     private val secrets = TestSecrets { assertTrue(onWorker, "Secret IO must run on the worker") }
+    private val userID = ch.lkmc.monkeyspaw.core.domain.ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAV")!!
+    private var accountUserID: ch.lkmc.monkeyspaw.core.domain.ULID? = null
+    private val syncAccount = ch.lkmc.monkeyspaw.di.SyncAccountUser { assertTrue(onWorker); accountUserID }
+    private val syncKeys = lazy {
+        assertTrue(onWorker)
+        ProviderSyncKeyService(secrets, ch.lkmc.monkeyspaw.core.ports.Entropy { count -> ByteArray(count) { i -> i.toByte() } })
+    }
     private var writes = 0
     private var writeFailure: Exception? = null
     private val files by lazy {
@@ -547,7 +554,7 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
             assertTrue(onWorker)
             if (!failed) { failed = true; throw IllegalStateException("Unavailable storage graph") }
             settings.value
-        }, Lazy { testing.value }, worker, applicationScope, changes)
+        }, Lazy { testing.value }, worker, applicationScope, changes, Lazy { syncKeys.value }, syncAccount)
         models.put(UUID.randomUUID().toString(), model)
         model.open(); runCurrent()
         assertNull(model.state.value.operation)
@@ -581,7 +588,7 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
             assertTrue(onWorker)
             if (unavailable) throw IllegalStateException("Unavailable storage graph")
             settings.value
-        }, Lazy { testing.value }, worker, applicationScope, changes)
+        }, Lazy { testing.value }, worker, applicationScope, changes, Lazy { syncKeys.value }, syncAccount)
         models.put(UUID.randomUUID().toString(), model)
         model.open(); runCurrent(); model.addProfile(); model.setKeyInput("staged")
         unavailable = true
@@ -598,8 +605,87 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertNotNull(model.state.value.draft)
     }
 
+    @Test fun `sync key reports account status and generate reveals once`() = runTest(scheduler) {
+        val model = model()
+        assertEquals(AssistantSyncKeyStatus.NO_ACCOUNT, model.state.value.syncKey.status)
+        model.syncKeyGenerate(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.NO_ACCOUNT, model.state.value.syncKey.status)
+        accountUserID = userID
+        model.refresh(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.MISSING, model.state.value.syncKey.status)
+        model.syncKeyGenerate(); runCurrent()
+        val state = model.state.value.syncKey
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, state.status)
+        assertEquals(43, state.revealedKey!!.length)
+        assertEquals(state.revealedKey,
+            secrets.values[SecretAccount.providerSync(userID)]!!.withValue { it })
+        model.syncKeyDismissReveal()
+        assertNull(model.state.value.syncKey.revealedKey)
+        model.close(); model.open(); runCurrent()
+        assertNull(model.state.value.syncKey.revealedKey)
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, model.state.value.syncKey.status)
+        model.syncKeyRemove(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.MISSING, model.state.value.syncKey.status)
+        assertNull(secrets.values[SecretAccount.providerSync(userID)])
+    }
+
+    @Test fun `sync key entry validates input and publishes the normalized reveal`() = runTest(scheduler) {
+        accountUserID = userID
+        val model = model()
+        assertEquals(AssistantSyncKeyStatus.MISSING, model.state.value.syncKey.status)
+        model.setSyncKeyInput("not-a-key")
+        model.syncKeyEnter(); runCurrent()
+        assertEquals(AssistantSyncKeyNotice.INVALID_KEY, model.state.value.syncKey.notice)
+        assertEquals(AssistantSyncKeyStatus.MISSING, model.state.value.syncKey.status)
+        val key = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(ByteArray(32) { it.toByte() })
+        model.setSyncKeyInput(key)
+        model.syncKeyEnter(); runCurrent()
+        assertEquals(key, model.state.value.syncKey.revealedKey)
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, model.state.value.syncKey.status)
+        assertNull(model.state.value.syncKey.notice)
+    }
+
+    @Test fun `sync key secret failures surface typed notices`() = runTest(scheduler) {
+        accountUserID = userID
+        secrets.readError = IllegalStateException("store down")
+        val model = model()
+        assertEquals(AssistantSyncKeyStatus.UNAVAILABLE, model.state.value.syncKey.status)
+        secrets.readError = null
+        model.refresh(); runCurrent()
+        model.syncKeyGenerate(); runCurrent()
+        secrets.deleteError = SecretStoreError.DeleteFailed
+        model.syncKeyRemove(); runCurrent()
+        assertEquals(AssistantSyncKeyNotice.OPERATION_FAILED, model.state.value.syncKey.notice)
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, model.state.value.syncKey.status)
+    }
+
+    @Test fun `out-of-band provider settings writes reload the open page`() = runTest(scheduler) {
+        val first = seed()
+        val model = model()
+        assertEquals(first.id, model.state.value.draft!!.id)
+        withContext(worker) { settings.value.selectProfile(null) }
+        runCurrent()
+        assertNull(model.state.value.draft)
+        assertNull(model.state.value.selectedProfileID)
+        withContext(worker) { settings.value.selectProfile(first.id) }
+        runCurrent()
+        assertEquals(first.id, model.state.value.selectedProfileID)
+    }
+
+    @Test fun `local writes during an admitted save keep newer staged edits`() = runTest(scheduler) {
+        val model = model()
+        model.addProfile(); model.setKeyInput("k")
+        secrets.writeGate = CompletableDeferred()
+        model.save(); runCurrent()
+        model.renameProfile("Newer")
+        secrets.writeGate!!.complete(Unit); runCurrent()
+        assertEquals("Newer", model.state.value.draft!!.displayName)
+    }
+
     private fun model(service: ProviderSettingsService? = null): AssistantSettingsViewModel {
-        val model = AssistantSettingsViewModel(Lazy { service ?: settings.value }, Lazy { testing.value }, worker, applicationScope, changes)
+        val model = AssistantSettingsViewModel(Lazy { service ?: settings.value }, Lazy { testing.value }, worker,
+            applicationScope, changes, Lazy { syncKeys.value }, syncAccount)
         models.put(UUID.randomUUID().toString(), model)
         model.open()
         scheduler.runCurrent()

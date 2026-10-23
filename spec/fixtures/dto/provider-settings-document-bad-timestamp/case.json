@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "category": "dto",
+  "dto": "ProviderSettingsDocument",
+  "source": "body.json",
+  "expected": {
+    "valid": false
+  }
+}

@@ -10,6 +10,7 @@ import ch.lkmc.monkeyspaw.core.ports.*
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.data.*
 import ch.lkmc.monkeyspaw.di.AppModule
+import ch.lkmc.monkeyspaw.di.AssistantProviderChanges
 import dagger.Lazy
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -124,7 +125,7 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
         val dispatcher = Dispatcher()
         val clock = MonotonicClock(System::nanoTime)
         val transport = OkHttpHttpTransport(clock, scope, dispatcher)
-        val changes = AppModule.providerChanges()
+        val changes = AssistantProviderChanges()
         var provider: ProviderSettingsService? = null
         fun newModel(): AssistantSettingsViewModel {
             val settings = kotlin.lazy {
@@ -135,7 +136,9 @@ internal class AssistantSettingsPersistenceTest : TemporaryFiles() {
                 AssistantConnectionService(settings.value, AnthropicClient(transport, clock),
                     OpenAIClient(transport, ProviderStateStore(state), clock), Dispatchers.IO, main, clock)
             }
-            return AssistantSettingsViewModel(Lazy { settings.value }, Lazy { connection.value }, Dispatchers.IO, scope, changes)
+            val syncKeys = kotlin.lazy { ProviderSyncKeyService(secrets, Entropy { ByteArray(it) }) }
+            return AssistantSettingsViewModel(Lazy { settings.value }, Lazy { connection.value }, Dispatchers.IO, scope, changes,
+                Lazy { syncKeys.value }, ch.lkmc.monkeyspaw.di.SyncAccountUser { null })
                 .also { models.put(UUID.randomUUID().toString(), it); it.open() }
         }
         suspend fun settled(model: AssistantSettingsViewModel) = model.state.first {

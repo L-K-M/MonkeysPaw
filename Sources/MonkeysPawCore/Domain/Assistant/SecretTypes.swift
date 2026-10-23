@@ -39,6 +39,11 @@ public struct SecretAccount: Hashable, Codable, Sendable {
         SecretAccount(validatedNamespace: "device", validatedName: connectionID.uuidString.lowercased())
     }
 
+    /// §26 S3: the per-account provider-settings sync key's account.
+    public static func providerSync(_ userID: ULID) -> SecretAccount {
+        SecretAccount(validatedNamespace: "provider-sync", validatedName: userID.rawValue)
+    }
+
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         let parts = value.split(separator: ":", omittingEmptySubsequences: false)

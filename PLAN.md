@@ -45,6 +45,7 @@ stable: the file for `§N` starts with `N-`.
 | §23 | [M10 decisions](docs/plan/23-m10-decisions.md) |
 | §24 | [Native desktop design](docs/plan/24-native-desktop-design.md) |
 | §25 | [Android Expressive design](docs/plan/25-android-expressive-design.md) |
+| §26 | [LLM settings sync decisions](docs/plan/26-llm-settings-sync.md) |
 
 ## Editing rules
 

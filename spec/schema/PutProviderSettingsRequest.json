@@ -1,0 +1,18 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/PutProviderSettingsRequest.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "document" : {
+      "maxLength" : 349600,
+      "minLength" : 1,
+      "pattern" : "^(?:[A-Za-z0-9_-]+)(?![\\s\\S])",
+      "type" : "string"
+    }
+  },
+  "required" : [
+    "document"
+  ],
+  "title" : "PutProviderSettingsRequest",
+  "type" : "object"
+}

@@ -8,7 +8,10 @@ profiles (stable UUID, display name, kind, normalized base URL, model ID,
 optional namespaced secret reference) and the selected profile ID. Missing
 files start empty; unknown root/profile keys follow profile IDs on rewrite.
 Loading and atomic publication follow §5.1's fail-closed settings contract
-([§19 B23](19-m4-m5-decisions.md)).
+([§19 B23](19-m4-m5-decisions.md)). The file stays per-device until a sync
+account is signed in and the §26 provider-sync key is provisioned; then the
+settings — including the referenced credential envelopes — sync inside the
+encrypted per-account document described in §9.3 (§26).
 Android maps the logical `provider-settings.json` and `provider-state.json`
 paths through `StateStore` to namespaced `provider-settings`/`provider-state`
 records in the single M8 settings DataStore. The logical version-1 JSON and

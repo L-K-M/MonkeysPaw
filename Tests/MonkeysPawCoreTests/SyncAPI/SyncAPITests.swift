@@ -130,8 +130,8 @@ final class SyncAPITests: XCTestCase {
     func testEveryRouteHasResolvableRequestResponseAndParameterSchemas() throws {
         let names = Set(SyncAPI.schemas.map(\.name))
         XCTAssertEqual(names.count, SyncAPI.schemas.count)
-        XCTAssertEqual(SyncAPI.endpoints.count, 25)
-        XCTAssertEqual(Set(SyncAPI.endpoints.map { $0.method + " " + $0.path }).count, 25)
+        XCTAssertEqual(SyncAPI.endpoints.count, 27)
+        XCTAssertEqual(Set(SyncAPI.endpoints.map { $0.method + " " + $0.path }).count, 27)
         for route in SyncAPI.endpoints {
             for name in [route.requestBody, route.pathParameters, route.query, route.responseBody].compactMap({ $0 }) {
                 XCTAssertTrue(names.contains(name), name)

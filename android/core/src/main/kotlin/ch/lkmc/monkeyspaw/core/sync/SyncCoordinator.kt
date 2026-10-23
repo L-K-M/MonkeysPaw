@@ -13,10 +13,12 @@ import java.time.Instant
 
 internal class SyncPassResult(
     val counts: SyncCounts = SyncCounts(), details: List<SyncFileDetail> = emptyList(), val rerun: Boolean = false,
+    val providerSync: ProviderSyncOutcome? = null,
 ) {
     val details = details.syncListCopy()
-    fun copy(counts: SyncCounts = this.counts, details: List<SyncFileDetail> = this.details, rerun: Boolean = this.rerun) =
-        SyncPassResult(counts, details, rerun)
+    fun copy(counts: SyncCounts = this.counts, details: List<SyncFileDetail> = this.details, rerun: Boolean = this.rerun,
+             providerSync: ProviderSyncOutcome? = this.providerSync) =
+        SyncPassResult(counts, details, rerun, providerSync)
 }
 
 internal sealed class SyncCoordinatorError : Exception("Sync coordination failed.", null, false, true) {
@@ -42,6 +44,7 @@ internal class SyncCoordinator(
     private val clock: MonotonicClock,
     private val preparationLimit: Int = Limits.syncPreparationLimit,
     private val committed: () -> Unit = {},
+    private val providerSettings: ProviderSyncStep? = null,
 ) {
     private val client = client.permitting(permit)
     private val collector = SyncPullCollector(this.client, files, permit.binding.account.userID, clock)
@@ -141,6 +144,12 @@ internal class SyncCoordinator(
                         conflicts = committed?.prompts?.values?.count { it.origin != null } ?: 0))
                     progress(result)
                     if (outcome == SyncPushResult.REFRESH_MEMBERSHIPS) break
+                }
+                // §26 S9: provider settings sync follows the prompt push phase
+                // in the same pass, under this permit and its permitted client.
+                providerSettings?.let { step ->
+                    result = result.copy(providerSync = step.run(client, permit.binding.account, permit))
+                    progress(result)
                 }
                 return summarize(result)
             }

@@ -16,12 +16,14 @@ internal object WireValidation {
     private const val MAX_PASSWORD_BYTES = 72
     private const val MAX_CONTENT_BYTES = 262_144
     private const val MAX_PATH_BYTES = 1_024
+    private const val MAX_PROVIDER_SYNC_DOCUMENT_SCALARS = 349_600
 
     private val ulidPattern = Regex("[0-7][0-9A-HJKMNP-TV-Z]{25}")
     private val uuidPattern = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     private val scopeKeyPattern = Regex("(user|group):[0-7][0-9A-HJKMNP-TV-Z]{25}")
     private val usernamePattern = Regex("[a-z0-9][a-z0-9._-]{0,63}")
     private val tokenPattern = Regex("[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")
+    private val providerSyncDocumentPattern = Regex("[A-Za-z0-9_-]+")
     private val timestampPattern = Regex("(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z")
     private val timestampFormatter = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT)
         .withChronology(IsoChronology.INSTANCE).withResolverStyle(ResolverStyle.STRICT).withZone(ZoneOffset.UTC)
@@ -65,6 +67,10 @@ internal object WireValidation {
     fun suppliedPassword(text: String) { string(text, minimum = 1, maximum = MAX_PASSWORD_BYTES, maximumBytes = MAX_PASSWORD_BYTES) }
     fun content(text: String) { string(text, maximumBytes = MAX_CONTENT_BYTES) }
     fun path(text: String) { string(text, minimum = 1, maximum = MAX_PATH_BYTES, maximumBytes = MAX_PATH_BYTES) }
+    fun providerSyncDocument(text: String) {
+        string(text, minimum = 1, maximum = MAX_PROVIDER_SYNC_DOCUMENT_SCALARS)
+        wireRequire(providerSyncDocumentPattern.matches(text))
+    }
 
     fun timestamp(text: String) {
         wireRequire(timestampPattern.matches(text))

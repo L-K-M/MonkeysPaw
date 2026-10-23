@@ -87,30 +87,30 @@ HTTP body bytes, exact headers, fixed deadlines, typed errors/pages and usage.
 Both structural inventory and semantic consumption
 cover the same ten categories.
 
-All 54 DTO contracts have typed codecs and accepted/rejected coverage. Every
+All 57 DTO contracts have typed codecs and accepted/rejected coverage. Every
 case checks decoding against the independent offline schema validator,
 including every `x-` rule. Accepted cases also compare canonical JSON bytes,
 error HTTP status and Retry-After header values. Constructed-invalid values
 fail encoding, including nested contracts and cross-field relations. No
 pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
-The nine non-LLM content categories currently have 1,038 cases and 2,180
+The nine non-LLM content categories currently have 1,057 cases and 2,218
 visible files: format 21/42, grammar 22/44, render 22/44, validation 113/226,
-canonical 19/50, paths 141/282, ranking 36/164, import 15/30 and DTOs 649/1,298
-(160 valid, 489 invalid).
+canonical 19/50, paths 141/282, ranking 36/164, import 15/30 and DTOs 668/1,336
+(164 valid, 504 invalid).
 M11 L2 introduced LLM schema and decoding as the tenth category. Together
 with L3's Foundation transcript-escaping golden, these kinds have 288 cases
 and 919 files. L11 adds 74 merge cases with 250 files, and L4 adds 48
 Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
 diff cases with 249 files, and L6 adds 27 OpenAI exchange cases with 1,169
-files and 278 ordered actions, bringing the current content corpus to 1,540
-cases and 5,523 visible files.
+files and 278 ordered actions, bringing the current content corpus to 1,559
+cases and 5,561 visible files.
 Case shapes are below. These are reported counts, not fixed enumeration limits.
 
 The delegated sync corpus has 87 executable variants in 24 JSON files: Y12's
 26 variants in seven files, Y13's 45 variants in twelve files and Y14's 16
 variants in five files. Together with the ten content categories, that is
-1,627 cases and 5,547 visible files, with separate semantic owners.
+1,646 cases and 5,585 visible files, with separate semantic owners.
 The root content gate reports delegated file accounting separately; the server
 owner requires every acceptance file and compares all decoded and executed IDs.
 

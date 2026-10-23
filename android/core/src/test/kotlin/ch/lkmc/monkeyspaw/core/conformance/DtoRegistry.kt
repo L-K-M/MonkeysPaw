@@ -37,6 +37,7 @@ internal object DtoRegistry {
         reader(RevisionsResponse.codec), reader(Revision.codec), reader(FeedPrompt.codec),
         reader(PullRequest.codec), reader(FeedItem.codec), reader(ScopeIdentity.codec), reader(SyncScope.codec), reader(PullResponse.codec),
         reader(IssueLocation.codec), reader(Issue.codec), reader(FailureCode.codec), reader(ErrorResponse.codec), reader(RetryAfter.codec),
+        reader(ProviderSettingsDocument.codec), reader(PutProviderSettingsRequest.codec), reader(ProviderSettingsResponse.codec),
     )
 
     fun consumeAll(corpus: Corpus, cases: List<FixtureCase> = corpus.cases(Category.DTO)): DtoCoverage {

@@ -23,6 +23,8 @@ import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
 import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
 import ch.lkmc.monkeyspaw.core.services.SyncEngine
 import ch.lkmc.monkeyspaw.core.services.SyncAccountService
+import ch.lkmc.monkeyspaw.core.services.ProviderSyncKeyService
+import ch.lkmc.monkeyspaw.core.sync.ProviderSyncInput
 import ch.lkmc.monkeyspaw.data.*
 import dagger.Module
 import dagger.Provides
@@ -164,9 +166,11 @@ internal object AppModule {
     fun syncRepository(startup: AndroidSyncStartup, library: LibraryService, repository: LibraryRepository,
         @ApplicationScope scope: CoroutineScope, @IoDispatcher io: CoroutineDispatcher, clock: Clock,
         entropy: Entropy, monotonic: MonotonicClock, secrets: Lazy<SecretStore>, http: Lazy<HttpTransport>,
+        providers: Lazy<ProviderSettingsService>, providerKeys: Lazy<ProviderSyncKeyService>,
         settings: AndroidSettingsStore, work: SyncWorkHooks = SyncWorkHooks.None): AndroidSyncRepository =
         AndroidSyncRepository(startup, library, repository, scope, io,
-            { local -> SyncEngine(local, scope, io, clock, entropy, monotonic) },
+            { local -> SyncEngine(local, scope, io, clock, entropy, monotonic,
+                providerSettings = ProviderSyncInput(providers.get(), providerKeys.get())) },
             { engine, local -> SyncAccountService(engine, local.accounts, secrets.get(), http.get(), startup.libraryRoot, io, monotonic,
                 tlsTrust = { server -> settings.read().syncTls?.trustFor(server) ?: SyncTLSTrust.SYSTEM }) }, settings, work)
 
@@ -229,6 +233,11 @@ internal object AppModule {
 
     @Provides
     @Singleton
+    fun providerSyncKeys(secrets: SecretStore, entropy: Entropy): ProviderSyncKeyService =
+        ProviderSyncKeyService(secrets, entropy)
+
+    @Provides
+    @Singleton
     fun providerState(state: StateStore): ProviderStateStore = ProviderStateStore(state)
 
     @Provides
@@ -258,7 +267,21 @@ internal object AppModule {
     fun assistantGraph(service: AssistantService, access: AssistantAccess, clock: MonotonicClock): AssistantGraph =
         AssistantGraph(service, access, clock)
 
+    /** The assistant settings key section reads the persisted account metadata only. */
     @Provides
     @Singleton
-    fun providerChanges(): AssistantProviderChanges = AssistantProviderChanges()
+    fun syncAccountUser(repository: Lazy<AndroidSyncRepository>): SyncAccountUser = SyncAccountUser {
+        repository.get().graph().local.accountMetadata().account?.identity?.userID
+    }
+
+    @Provides
+    @Singleton
+    fun providerChanges(settings: Lazy<ProviderSettingsService>, @ApplicationScope scope: CoroutineScope,
+        @IoDispatcher io: CoroutineDispatcher): AssistantProviderChanges =
+        AssistantProviderChanges().also { changes ->
+            // Remote applies commit in the sync pass; retire sessions from UI work.
+            scope.launch(io) {
+                settings.get().observeChanges { scope.launch(Dispatchers.Main.immediate) { changes.changed() } }
+            }
+        }
 }

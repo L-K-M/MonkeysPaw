@@ -81,4 +81,17 @@
     <string name="assistant_error_key_write">Could not save your key. Your previous key was kept. Try again.</string>
     <string name="assistant_error_key_delete">Could not remove your saved key. Try again.</string>
     <string name="assistant_error_rollback">Settings could not be saved and the previous key could not be restored. Key status is unknown; restart and re-enter or clear the key.</string>
+    <string name="assistant_sync_title">Provider settings sync</string>
+    <string name="assistant_sync_key_placeholder">Paste the 43-character key from another device</string>
+    <string name="assistant_sync_generate">Generate key</string>
+    <string name="assistant_sync_enter">Enter key</string>
+    <string name="assistant_sync_remove">Remove key</string>
+    <string name="assistant_sync_hide">Hide key</string>
+    <string name="assistant_sync_reveal">Copy this key to your other devices. It is shown once and never uploaded.</string>
+    <string name="assistant_sync_no_account">Provider settings sync needs a signed-in sync account.</string>
+    <string name="assistant_sync_missing">No sync key. Generate one, or enter the key from another device.</string>
+    <string name="assistant_sync_provisioned">Sync key stored · AndroidKeyStore</string>
+    <string name="assistant_sync_unavailable">Sync key status is unavailable.</string>
+    <string name="assistant_sync_notice_invalid">That is not a valid sync key. Paste the key shown on another device.</string>
+    <string name="assistant_sync_notice_failed">The sync key could not be updated. Try again.</string>
 </resources>

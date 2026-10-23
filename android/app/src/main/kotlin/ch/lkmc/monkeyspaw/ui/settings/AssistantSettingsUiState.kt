@@ -24,6 +24,22 @@ internal sealed interface AssistantKeyStorage {
     data class Failed(val error: ProviderSettingsError) : AssistantKeyStorage
 }
 
+internal enum class AssistantSyncKeyStatus { NO_ACCOUNT, MISSING, PROVISIONED, UNAVAILABLE }
+internal enum class AssistantSyncKeyNotice { INVALID_KEY, OPERATION_FAILED }
+
+/** §26 S12: the reveal is the only key text ever published; toString stays redacted. */
+internal data class AssistantSyncKey(
+    val status: AssistantSyncKeyStatus = AssistantSyncKeyStatus.NO_ACCOUNT,
+    val busy: Boolean = false,
+    val notice: AssistantSyncKeyNotice? = null,
+    val revealedKey: String? = null,
+    /** Secure input clears on commit and navigation, like keyInputReset. */
+    val inputReset: Long = 0,
+) {
+    val canEdit: Boolean get() = !busy
+    override fun toString(): String = "<assistant sync key redacted>"
+}
+
 internal data class AssistantSettingsUiState(
     val isOpen: Boolean = false,
     val profiles: List<ProviderProfile> = emptyList(),
@@ -37,6 +53,7 @@ internal data class AssistantSettingsUiState(
     val availableModels: List<ModelDescriptor> = emptyList(),
     val testResult: ConnectionTestResult? = null,
     val isTesting: Boolean = false,
+    val syncKey: AssistantSyncKey = AssistantSyncKey(),
     /** Secure input clears on commit/discard, including when the profile ID stays the same. */
     val keyInputReset: Long = 0,
 ) {

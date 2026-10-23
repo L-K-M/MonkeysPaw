@@ -229,6 +229,19 @@ public enum Limits {
     static let syncBindingVersion: Int = 1
     static let syncApplyJournalVersion: Int = 1
     static let syncPushJournalVersion: Int = 1
+    static let providerSyncRecordVersion: Int = 1
+
+    /// §26 S5: one AES-256-GCM key seals the whole provider-settings payload.
+    static let providerSyncKeyBytes: Int = 32
+    static let providerSyncNonceBytes: Int = 12
+    static let providerSyncTagBytes: Int = 16
+    public static let providerSyncPayloadMaxBytes: Int = 256 * kibibyte
+    static let providerSyncSecretEntries: Int = 256
+    static let providerSyncSecretBytes: Int = 64 * kibibyte
+
+    /// §26 S5: 0x01 ‖ IV ‖ ciphertext ‖ tag at the payload cap encodes to
+    /// 349,564 base64url characters; the wire bound leaves headroom.
+    static let providerSyncDocumentMaxBase64: Int = 349_600
 
     /// §9.2: fail closed rather than truncate oversized state/ownership records.
     public static let syncRecordMaxBytes: Int = 16 * mebibyte

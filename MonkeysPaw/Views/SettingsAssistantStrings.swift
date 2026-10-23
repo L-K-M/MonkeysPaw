@@ -29,6 +29,33 @@ enum SettingsAssistantStrings {
     static let inactive = "No active provider. Assistant is disabled."
     static let unencrypted = "Warning: your key is stored in an unencrypted file."
 
+    static let syncGroup = "Provider Settings Sync"
+    static let syncGenerate = "Generate Key"
+    static let syncEnter = "Enter Key"
+    static let syncEntryPlaceholder = "Paste the 43-character key from another device"
+    static let syncRemove = "Remove Key"
+    static let syncDismissReveal = "Hide Key"
+    static let syncReveal = "Copy this key to your other devices. It is shown once and never uploaded."
+
+    static func syncStatus(_ status: ProviderSyncKeyModel.Status) -> String {
+        switch status {
+        case .noAccount: return "Provider settings sync needs a signed-in sync account."
+        case .missing: return "No sync key. Generate one, or enter the key from another device."
+        case .provisioned(.keychain): return "Sync key stored · Keychain"
+        case .provisioned(.secretService): return "Sync key stored · Secret Service"
+        case .provisioned(.environment): return "Sync key provided · Environment"
+        case .provisioned(.file): return "Sync key stored · File (unencrypted)"
+        case .unavailable: return "Sync key status is unavailable."
+        }
+    }
+
+    static func syncNotice(_ notice: ProviderSyncKeyModel.Notice) -> String {
+        switch notice {
+        case .invalidKey: return "That is not a valid sync key. Paste the key shown on another device."
+        case .operationFailed: return "The sync key could not be updated. Try again."
+        }
+    }
+
     static func activeProfile(_ name: String) -> String { "Active provider: \(name)" }
     static func profileRow(_ name: String, isActive: Bool) -> String {
         isActive ? "\(name) (active)" : name

@@ -1,0 +1,17 @@
+{
+  "$id" : "https://lkmc.ch/monkeyspaw/sync-api/schema/ProviderSettingsResponse.json",
+  "$schema" : "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties" : false,
+  "properties" : {
+    "rev" : {
+      "maximum" : 9223372036854775807,
+      "minimum" : 1,
+      "type" : "integer"
+    }
+  },
+  "required" : [
+    "rev"
+  ],
+  "title" : "ProviderSettingsResponse",
+  "type" : "object"
+}

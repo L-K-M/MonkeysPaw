@@ -4,11 +4,13 @@ import SwiftUI
 /// The model owns behavior and secrets; this wrapper publishes safe UI state.
 final class AssistantSettingsViewState: ObservableObject {
     @Published private(set) var state: AssistantSettingsModel.State
+    @Published private(set) var syncKey: ProviderSyncKeyModel.State?
     private var model: AssistantSettingsModel?
 
     init(model: AssistantSettingsModel, mainThread: MainThread, onProviderChange: @escaping () -> Void = {}) {
         self.model = model
         state = model.state
+        syncKey = model.syncKey?.state
         model.onChange = { [weak self] in
             mainThread.run { [weak self] in
                 guard let self, let model = self.model else { return }
@@ -22,6 +24,12 @@ final class AssistantSettingsViewState: ObservableObject {
                     case .loading, nil: break
                     }
                 }
+            }
+        }
+        model.syncKey?.onChange = { [weak self] in
+            mainThread.run { [weak self] in
+                guard let self, let model = self.model else { return }
+                self.syncKey = model.syncKey?.state
             }
         }
     }
@@ -84,8 +92,15 @@ final class AssistantSettingsViewState: ObservableObject {
         model?.refresh()
     }
 
+    var canEditSyncKey: Bool { model != nil && syncKey?.busy == false }
+    func syncKeyGenerate() { if canEditSyncKey { model?.syncKey?.generate() } }
+    func syncKeyEnter(_ text: String) { if canEditSyncKey { model?.syncKey?.enterKey(text) } }
+    func syncKeyRemove() { if canEditSyncKey { model?.syncKey?.remove() } }
+    func syncKeyDismissReveal() { model?.syncKey?.dismissRevealed() }
+
     func retire() {
         model?.onChange = nil
+        model?.syncKey?.onChange = nil
         model?.cancelTest()
         model = nil
     }
@@ -93,6 +108,7 @@ final class AssistantSettingsViewState: ObservableObject {
 
 struct SettingsAssistantView: View {
     @ObservedObject var presentation: AssistantSettingsViewState
+    @State private var syncKeyInput = ""
 
     var body: some View {
         Form {
@@ -102,6 +118,7 @@ struct SettingsAssistantView: View {
                 Section { Text(SettingsAssistantStrings.empty) }
             }
             status
+            if presentation.syncKey != nil { syncSection }
         }
         .formStyle(.grouped)
     }
@@ -230,6 +247,48 @@ struct SettingsAssistantView: View {
             }
             if let message = presentation.testMessage {
                 Text(message).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var syncSection: some View {
+        Section {
+            if let key = presentation.syncKey {
+                LabeledContent {
+                    if let revealed = key.revealedKey {
+                        Text(revealed).textSelection(.enabled)
+                    } else {
+                        SecureField(SettingsAssistantStrings.syncEntryPlaceholder, text: $syncKeyInput)
+                            .labelsHidden()
+                            .accessibilityLabel(SettingsAssistantStrings.syncEnter)
+                            .disabled(!presentation.canEditSyncKey)
+                    }
+                } label: {
+                    Text(SettingsAssistantStrings.syncEnter)
+                }
+                HStack {
+                    Button(SettingsAssistantStrings.syncGenerate, action: presentation.syncKeyGenerate)
+                    if key.revealedKey != nil {
+                        Button(SettingsAssistantStrings.syncDismissReveal, action: presentation.syncKeyDismissReveal)
+                    } else {
+                        Button(SettingsAssistantStrings.syncEnter) { presentation.syncKeyEnter(syncKeyInput) }
+                        Button(SettingsAssistantStrings.syncRemove, action: presentation.syncKeyRemove)
+                            .disabled(key.status == .noAccount || key.status == .missing)
+                    }
+                }
+                .controlSize(.small)
+                .disabled(!presentation.canEditSyncKey)
+                if let notice = key.notice {
+                    Label(SettingsAssistantStrings.syncNotice(notice), systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } header: {
+            Text(SettingsAssistantStrings.syncGroup)
+        } footer: {
+            if let key = presentation.syncKey {
+                Text(SettingsAssistantStrings.syncStatus(key.status))
+                if key.revealedKey != nil { Text(SettingsAssistantStrings.syncReveal) }
             }
         }
     }
