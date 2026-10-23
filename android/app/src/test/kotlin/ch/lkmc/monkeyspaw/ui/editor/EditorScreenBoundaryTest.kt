@@ -1,6 +1,10 @@
 package ch.lkmc.monkeyspaw.ui.editor
 
+import ch.lkmc.monkeyspaw.core.domain.format.PromptCodec
+import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueCode
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
 import kotlin.test.*
 
 internal class EditorScreenBoundaryTest {
@@ -8,6 +12,17 @@ internal class EditorScreenBoundaryTest {
     private val packageRoot = root.resolve("kotlin/ch/lkmc/monkeyspaw")
     private val assistantService = Regex("\\bAssistantService\\b")
     private val screenServices = Regex("\\b(?:AssistantAcceptance|AssistantSavePermit|EditingService|LibraryRepository)\\w*")
+
+    @Test
+    fun `malformed duplicate field declarations remain inspectable without name based item keys`() {
+        val source = "---\nfields:\n  field: {}\n  \"field\": {}\n---\nBody"
+        val state = projectEditor(PromptCodec.parse(source, "duplicate.md"), Instant.EPOCH, ZoneId.of("UTC"))
+        assertTrue(state.issues.any { it.code == PromptIssueCode.DUPLICATE_KEY })
+        assertEquals(listOf("field", "field"), state.fields.map { it.name })
+        val screen = packageRoot.resolve("ui/editor/EditorScreen.kt").readText()
+        assertTrue(screen.contains("items(state.fields)"),
+            "Forensic field rows may share names; their LazyColumn identity must not be the field name")
+    }
 
     @Test
     fun `network guard catches service types and companion references`() {

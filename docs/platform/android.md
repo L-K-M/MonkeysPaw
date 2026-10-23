@@ -1093,6 +1093,13 @@ because Material clears its visual text's semantics. Native accessibility-tree
 queries verified the creation action and the decision target bounds; this is
 not a physical TalkBack run.
 
+Review follow-up on 2026-10-23 confirmed that a plain and quoted declaration of
+the same unused field survive normalization as two forensic rows with a
+duplicate-key issue. The Fields tab therefore uses positional list identity,
+not field-name keys. The regression first failed against the name-keyed view,
+then passed with the full gate; the minified release displayed both malformed
+declarations without crashing. Parsing and source preservation are unchanged.
+
 Physical TalkBack, external keyboards, OEM/gesture-navigation behavior, API 26/27
 runtime and Android 12+ dynamic-color/runtime checks remain **NOT RUN**. The
 software emulator is not performance evidence. Paid-provider and deployed-server

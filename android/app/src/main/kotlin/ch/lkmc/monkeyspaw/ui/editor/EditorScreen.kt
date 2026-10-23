@@ -232,7 +232,8 @@ internal fun EditorScreen(
                         PawEmptyState(stringResource(R.string.editor_no_fields),
                             stringResource(R.string.editor_no_fields_body), Icons.Rounded.TextFields)
                     }
-                    items(state.fields, key = { it.name }) { field ->
+                    // Invalid headers retain duplicate declarations for inspection.
+                    items(state.fields) { field ->
                         Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
                             color = MaterialTheme.colorScheme.surfaceContainerLow) {
                             Column(Modifier.padding(PawSpacing.large),
