@@ -163,13 +163,7 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
             if let table = promptList?.tableView, table.selectedRow >= 0 { table.scrollRowToVisible(table.selectedRow) }
             return true
         case #selector(NSResponder.insertNewline(_:)):
-            if !presentation.snapshot.rows.contains(where: { $0.selection == presentation.snapshot.selection }) {
-                presentation.moveSelection(.down)
-            }
-            guard presentation.snapshot.rows.contains(where: { $0.selection == presentation.editorState.prompt }),
-                  presentation.editorState.pendingDecision == nil else { return true }
-            window?.makeFirstResponder(nil)
-            presentation.focusEditor()
+            presentation.editSearchResult()
             return true
         default: return false
         }

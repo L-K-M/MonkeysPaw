@@ -102,7 +102,9 @@ The example shows Source; Edit opens the properties form and body editor.
 - **Escape** clears the search field when it has focus and dismisses sheets
   and popovers. It no longer closes the window; ⌘W does.
 - **Search navigation.** Down/Up from toolbar Search selects a result without
-  clearing the query. Return opens the selected result for editing. Input-method
+  clearing the query. Return edits the selected result, or the first result
+  when none is selected. A queued save/open retains that focus request until
+  the prompt loads; further search or navigation cancels it. Input-method
   composition keeps these keys until conversion finishes.
 - **Dock reopening.** With a regular window visible, reopening raises that
   window. With only minimized windows, it restores Library or Settings. The

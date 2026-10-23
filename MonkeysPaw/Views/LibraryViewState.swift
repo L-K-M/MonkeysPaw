@@ -17,7 +17,7 @@ final class LibraryViewState: ObservableObject {
     enum Direction { case up, down }
     enum EditorMode: Int, Hashable { case edit, preview, source }
     enum InspectorPane: Hashable { case fields, history, assistant }
-    private enum OpenContext { case library, picker, creation }
+    private enum OpenContext { case library, picker, creation, search }
     private struct ScopeDrop {
         let selection: LibraryPromptSelection
         let section: LibrarySectionID
@@ -77,7 +77,7 @@ final class LibraryViewState: ObservableObject {
     private var scopeDrop: ScopeDrop?
     private var scopeDropRequest: UUID?
     private var scopeDropLoad: Progress?
-    private var focusAfterCreation: LibraryPromptSelection?
+    private var focusAfterOpen: LibraryPromptSelection?
     private enum RevertToSaved { case none, requested, presented }
     private var revertToSaved = RevertToSaved.none
 
@@ -342,7 +342,7 @@ final class LibraryViewState: ObservableObject {
         fieldSettingsDraft = nil
         commandMessage = nil
         revertToSaved = .none
-        focusAfterCreation = nil
+        focusAfterOpen = nil
         copySelection = nil
         isClosingEditor = false
         lastClosedPromptPath = nil
@@ -364,6 +364,7 @@ final class LibraryViewState: ObservableObject {
         imports?.deactivate()
         revertToSaved = .none
         isActive = false
+        focusAfterOpen = nil
         bindingRevision &+= 1
         sourceRevision &+= 1
         revealAfterOpen = []
@@ -404,6 +405,7 @@ final class LibraryViewState: ObservableObject {
 
     func didHide() {
         isPresented = false
+        focusAfterOpen = nil
         newPromptRequest = nil
         fieldSettingsDraft = nil
         syncStatus?.hide()
@@ -413,6 +415,7 @@ final class LibraryViewState: ObservableObject {
 
     func setFilter(_ filter: String) {
         guard isActive, !model.filter.utf8.elementsEqual(filter.utf8) else { return }
+        focusAfterOpen = nil
         cancelScopeDrop()
         favoriteOutcome = nil
         model.setFilter(filter)
@@ -420,6 +423,7 @@ final class LibraryViewState: ObservableObject {
 
     func selectSection(_ section: LibrarySectionID) {
         guard isActive, section != model.selectedSection else { return }
+        focusAfterOpen = nil
         cancelScopeDrop()
         favoriteOutcome = nil
         model.selectSection(section)
@@ -442,9 +446,19 @@ final class LibraryViewState: ObservableObject {
         select(selection, context: .picker)
     }
 
+    /// Keep the focus request through a queued save/open, but apply it only
+    /// when that prompt has loaded. Further search or navigation supersedes it.
+    func editSearchResult() {
+        guard canFocusFilter, libraryAvailable,
+              let row = snapshot.rows.first(where: { $0.selection == snapshot.selection }) ?? snapshot.rows.first else { return }
+        select(row.selection, context: .search)
+    }
+
     private func select(_ selection: LibraryPromptSelection, context: OpenContext = .library) {
         guard isActive, libraryAvailable else { return }
         cancelScopeDrop()
+        if context == .search { focusAfterOpen = selection }
+        else if context != .creation { focusAfterOpen = nil }
         // Upgrade a pending Library selection when Picker requests the same
         // target, without asking the user to cancel two identical decisions.
         if context == .picker, !revealAfterOpen.contains(selection) { revealAfterOpen.append(selection) }
@@ -457,7 +471,10 @@ final class LibraryViewState: ObservableObject {
             guard let self, self.isActive, self.bindingRevision == revision else { return }
             let reveal = self.revealAfterOpen.contains(selection)
             self.revealAfterOpen.removeAll { $0 == selection }
-            guard result == .allowed else { return }
+            guard result == .allowed else {
+                if self.focusAfterOpen == selection { self.focusAfterOpen = nil }
+                return
+            }
             if reveal {
                 self.model.setFilter("")
                 self.model.selectSection(.all)
@@ -570,7 +587,7 @@ final class LibraryViewState: ObservableObject {
             // Stay in this window and start typing in the new prompt once it
             // loads, as a new note does in Notes. The picker path shows the
             // window and focuses search instead.
-            self.focusAfterCreation = selection
+            self.focusAfterOpen = selection
             self.select(selection, context: .creation)
         }
     }
@@ -731,10 +748,10 @@ final class LibraryViewState: ObservableObject {
                     && state.prompt != previousPrompt && state.prompt == state.lastCopy
                 self.editorState = state
                 self.updateRevertToSaved(state)
-                if let created = self.focusAfterCreation, state.prompt?.relativePath == created.relativePath,
-                   state.status != .loading, state.source != nil {
-                    self.focusAfterCreation = nil
-                    self.focusEditor()
+                if let requested = self.focusAfterOpen, state.prompt?.relativePath == requested.relativePath,
+                   state.status != .loading {
+                    self.focusAfterOpen = nil
+                    if state.source != nil { self.focusEditor() }
                 }
                 self.updateConflict()
                 self.updateAssistantSession()
