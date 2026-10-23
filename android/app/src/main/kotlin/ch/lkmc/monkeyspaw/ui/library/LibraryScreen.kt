@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -68,6 +70,9 @@ internal fun LibraryScreen(
                 onWrite?.let { write ->
                     IconButton(onClick = write) { Icon(Icons.Rounded.AutoAwesome, stringResource(R.string.assistant_write_title)) }
                 }
+                onSettings?.let { settings ->
+                    IconButton(onClick = settings) { Icon(Icons.Rounded.Settings, stringResource(R.string.settings_title)) }
+                }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(Icons.Rounded.MoreVert, stringResource(R.string.design_more_options))
@@ -76,8 +81,6 @@ internal fun LibraryScreen(
                         DropdownMenuItem(text = { Text(stringResource(R.string.library_refresh)) },
                             leadingIcon = { Icon(Icons.Rounded.Refresh, null) }, enabled = !state.refreshing,
                             onClick = { menuOpen = false; onRefresh() })
-                        onSettings?.let { settings -> DropdownMenuItem(text = { Text(stringResource(R.string.settings_title)) },
-                            leadingIcon = { Icon(Icons.Rounded.Settings, null) }, onClick = { menuOpen = false; settings() }) }
                         onAccount?.let { account -> DropdownMenuItem(text = { Text(stringResource(R.string.account_title)) },
                             leadingIcon = { Icon(Icons.Rounded.AccountCircle, null) }, onClick = { menuOpen = false; account() }) }
                         onAssistantSettings?.let { settings -> DropdownMenuItem(text = { Text(stringResource(R.string.assistant_settings_title)) },
@@ -201,9 +204,14 @@ private fun LibraryResults(
         // Keep one header location through IME resizing, and let short windows scroll past it.
         scrollingHeader?.let { header -> item { header() } }
         if (mode == LibraryMode.BROWSER && state.content == LibraryContent.READY) item {
-            Text(pluralStringResource(R.plurals.design_prompt_count, state.rows.size, state.rows.size),
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = PawLayout.pageGutter, vertical = PawSpacing.medium))
+            Row(Modifier.fillMaxWidth().padding(horizontal = PawLayout.pageGutter, vertical = PawSpacing.large),
+                horizontalArrangement = Arrangement.spacedBy(PawSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+                Text(state.sections.firstOrNull { it.filter == state.filter }?.let { sectionTitle(it) }
+                    ?: stringResource(R.string.library_all), style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f))
+                Text(pluralStringResource(R.plurals.design_prompt_count, state.rows.size, state.rows.size),
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         notice?.let { item { PawMessage(it, Modifier.padding(PawSpacing.medium), PawMessageTone.WARNING) } }
         state.failure?.let { failure -> item {
@@ -255,8 +263,10 @@ private fun LibraryResults(
             }
             LibraryContent.FAILED, LibraryContent.READY -> Unit
         }
-        items(state.rows, key = { it.selection.relativePath }) { row ->
+        itemsIndexed(state.rows, key = { _, row -> row.selection.relativePath }) { index, row ->
             PromptRow(row, mode, selected = state.selectedPrompt?.selection == row.selection,
+                shape = pawGroupedShape(index, state.rows.size),
+                modifier = Modifier.animateItem(),
                 favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && row.canFavorite,
                 onOpen = { onSelect(row.selection); onOpen(row.selection) },
                 onToggleFavorite = { onToggleFavorite(row.selection) },
@@ -265,17 +275,16 @@ private fun LibraryResults(
                 onResolve = onResolve?.takeIf { row.syncOrigin != null }?.let { resolve ->
                     { onSelect(row.selection); resolve(row.selection) }
                 })
-            if (mode == LibraryMode.BROWSER) HorizontalDivider(Modifier.padding(horizontal = PawLayout.pageGutter),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
         }
     }
 }
 
 @Composable
-private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, favoriteEnabled: Boolean,
-    onOpen: () -> Unit, onToggleFavorite: () -> Unit, onEdit: (() -> Unit)?, onClearSelection: (() -> Unit)?, onResolve: (() -> Unit)?) {
+private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, shape: Shape, favoriteEnabled: Boolean,
+    onOpen: () -> Unit, onToggleFavorite: () -> Unit, onEdit: (() -> Unit)?, onClearSelection: (() -> Unit)?, onResolve: (() -> Unit)?,
+    modifier: Modifier = Modifier) {
     if (mode == LibraryMode.IME_PICKER) {
-        Surface(onClick = onOpen, modifier = Modifier.fillMaxWidth()
+        Surface(onClick = onOpen, modifier = modifier.fillMaxWidth()
             .padding(horizontal = PawSpacing.small, vertical = PawLayout.connectedGap).semantics { this.selected = selected },
             shape = MaterialTheme.shapes.small,
             color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest) {
@@ -297,9 +306,11 @@ private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, fav
         return
     }
 
-    Surface(onClick = onOpen, modifier = Modifier.fillMaxWidth().semantics { this.selected = selected },
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface) {
-        Column(Modifier.padding(start = PawLayout.pageGutter, end = PawSpacing.small, top = PawSpacing.small, bottom = PawSpacing.large)) {
+    Surface(onClick = onOpen, modifier = modifier.fillMaxWidth()
+        .padding(horizontal = PawLayout.pageGutter, vertical = PawLayout.connectedGap).semantics { this.selected = selected },
+        shape = shape,
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.padding(start = PawSpacing.large, end = PawSpacing.xs, top = PawSpacing.small, bottom = PawSpacing.large)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(row.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f))

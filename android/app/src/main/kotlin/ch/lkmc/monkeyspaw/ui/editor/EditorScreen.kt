@@ -27,6 +27,7 @@ import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.core.domain.library.PromptProvenance
 import ch.lkmc.monkeyspaw.core.domain.format.PromptIssueSeverity
 import ch.lkmc.monkeyspaw.core.domain.format.PromptFieldSettings
+import ch.lkmc.monkeyspaw.core.domain.format.PromptEdit
 import ch.lkmc.monkeyspaw.core.services.SourceReadOnlyReason
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawLayout
@@ -40,6 +41,9 @@ private data class FieldSettingsRequest(val path: String, val source: String, va
 internal fun EditorScreen(
     state: EditorUiState,
     onEdit: (String) -> Unit,
+    onEditForm: (PromptEdit) -> Unit,
+    onEditMode: (EditorEditMode) -> Unit,
+    onDiscardFailedForm: () -> Unit,
     onEditField: (String, String, PromptFieldSettings) -> Unit,
     onNewPath: (String) -> Unit,
     onTab: (EditorTab) -> Unit,
@@ -67,8 +71,10 @@ internal fun EditorScreen(
     var destination by remember(state.relativePath) { mutableStateOf("") }
     var moveDestination by remember(state.relativePath) { mutableStateOf(EditorDestination()) }
     var menuOpen by remember { mutableStateOf(false) }
-    val canEditFields = state.canEdit && !state.writing && !state.validating &&
+    var locationExpanded by remember { mutableStateOf(false) }
+    val canEditFields = state.canEdit && !state.writing && !state.validating && !state.formFailed &&
         state.conflict == null && state.pendingDecision == null
+    var recoverForm by remember(state.formFailed) { mutableStateOf(false) }
     var fieldRequest by remember(state.relativePath, state.source, canEditFields) { mutableStateOf<FieldSettingsRequest?>(null) }
     val privateCopyName = stringResource(R.string.editor_private_copy_filename,
         state.relativePath.orEmpty().substringAfterLast('/').removeSuffix(".md"))
@@ -76,8 +82,8 @@ internal fun EditorScreen(
         stringResource(if (state.isNew) R.string.editor_new else R.string.editor_title)
     }
 
-    PawScreen(title, modifier, onBack = onBack, actions = {
-        FilledTonalButton(onClick = onSave, enabled = state.canSave) { Text(stringResource(R.string.editor_save)) }
+    PawScreen(title, modifier, onBack = onBack, contentMaxWidth = PawLayout.formWidth, actions = {
+        Button(onClick = onSave, enabled = state.canSave) { Text(stringResource(R.string.editor_save)) }
         if (!state.isNew || onReview != null || onImprove != null) Box {
             IconButton(onClick = { menuOpen = true }) {
                 Icon(Icons.Rounded.MoreVert, stringResource(R.string.design_more_options))
@@ -130,9 +136,9 @@ internal fun EditorScreen(
             }
             LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PawLayout.contentPadding,
                 verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
-                item {
+                if (!state.isNew || state.group != null) item {
                     Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
-                        state.relativePath?.let {
+                        state.relativePath?.takeUnless { state.isNew }?.let {
                             Text(it, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -141,7 +147,7 @@ internal fun EditorScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        if (state.dirty) {
+                        if (state.dirty && !state.isNew) {
                             Text(stringResource(R.string.editor_unsaved), style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.tertiary)
                         }
@@ -158,14 +164,17 @@ internal fun EditorScreen(
                     }), tone = if (reason == SourceReadOnlyReason.GROUP_UNAVAILABLE) PawMessageTone.WARNING
                         else PawMessageTone.INFO)
                 } }
-                if (state.isNew) item {
+                if (state.isNew && state.editMode == EditorEditMode.SOURCE) item {
                     OutlinedTextField(value = state.relativePath.orEmpty(), onValueChange = onNewPath,
                         label = { Text(stringResource(R.string.editor_path)) }, singleLine = true,
-                        enabled = !state.writing, modifier = Modifier.fillMaxWidth())
+                        enabled = !state.writing && !state.formUpdating, modifier = Modifier.fillMaxWidth(),
+                        colors = pawInputColors(), shape = MaterialTheme.shapes.medium)
                 }
                 state.failure?.let { failure -> item {
                     Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
-                        PawMessage(stringResource(failureString(failure)), tone = PawMessageTone.ERROR)
+                        PawMessage(stringResource(if (state.formFailed) R.string.design_form_failed else failureString(failure)), tone = PawMessageTone.ERROR,
+                            actionLabel = stringResource(R.string.design_review_last_source).takeIf { state.formFailed },
+                            onAction = { recoverForm = true }.takeIf { state.formFailed })
                         for (issue in state.saveIssues.filterNot { state.tab == EditorTab.EDIT && it in state.issues }) {
                             Text(issue.message, color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall)
@@ -193,18 +202,52 @@ internal fun EditorScreen(
                 }
                 when (state.tab) {
                     EditorTab.EDIT -> {
+                        item {
+                            val mode = if (state.form == null) EditorEditMode.SOURCE else state.editMode
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                for (choice in EditorEditMode.entries) SegmentedButton(
+                                    selected = mode == choice, onClick = {
+                                        if (state.formFailed && choice == EditorEditMode.SOURCE) recoverForm = true else onEditMode(choice)
+                                    },
+                                    enabled = !state.validating && (!state.formFailed || choice == EditorEditMode.SOURCE) &&
+                                        (choice != EditorEditMode.FORM || state.form != null),
+                                    shape = SegmentedButtonDefaults.itemShape(choice.ordinal, EditorEditMode.entries.size)) {
+                                    Text(stringResource(if (choice == EditorEditMode.FORM) R.string.design_form_mode else R.string.design_source_mode))
+                                }
+                            }
+                        }
                         // Put validation before the growing source canvas so recovery stays discoverable.
                         items(state.issues) { issue ->
                             PawMessage(listOfNotNull(issue.message, issue.location?.toString()).joinToString("\n"),
                                 tone = if (issue.severity == PromptIssueSeverity.ERROR) PawMessageTone.ERROR else PawMessageTone.WARNING,
                                 announcement = PawMessageAnnouncement.NONE)
                         }
-                        item {
+                        // Validation rows can appear while typing; keep the focused form/source alive.
+                        item(key = "editor-edit-content") {
                             when {
                                 state.status == EditorStatus.LOADING -> PawLoading(stringResource(R.string.editor_loading))
                                 state.source == null -> PawMessage(stringResource(R.string.editor_source_unavailable))
                                 else -> Column {
-                                    EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)
+                                    if (state.editMode == EditorEditMode.FORM && state.form != null) {
+                                        EditorForm(state.form, state.canEdit && !state.writing && state.pendingDecision == null && state.conflict == null, onEditForm)
+                                        if (state.isNew) {
+                                            Spacer(Modifier.height(PawSpacing.section))
+                                            TextButton(onClick = { locationExpanded = !locationExpanded }, modifier = Modifier.fillMaxWidth()) {
+                                                Icon(Icons.Rounded.FolderOpen, null, Modifier.size(20.dp))
+                                                Spacer(Modifier.width(PawSpacing.small))
+                                                Text(stringResource(R.string.design_save_location, state.relativePath.orEmpty()), Modifier.weight(1f))
+                                                Icon(if (locationExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                                            }
+                                            if (locationExpanded) PawTextField(state.relativePath.orEmpty(), onNewPath,
+                                                stringResource(R.string.editor_path), enabled = !state.writing && !state.formUpdating, singleLine = true)
+                                        }
+                                    } else {
+                                        if (state.form == null && state.readOnlyReason == null) {
+                                            PawMessage(stringResource(R.string.design_form_unavailable))
+                                            Spacer(Modifier.height(PawSpacing.medium))
+                                        }
+                                        EditorSourceField(state.source, state.quoteSelection, state.canEdit, onEdit, onClearQuote)
+                                    }
                                     if (state.validating) Text(stringResource(R.string.editor_validating),
                                         Modifier.padding(top = PawSpacing.small),
                                         style = MaterialTheme.typography.bodySmall,
@@ -406,6 +449,13 @@ internal fun EditorScreen(
         }, dismissButton = { TextButton(onClick = { dialog = null }) { Text(stringResource(R.string.editor_cancel)) } })
     }
     EditorDecisionDialogs(state, onDecision, onConflict)
+    if (recoverForm && state.formFailed) AlertDialog(onDismissRequest = { recoverForm = false },
+        title = { Text(stringResource(R.string.design_review_last_source)) },
+        text = { Text(stringResource(R.string.design_recover_form_help)) },
+        confirmButton = { TextButton(onClick = { recoverForm = false; onDiscardFailedForm() }) {
+            Text(stringResource(R.string.design_use_last_source))
+        } },
+        dismissButton = { TextButton(onClick = { recoverForm = false }) { Text(stringResource(R.string.editor_cancel)) } })
     fieldRequest?.takeIf { it.path == state.relativePath && it.source == state.source && canEditFields }?.let { request ->
         EditorFieldSettingsDialog(request.settings, onDismiss = { fieldRequest = null }, onApply = { settings ->
             fieldRequest = null
@@ -426,7 +476,8 @@ internal fun EditorDecisionDialogs(state: EditorUiState,
             // Let the dialog wrap compact choices; three full-width buttons clip in short windows.
             confirmButton = {
                 Button(onClick = { onConflict(EditorConflictChoice.KEEP_MINE) },
-                    enabled = state.canEdit && !state.writing && !conflict.loading && conflict.failure == null && conflict.readOnlyReason == null) {
+                    enabled = state.canEdit && !state.writing && !state.formUpdating && !state.formFailed &&
+                        !conflict.loading && conflict.failure == null && conflict.readOnlyReason == null) {
                     Text(stringResource(R.string.editor_keep_mine))
                 }
             }, dismissButton = {

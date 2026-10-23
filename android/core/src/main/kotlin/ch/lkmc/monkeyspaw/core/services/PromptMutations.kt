@@ -4,8 +4,8 @@ import ch.lkmc.monkeyspaw.core.domain.ULID
 import ch.lkmc.monkeyspaw.core.domain.format.*
 
 /** Lifecycle edits reuse the content writer's preserved tree; the public writer still assigns no ID. */
-internal object PromptMutations {
-    fun assigningIdentity(id: ULID, document: PromptDocument, filename: String): PromptDocument {
+object PromptMutations {
+    internal fun assigningIdentity(id: ULID, document: PromptDocument, filename: String): PromptDocument {
         PromptCodec.write(document)
         if (document.frontMatter.id != null) {
             if (document.frontMatter.id != id) throw LibraryError.IdentityMismatch
@@ -16,7 +16,7 @@ internal object PromptMutations {
     }
 
     /** Sync duplicate repair/adoption explicitly replaces identity; ordinary saves keep their guard. */
-    fun replacingIdentity(id: ULID, document: PromptDocument, filename: String): PromptDocument {
+    internal fun replacingIdentity(id: ULID, document: PromptDocument, filename: String): PromptDocument {
         PromptWriter.validate(document)
         val node = document.preservedHeader?.entries?.firstOrNull { PortableYaml.string(it.key) == "id" }?.value
         val literal = node?.let(PortableYaml::string)
@@ -49,7 +49,7 @@ internal object PromptMutations {
             document.frontMatter.copy(id = id), filename)
     }
 
-    fun favorite(value: Boolean, document: PromptDocument, filename: String): PromptDocument {
+    internal fun favorite(value: Boolean, document: PromptDocument, filename: String): PromptDocument {
         PromptCodec.write(document)
         return setting("favorite", YamlNode.Scalar(value.toString(), YamlTag.BOOL), document,
             document.frontMatter.copy(favorite = value), filename)

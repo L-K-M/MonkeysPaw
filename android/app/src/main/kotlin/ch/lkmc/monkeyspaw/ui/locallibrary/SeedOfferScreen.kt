@@ -13,6 +13,7 @@ import androidx.compose.ui.res.stringResource
 import ch.lkmc.monkeyspaw.R
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
+import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 
 @Composable
 internal fun SeedOfferScreen(
@@ -23,17 +24,19 @@ internal fun SeedOfferScreen(
     modifier: Modifier = Modifier,
     onSettings: (() -> Unit)? = null,
 ) {
-    PawScreen(stringResource(R.string.design_library_title), modifier) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawSpacing.large),
+    PawScreen(stringResource(R.string.design_library_title), modifier, contentMaxWidth = PawLayout.formWidth,
+        bottomBar = { if (state == SeedOfferUiState.Offer) PawActionDock {
+            TextButton(onClick = onDecline) { Text(stringResource(R.string.seeds_decline)) }
+            Button(onClick = onAccept) { Text(stringResource(R.string.seeds_accept)) }
+        } }) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawLayout.pageGutter),
             verticalArrangement = Arrangement.spacedBy(PawSpacing.large)) {
             when (state) {
                 SeedOfferUiState.Loading, SeedOfferUiState.Installing -> {
                     PawLoading(stringResource(if (state == SeedOfferUiState.Installing) R.string.seeds_installing else R.string.library_loading))
                 }
                 SeedOfferUiState.Offer -> {
-                    PawEmptyState(stringResource(R.string.seeds_offer_title), stringResource(R.string.seeds_offer_help), Icons.Rounded.AutoAwesome,
-                        actionLabel = stringResource(R.string.seeds_accept), onAction = onAccept)
-                    TextButton(onClick = onDecline) { Text(stringResource(R.string.seeds_decline)) }
+                    PawIntro(stringResource(R.string.seeds_offer_title), stringResource(R.string.seeds_offer_help), Icons.Rounded.AutoAwesome)
                 }
                 SeedOfferUiState.Ready -> Unit // MainActivity routes the completed offer to LibraryScreen.
                 is SeedOfferUiState.Failed -> {

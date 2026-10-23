@@ -19,6 +19,7 @@ import ch.lkmc.monkeyspaw.core.domain.llm.LlmArtifact
 import ch.lkmc.monkeyspaw.core.domain.llm.PlaceholderChange
 import ch.lkmc.monkeyspaw.core.services.*
 import ch.lkmc.monkeyspaw.ui.components.PawLoading
+import ch.lkmc.monkeyspaw.ui.components.PawActionDock
 import ch.lkmc.monkeyspaw.ui.components.PawMessage
 import ch.lkmc.monkeyspaw.ui.components.PawMessageTone
 import ch.lkmc.monkeyspaw.ui.components.PawScreen
@@ -59,11 +60,7 @@ internal fun AssistantScaffold(
 /** Docked actions wrap onto extra rows, so large font scales keep every action reachable. */
 @Composable
 private fun AssistantActionDock(content: @Composable () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        FlowRow(Modifier.fillMaxWidth().padding(horizontal = PawSpacing.large, vertical = PawSpacing.medium),
-            horizontalArrangement = Arrangement.spacedBy(PawSpacing.medium),
-            verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) { content() }
-    }
+    PawActionDock { content() }
 }
 
 internal enum class AssistantTone { INFO, WARNING, ERROR, SUCCESS }
@@ -124,7 +121,8 @@ internal fun ArtifactFields(fields: List<LlmArtifact.Field>) {
             Text(stringResource(R.string.editor_no_fields), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        for (field in fields) OutlinedCard(Modifier.fillMaxWidth()) {
+        for (field in fields) Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surfaceContainerLow) {
             Column(Modifier.padding(PawSpacing.medium), verticalArrangement = Arrangement.spacedBy(PawSpacing.xs)) {
                 Text(field.label, style = MaterialTheme.typography.titleSmall)
                 Text(stringResource(R.string.assistant_field_type, field.name, field.type.rawValue),

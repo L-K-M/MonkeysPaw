@@ -142,3 +142,31 @@ The existing JVM, lint, APK and privacy/session gates remain required.
 Verify actual inline choices, text handoff, insertion/switching, protected
 targets, empty filters and editor navigation at ordinary/large font sizes,
 portrait/landscape and a wider viewport. Keep platform gaps explicit.
+
+### 25.8 Everyday Android refinement
+
+Keep the existing Material theme and local session contracts. Improve the
+composition through shared page gutters, section introductions, connected
+lists and a consistent action dock. Library exposes Settings directly;
+prompt rows prioritize their title and description, with quieter metadata.
+Fill separates editable values from its preview and emphasizes completion.
+Setup, preferences and assistant screens share the same visual hierarchy.
+Settings exposes the existing Forget all values service with confirmation,
+progress, failure/retry and success states. It clears this device's remembered
+values; prompts, history and already-open forms retain their existing state.
+
+Android Edit gains the Mac form's title, description, individual tags,
+Private and body controls, using the existing Kotlin form mutations. Source
+remains available for complete metadata and malformed headers; review quotes
+open Source. Both modes edit one guarded draft. Mode switches never save.
+Form edits run off the UI thread, retain rapid mixed-field input, and disable
+Save until their source is ready. A rejected form edit offers correction or
+a confirmed return to the last applied source, retaining earlier unsaved edits.
+The editing item keeps stable lazy-list identity when validation rows change.
+Existing validation, history, read-only,
+discard and conflict checks still govern publication.
+
+Verify the full Android gate and inspect actual phone, large-text, dark,
+landscape and wide layouts. Exercise form/source round trips, explicit save,
+discard, Fill/Copy and keyboard picker flows. Desktop-only folder selection,
+imports and group administration retain the platform scope in §10.1.

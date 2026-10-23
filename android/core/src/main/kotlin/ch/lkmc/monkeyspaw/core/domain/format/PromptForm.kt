@@ -3,7 +3,7 @@ package ch.lkmc.monkeyspaw.core.domain.format
 /** The editable projection omits identity, format and advanced metadata.
     Those stay in the codec's preserved header, shared with the Source draft. */
 @ConsistentCopyVisibility
-internal data class PromptForm private constructor(
+data class PromptForm private constructor(
     val title: String,
     val description: String,
     val tags: List<String>,
@@ -36,7 +36,7 @@ internal data class PromptForm private constructor(
 }
 
 /** A single-property intent leaves every other header entry untouched. */
-internal sealed interface PromptEdit {
+sealed interface PromptEdit {
     data class Title(val value: String) : PromptEdit
     data class Description(val value: String) : PromptEdit
     data class Tags(val value: List<String>) : PromptEdit

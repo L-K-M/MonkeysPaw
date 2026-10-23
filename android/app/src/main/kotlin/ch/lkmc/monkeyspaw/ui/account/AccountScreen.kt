@@ -8,7 +8,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,16 +41,21 @@ internal fun AccountScreen(
     modifier: Modifier = Modifier,
 ) {
     val trustDescription = stringResource(R.string.account_trust)
-    PawScreen(stringResource(R.string.account_title), modifier, onBack = onBack, actions = {
+    var securityExpanded by remember(state.server) { mutableStateOf(state.trustsUserCAs) }
+    PawScreen(stringResource(R.string.account_title), modifier, onBack = onBack, contentMaxWidth = PawLayout.formWidth, actions = {
         IconButton(onClick = onRefresh, enabled = state.busy == null) {
             Icon(Icons.Rounded.Refresh, stringResource(R.string.library_refresh))
         }
     }) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(PawSpacing.large),
-            verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
-            item {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PawLayout.contentPadding,
+            verticalArrangement = Arrangement.spacedBy(PawSpacing.section)) {
+            if (state.account.account == null) item {
+                PawIntro(stringResource(R.string.design_account_intro), stringResource(R.string.design_account_intro_help),
+                    Icons.Rounded.CloudSync)
+            }
+            if (state.account.account != null || state.busy != null || state.failure != null || !state.cleanup.isComplete) item {
                 Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
-                    Surface(shape = MaterialTheme.shapes.large,
+                    if (state.account.account != null || state.busy != null) Surface(shape = MaterialTheme.shapes.large,
                         color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(PawSpacing.large),
                             verticalArrangement = Arrangement.spacedBy(PawSpacing.medium)) {
@@ -93,33 +98,39 @@ internal fun AccountScreen(
                             OutlinedTextField(state.draft.server, onServer,
                                 label = { Text(stringResource(R.string.account_server)) }, singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                                modifier = Modifier.fillMaxWidth())
+                                 modifier = Modifier.fillMaxWidth(), colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest), shape = MaterialTheme.shapes.medium)
                             if (state.httpWarning) {
                                 PawMessage(stringResource(R.string.account_http_warning), tone = PawMessageTone.WARNING)
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(state.draft.username, onUsername,
+                                label = { Text(stringResource(R.string.account_username)) },
+                                singleLine = true, modifier = Modifier.fillMaxWidth(), colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest), shape = MaterialTheme.shapes.medium)
+                            OutlinedTextField(state.draft.deviceName, onDeviceName,
+                                label = { Text(stringResource(R.string.account_device_name)) },
+                                singleLine = true, modifier = Modifier.fillMaxWidth(), colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest), shape = MaterialTheme.shapes.medium)
+                            OutlinedTextField(state.draft.password, onPassword,
+                                label = { Text(stringResource(R.string.account_password)) },
+                                singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                                modifier = Modifier.fillMaxWidth(), colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest), shape = MaterialTheme.shapes.medium)
+                            TextButton(onClick = { securityExpanded = !securityExpanded }) {
+                                Icon(Icons.Rounded.Security, null, Modifier.size(20.dp))
+                                Spacer(Modifier.width(PawSpacing.small))
+                                Text(stringResource(R.string.design_connection_security))
+                                Spacer(Modifier.width(PawSpacing.small))
+                                Icon(if (securityExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                            }
+                            if (securityExpanded) Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(stringResource(R.string.account_trust), style = MaterialTheme.typography.bodyLarge)
-                                    Text(stringResource(R.string.account_trust_detail),
-                                        style = MaterialTheme.typography.bodySmall,
+                                    Text(stringResource(R.string.account_trust_detail), style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Switch(checked = state.trustsUserCAs, onCheckedChange = onTrust,
                                     enabled = state.busy == null && state.server != null && !state.httpWarning,
                                     modifier = Modifier.semantics { contentDescription = trustDescription })
                             }
-                            OutlinedTextField(state.draft.username, onUsername,
-                                label = { Text(stringResource(R.string.account_username)) },
-                                singleLine = true, modifier = Modifier.fillMaxWidth())
-                            OutlinedTextField(state.draft.deviceName, onDeviceName,
-                                label = { Text(stringResource(R.string.account_device_name)) },
-                                singleLine = true, modifier = Modifier.fillMaxWidth())
-                            OutlinedTextField(state.draft.password, onPassword,
-                                label = { Text(stringResource(R.string.account_password)) },
-                                singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-                                modifier = Modifier.fillMaxWidth())
-                            Button(onClick = onSignIn, enabled = state.canSignIn) {
+                            Button(onClick = onSignIn, enabled = state.canSignIn, modifier = Modifier.fillMaxWidth()) {
                                 Text(stringResource(if (state.account.account == null) R.string.account_sign_in
                                     else R.string.account_reauthenticate))
                             }
@@ -135,6 +146,7 @@ internal fun AccountScreen(
                 }
             }
             item { AccountInviteSection(state, onInviteDraft, onStageInvite, onInviteMode, onAcceptInvite, onDismissInvite) }
+            if (state.account.account == null) return@LazyColumn
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
                     PawSectionHeading(stringResource(R.string.account_sync_section))

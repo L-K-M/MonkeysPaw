@@ -14,6 +14,14 @@ internal class EditorScreenBoundaryTest {
     private val screenServices = Regex("\\b(?:AssistantAcceptance|AssistantSavePermit|EditingService|LibraryRepository)\\w*")
 
     @Test
+    fun `validation rows cannot replace the focused edit item`() {
+        val screen = packageRoot.resolve("ui/editor/EditorScreen.kt").readText()
+        val editing = screen.substringAfter("items(state.issues)").substringBefore("EditorTab.PREVIEW ->")
+        assertTrue(editing.contains("item(key = \"editor-edit-content\")"),
+            "Validation can insert rows while typing {{; the form/source item needs stable identity to retain input focus")
+    }
+
+    @Test
     fun `malformed duplicate field declarations remain inspectable without name based item keys`() {
         val source = "---\nfields:\n  field: {}\n  \"field\": {}\n---\nBody"
         val state = projectEditor(PromptCodec.parse(source, "duplicate.md"), Instant.EPOCH, ZoneId.of("UTC"))

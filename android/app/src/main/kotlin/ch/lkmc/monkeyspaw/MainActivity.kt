@@ -46,6 +46,7 @@ import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupError
 import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupScreen
 import ch.lkmc.monkeyspaw.ui.setup.KeyboardTileSetupViewModel
 import ch.lkmc.monkeyspaw.ui.setup.SettingsScreen
+import ch.lkmc.monkeyspaw.ui.setup.RememberedValuesViewModel
 import ch.lkmc.monkeyspaw.ui.theme.MonkeysPawTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -60,6 +61,7 @@ class MainActivity : ComponentActivity() {
     private val library: LibraryViewModel by viewModels()
     private val editor: EditorViewModel by viewModels()
     private val setup: KeyboardTileSetupViewModel by viewModels()
+    private val rememberedValues: RememberedValuesViewModel by viewModels()
     private val keyboardTileSetup by lazy { AndroidKeyboardTileSetup(this) }
     private val assistantSettings: AssistantSettingsViewModel by viewModels()
     private val assistantWrite: WriteViewModel by viewModels()
@@ -158,6 +160,9 @@ class MainActivity : ComponentActivity() {
                             onSkip = setup::skip, onRetry = setup::retry, modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                     } else if (setupState.settingsOpen) {
                         SettingsScreen(onKeyboardTileSetup = setup::reopen, onBack = setup::closeSettings,
+                            rememberedValues = rememberedValues.state.collectAsStateWithLifecycle().value,
+                            onRequestForget = rememberedValues::requestForget, onForget = rememberedValues::forget,
+                            onCancelForget = rememberedValues::cancel,
                             onAccount = { setup.closeSettings(); openAccount() },
                             onAssistantSettings = { setup.closeSettings(); assistantSettings.open() },
                             modifier = Modifier.padding(padding).consumeWindowInsets(padding))
@@ -231,7 +236,9 @@ class MainActivity : ComponentActivity() {
                             onTest = assistantSettings::testConnection, onCancelTest = assistantSettings::cancelTest,
                             modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                         ) else if (editing.isOpen) EditorScreen(
-                            state = editing, onEdit = editor::edit, onEditField = editor::editField, onNewPath = editor::setNewPath,
+                            state = editing, onEdit = editor::edit, onEditForm = editor::editForm, onEditMode = editor::setEditMode,
+                            onDiscardFailedForm = editor::discardFailedForm,
+                            onEditField = editor::editField, onNewPath = editor::setNewPath,
                             onTab = editor::setTab, onSave = editor::save,
                             onBack = { if (reviewing.isOpen) assistantReview.open() else editor.close() },
                             onReload = editor::reload, onRename = editor::rename, onMove = editor::move,

@@ -25,6 +25,7 @@ import ch.lkmc.monkeyspaw.core.domain.llm.ProviderSettingsError
 import ch.lkmc.monkeyspaw.core.domain.llm.SecretStoreError
 import ch.lkmc.monkeyspaw.ui.components.*
 import ch.lkmc.monkeyspaw.ui.theme.PawSpacing
+import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 
 /** Renders safe metadata and forwards intents; only the native password field owns raw input. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,7 +55,7 @@ internal fun AssistantSettingsScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var privacyDetails by remember { mutableStateOf(false) }
     var deleteConfirmation by remember(state.draft?.id) { mutableStateOf<ProviderProfileID?>(null) }
-    PawScreen(stringResource(R.string.assistant_settings_title), modifier, onBack = onBack,
+    PawScreen(stringResource(R.string.assistant_settings_title), modifier, onBack = onBack, contentMaxWidth = PawLayout.formWidth,
         actions = {
             Box {
                 IconButton(onClick = { menuOpen = true }) {
@@ -70,7 +71,7 @@ internal fun AssistantSettingsScreen(
         }, bottomBar = {
             AssistantSettingsDock(state, onSave, onTest, onCancelTest)
         }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawSpacing.large),
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(PawLayout.pageGutter),
             verticalArrangement = Arrangement.spacedBy(PawSpacing.section)) {
             // Disclose storage and outbound data before the first editable control.
             Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerLow) {
@@ -91,7 +92,8 @@ internal fun AssistantSettingsScreen(
                         enabled = state.canChangeProfiles,
                         modifier = Modifier
                             .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, state.canChangeProfiles)
-                            .fillMaxWidth())
+                            .fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                        colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest))
                     ExposedDropdownMenu(expanded = profilesExpanded, onDismissRequest = { profilesExpanded = false }) {
                         DropdownMenuItem(text = { Text(stringResource(R.string.assistant_disable)) },
                             onClick = { profilesExpanded = false; onSelect(null) })
@@ -135,7 +137,8 @@ internal fun AssistantSettingsScreen(
                 AssistantSection(stringResource(R.string.assistant_section_profile)) {
                     OutlinedTextField(value = draft.displayName, onValueChange = onRename, enabled = state.canEditDraft,
                         label = { Text(stringResource(R.string.assistant_profile_name)) }, singleLine = true,
-                        modifier = Modifier.fillMaxWidth())
+                        modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                        colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest))
                     Text(stringResource(R.string.assistant_provider_kind), style = MaterialTheme.typography.labelLarge)
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         ProviderKind.entries.forEachIndexed { index, kind ->
@@ -152,7 +155,8 @@ internal fun AssistantSettingsScreen(
                     OutlinedTextField(value = draft.baseURL, onValueChange = onBaseURL, enabled = state.canEditDraft,
                         label = { Text(stringResource(R.string.assistant_base_url)) }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth())
+                        modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                        colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest))
                 }
                 AssistantSection(stringResource(R.string.assistant_section_model)) {
                     var modelsExpanded by remember { mutableStateOf(false) }
@@ -165,7 +169,8 @@ internal fun AssistantSettingsScreen(
                                     enabled = state.canEditDraft && state.availableModels.isNotEmpty()) {
                                     Icon(Icons.Rounded.ArrowDropDown, stringResource(R.string.assistant_choose_model))
                                 }
-                            }, modifier = Modifier.fillMaxWidth())
+                            }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                            colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest))
                         DropdownMenu(expanded = modelsExpanded, onDismissRequest = { modelsExpanded = false }) {
                             for (model in state.availableModels) DropdownMenuItem(text = {
                                 val name = model.displayName
