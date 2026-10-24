@@ -812,7 +812,8 @@ final class MacLibraryCommandTests: XCTestCase {
             #selector(LibraryWindowController.duplicateDocument(_:)), #selector(LibraryWindowController.renameDocument(_:)),
             #selector(LibraryWindowController.moveDocument(_:)), #selector(LibraryWindowController.revertDocumentToSaved(_:)),
             #selector(LibraryWindowController.showInFinder(_:)), #selector(LibraryWindowController.deleteLibraryPrompt(_:))]
-        let items = actions.compactMap { action in menu.items.first { $0.action == action } }
+        let commandItems = menu.items + menu.items.compactMap(\.submenu).flatMap(\.items)
+        let items = actions.compactMap { action in commandItems.first { $0.action == action } }
         XCTAssertEqual(items.count, actions.count)
         let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
         other.isReleasedWhenClosed = false

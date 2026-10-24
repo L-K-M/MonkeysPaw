@@ -7,6 +7,8 @@ enum LibraryAssistantStrings {
     static let improveDirectly = "Improve Directly"
     static let generate = "Generate prompt"
     static let generationTitle = "Generate with Assistant"
+    static let improvementTitle = "Improve Prompt"
+    static let openImprovement = "Open improvement…"
     static let review = "Review"
     static let improveFindings = "Improve selected findings"
     static let generateImprovements = "Generate improvements"

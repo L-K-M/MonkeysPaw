@@ -3,7 +3,7 @@ import MonkeysPawCore
 import SwiftUI
 
 struct LibraryAssistantView: View {
-    enum Purpose { case currentPrompt, newPrompt }
+    enum Purpose { case currentPrompt, newPrompt, improvement }
 
     @ObservedObject var presentation: LibraryAssistantViewState
     var purpose = Purpose.currentPrompt
@@ -24,7 +24,7 @@ struct LibraryAssistantView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    inputs
+                    if purpose != .improvement { inputs }
                     if presentation.state.mutationAccess == .privateCopy {
                         Text(LibraryAssistantStrings.viewer).font(.caption)
                     }
@@ -37,10 +37,22 @@ struct LibraryAssistantView: View {
                     }
                     if purpose == .currentPrompt, presentation.flow == .review,
                        let review = presentation.state.review { findings(review) }
-                    if let artifact = presentation.state.artifact { draft(artifact) }
-                    issues
-                    if let diff = presentation.state.diff { LibraryDiffView(diff: diff) }
-                    actions
+                    if purpose == .currentPrompt {
+                        if presentation.canShowImprovement {
+                            Button(LibraryAssistantStrings.openImprovement, action: presentation.showImprovement)
+                                .accessibilityIdentifier("library-assistant-open-improvement")
+                        } else {
+                            actions
+                        }
+                    } else {
+                        if purpose == .newPrompt, let artifact = presentation.state.artifact { draft(artifact) }
+                        issues
+                        if let diff = presentation.state.diff { LibraryDiffView(diff: diff) }
+                        if purpose == .improvement, let artifact = presentation.state.artifact, !artifact.notes.isEmpty {
+                            Text(verbatim: artifact.notes).textSelection(.enabled)
+                        }
+                        actions
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

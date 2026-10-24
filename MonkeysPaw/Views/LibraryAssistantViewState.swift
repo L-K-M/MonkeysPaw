@@ -5,6 +5,7 @@ import SwiftUI
 /// A native binding for one editor session. Core owns requests, merging and saves.
 final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     enum Flow: Hashable { case review, improve }
+    private enum RequestKind { case write, review, improve }
 
     @Published private(set) var state: AssistantState
     @Published private(set) var editorState: EditorState
@@ -15,6 +16,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     @Published private(set) var instructionFocusRevision: UInt64 = 0
     var onHighlight: ((Range<Int>?) -> Void)?
     var onRequest: (() -> Void)?
+    var onShowImprovement: (() -> Void)?
     private var model: AssistantModel?
     private let editor: EditorModel
     private let main: MainThread
@@ -22,7 +24,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     private let onAcceptance: (AssistantAcceptanceOutcome) -> Void
     private var snapshot: AssistantEditorSnapshot?
     private var timerID: UUID?
-    private var requestUsesSource = false
+    private var requestKind = RequestKind.write
 
     init(model: AssistantModel, editor: EditorModel, available: Bool, main: MainThread,
          scheduler: MonkeysPawCore.Scheduler, onAcceptance: @escaping (AssistantAcceptanceOutcome) -> Void) {
@@ -80,10 +82,11 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         canReview && (!state.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.selectedFindings.isEmpty)
     }
     var canAccept: Bool { libraryAvailable && !editorIOBusy && editorState.conflict == nil && model?.canAccept == true }
-    private var requestDisabledMessage: String? { requestUsesSource ? sourceDisabledMessage : writeDisabledMessage }
+    private var requestDisabledMessage: String? { requestKind == .write ? writeDisabledMessage : sourceDisabledMessage }
     var canRetry: Bool { requestDisabledMessage == nil && model?.canRetry == true }
     var canShowDiff: Bool { requestDisabledMessage == nil && model?.canShowDiff == true }
     var canSelectFindings: Bool { canReview && !state.isStale }
+    var canShowImprovement: Bool { requestKind == .improve && state.phase != .idle }
     var improveTitle: String {
         if state.mutationAccess == .privateCopy { return "Improve a private copy" }
         return flow == .review && !state.selectedFindings.isEmpty
@@ -114,13 +117,21 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         return LibraryAssistantStrings.phase(state.phase)
     }
 
-    func write() { if canWrite { requestUsesSource = false; onRequest?(); onHighlight?(nil); model?.write(brief: brief) } }
-    func review() { if canReview { requestUsesSource = true; onRequest?(); onHighlight?(nil); model?.review() } }
+    func write() { if canWrite { requestKind = .write; onRequest?(); onHighlight?(nil); model?.write(brief: brief) } }
+    func review() { if canReview { requestKind = .review; onRequest?(); onHighlight?(nil); model?.review() } }
     func editInstruction(_ value: String) { model?.editInstruction(value) }
     /// "Improve with Assistant" focuses the instruction field once the pane
     /// has settled; each request bumps the revision the view observes.
     func focusInstruction() { instructionFocusRevision &+= 1 }
-    func improve() { if canImprove { requestUsesSource = true; onRequest?(); onHighlight?(nil); model?.improve() } }
+    func improve() {
+        guard canImprove else { return }
+        requestKind = .improve
+        onRequest?()
+        onHighlight?(nil)
+        model?.improve()
+        showImprovement()
+    }
+    func showImprovement() { if canShowImprovement { onShowImprovement?() } }
     func toggleFinding(_ index: Int) { if canSelectFindings { model?.toggleFinding(at: index) } }
     func highlightFinding(_ index: Int) {
         guard canSelectFindings else { onHighlight?(nil); return }
@@ -168,6 +179,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         feedback = ""
         onHighlight = nil
         onRequest = nil
+        onShowImprovement = nil
     }
 
     private func updateTimer() {

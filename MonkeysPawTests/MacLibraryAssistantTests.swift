@@ -497,10 +497,10 @@ final class MacLibraryAssistantTests: XCTestCase {
     func testSelectionAndLibrarySwitchDropHeldRepliesAndRetainSharedService() throws {
         let h = try MacLibraryAssistantHarness(secondSource: "Second")
         defer { h.close() }
-        let original = try h.assistant()
         let service = try XCTUnwrap(h.delegate.assistantService)
         h.presentation.generatePromptWithAssistant()
         XCTAssertTrue(h.presentation.isGeneratingPrompt)
+        let original = try h.assistant()
         original.brief = "Brief"
         try h.request { original.write() }
         h.presentation.selectPath("two.md")
@@ -517,8 +517,9 @@ final class MacLibraryAssistantTests: XCTestCase {
         try otherFiles.write(Data("Other graph".utf8), at: "one.md")
         h.presentation.generatePromptWithAssistant()
         XCTAssertTrue(h.presentation.isGeneratingPrompt)
-        second.brief = "Another brief"
-        try h.request { second.write() }
+        let secondGeneration = try h.assistant()
+        secondGeneration.brief = "Another brief"
+        try h.request { secondGeneration.write() }
         XCTAssertEqual(h.delegate.switchLibrary(to: otherRoot), .switched)
         XCTAssertFalse(h.presentation.isGeneratingPrompt)
         XCTAssertNil(h.presentation.assistant)
@@ -822,6 +823,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         try h.request { view.write() }
         try h.respond(MacLibraryAssistantHarness.artifact())
         let candidate = view.state.candidate?.content.canonicalBytes
+        let artifact = view.state.artifact
         view.accept()
         XCTAssertTrue(generation.cancelled)
         let guardDialog = try XCTUnwrap(dialogs.last)
@@ -834,10 +836,13 @@ final class MacLibraryAssistantTests: XCTestCase {
             return XCTFail("Expected the generation sheet to resume")
         }
         XCTAssertTrue(resumed === view)
-        XCTAssertEqual(view.state.candidate?.content.canonicalBytes, candidate)
+        XCTAssertEqual(view.state.artifact, artifact)
         XCTAssertEqual(view.brief, "A new template")
         XCTAssertEqual(h.presentation.editorState.source, "Unsaved source")
         XCTAssertEqual(try h.files.listFiles().count, 1)
+        view.showDiff()
+        h.work.drain()
+        XCTAssertEqual(view.state.candidate?.content.canonicalBytes, candidate)
         view.accept()
         try XCTUnwrap(dialogs.last).respond(.decision(.save))
         h.work.drain()
@@ -852,6 +857,76 @@ final class MacLibraryAssistantTests: XCTestCase {
         let savedSource = PromptCodec.parseFile(try h.files.read(at: "one.md"), filename: "one.md")
         XCTAssertEqual(savedSource.body, "Unsaved source")
         XCTAssertEqual(try h.files.listFiles().count, 2)
+    }
+
+    func testImproveOpensResizableWindowAndInspectorCanHideWithoutCancelling() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.flow = .improve
+        view.editInstruction("Clarify the template")
+        try h.request { view.improve() }
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        let results = try XCTUnwrap(controller.improvementWindow)
+        let window = try XCTUnwrap(results.window)
+        XCTAssertTrue(window.isVisible)
+        XCTAssertTrue(window.styleMask.contains(.resizable))
+        XCTAssertFalse(window is NSPanel)
+        XCTAssertNil(window.sheetParent)
+        XCTAssertNil(controller.window?.attachedSheet)
+        XCTAssertTrue(results.presentation === view)
+        h.presentation.setInspectorVisible(false)
+        XCTAssertTrue(view.isWorking)
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        let candidate = view.state.candidate?.content.canonicalBytes
+        window.setContentSize(NSSize(width: 1040, height: 640))
+        let frame = window.frame
+        view.flow = .review
+        view.flow = .improve
+        view.showImprovement()
+        XCTAssertTrue(controller.improvementWindow === results)
+        XCTAssertEqual(window.frame, frame)
+        XCTAssertEqual(view.state.candidate?.content.canonicalBytes, candidate)
+        XCTAssertEqual(h.transport.requests.count, 1)
+        window.performClose(nil)
+        XCTAssertNil(controller.improvementWindow)
+        XCTAssertEqual(view.state.phase, .idle)
+        XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+    }
+
+    func testEditorSwitchClosesImprovementAndRetiresItsReply() throws {
+        let h = try MacLibraryAssistantHarness(secondSource: "Second")
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        let results = try XCTUnwrap(controller.improvementWindow?.window)
+        h.presentation.selectPath("two.md")
+        h.work.drain()
+        XCTAssertNil(controller.improvementWindow)
+        XCTAssertFalse(results.isVisible)
+        XCTAssertFalse(view.canAccept)
+        h.transport.finish(try h.envelope(MacLibraryAssistantHarness.artifact(body: "Obsolete")))
+        XCTAssertEqual(h.presentation.editorState.source, "Second")
+        XCTAssertEqual(try h.files.listFiles().count, 2)
+    }
+
+    func testDiffWrapsParagraphsAndUnbrokenLinesAtWindowWidths() throws {
+        func height(_ body: String, width: CGFloat) throws -> CGFloat {
+            let diff = try ArtifactDiff.compare(originalBytes: Data(body.utf8), candidateBytes: Data((body + " changed").utf8))
+            let host = NSHostingView(rootView: LibraryDiffView(diff: diff).frame(width: width))
+            host.layoutSubtreeIfNeeded()
+            return host.fittingSize.height
+        }
+
+        let short = try height("Short line", width: 640)
+        for body in [String(repeating: "A long paragraph with words. ", count: 80), String(repeating: "abcdefghij", count: 160)] {
+            let narrow = try height(body, width: 640)
+            let wide = try height(body, width: 1040)
+            XCTAssertGreaterThan(narrow, wide, "Narrower columns must wrap to more lines")
+            XCTAssertGreaterThan(narrow, short * 2, "Long content must grow vertically instead of scrolling sideways")
+        }
     }
 
     func testOpeningAndClosingGenerationPreservesCurrentPromptWork() throws {
@@ -960,7 +1035,9 @@ private final class MacLibraryAssistantHarness {
         presentation.showAssistant()
     }
 
-    func assistant() throws -> LibraryAssistantViewState { try XCTUnwrap(presentation.assistant) }
+    func assistant() throws -> LibraryAssistantViewState {
+        try XCTUnwrap(presentation.promptGeneration ?? presentation.assistant)
+    }
 
     func request(_ start: () -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
         let sent = XCTestExpectation(description: "Stub transport received an explicit request")

@@ -100,15 +100,23 @@ The example shows Source; Edit opens the properties form and body editor.
   findings followed by optional instructions and **Improve selected findings**.
   Direct improvement needs only an instruction; its action is **Generate
   improvements**. Switching tabs preserves instructions, selected findings and
-  the candidate. Both routes show the same diff and explicit Accept/Reject.
+  the candidate. Either improvement action opens a separate, resizable desktop
+  window immediately, showing progress, validation, the diff and Accept/Reject.
+  **Open improvement…** in the inspector returns to that window. Diff columns
+  share the available width and wrap long lines, including long tokens;
+  wrapping preserves the source bytes, line numbers and newline markers.
+  Closing the window cancels its request/draft; editor-session or library
+  retirement closes it. An acceptance must finish or be cancelled through its
+  editor guard before the window closes.
 - **Assistant creation (macOS).** File and the toolbar's **New Prompt** menu
   offer **Blank Prompt…** (⌘N) and **Generate with Assistant…**. Generation
   opens a separate sheet with a brief, candidate and diff; it sends no current
   prompt text. Its own Assistant session preserves the current prompt's review,
   instructions and candidate when generation opens or closes. It uses §7.3's
   existing creation destination and acceptance contract. Unsaved-edit and
-  conflict sheets temporarily replace the generation
-  sheet without losing its candidate. Closing cancels it; switching editor
+  conflict sheets temporarily replace the generation sheet without losing its
+  draft. A changed guard snapshot requires a fresh diff before acceptance.
+  Closing cancels it; switching editor
   sessions or libraries retires it. Linux and Android retain their existing
   Assistant navigation; request, prompt and acceptance semantics are unchanged.
 - **Empty and error states.** Centered placeholder text in the list and

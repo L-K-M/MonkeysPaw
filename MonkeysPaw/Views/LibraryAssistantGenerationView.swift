@@ -31,6 +31,7 @@ extension LibraryWindowController {
         let sheet = NSPanel(contentRect: .zero, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         sheet.title = LibraryAssistantStrings.generationTitle
         sheet.isReleasedWhenClosed = false
+        sheet.hidesOnDeactivate = false
         let host = NSHostingController(rootView: LibraryAssistantGenerationView(presentation: assistant) { [weak window, weak sheet] in
             guard let window, let sheet else { return }
             window.endSheet(sheet, returnCode: .cancel)

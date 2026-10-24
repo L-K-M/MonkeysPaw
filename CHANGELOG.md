@@ -17,6 +17,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - macOS Assistant separates Review & Improve from Improve Directly. New
   prompt generation moves to New Prompt → Generate with Assistant….
+- Prompt improvements open in a separate resizable macOS window with wrapping
+  diff columns.
 - Compose runs only the sync server behind your existing HTTPS proxy.
   Removed bundled Caddy and added Nginx Proxy Manager network/setup guidance.
 - Local macOS builds no longer need create-dmg. Without it, the dmg has the
