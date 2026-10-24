@@ -83,7 +83,15 @@ The tour includes compact windows, Details, Source, inspector settings,
 native typing, undo/redo, Save with disk readback, and close/reopen in both
 appearances. `MacLibraryWindowTests` covers search arrows/Return, composition,
 draft guards and Dock reopening. `MacForgetControlsTests` checks focused native
-editors after Forget. Results for this refinement are pending macOS CI.
+editors after Forget.
+
+Verified at `174ed6e` in [macOS CI](https://github.com/L-K-M/MonkeysPaw/actions/runs/40041240997):
+702 hosted tests, zero failures and one explicit login-Keychain integration
+skip. This includes Return through an in-flight save, native undo baselines,
+Forget, compact inspector layout and fresh-window sidebar restoration. The
+same run built both architectures, verified signatures/checksums and launched
+both packaged copies. `MacUITour` contains the inspected light/dark PNGs;
+`MonkeysPaw-macos-artifacts` contains the runnable preview dmg and zip.
 
 Design references: [Apple toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars)
 and [Liquid Glass adoption](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass).
