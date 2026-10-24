@@ -45,6 +45,8 @@ browser inside half the display, leaving little space for prompts.
 - **Settings/account.** Preference-style groups with clear connection, provider,
   keyboard and sync sections. Destructive actions are distinguishable. Secret
   entry keeps its native non-saving field and existing privacy boundaries.
+  Provider-kind choices use full-width radio rows; labels wrap at large font
+  sizes, and the whole row is one selection target.
 - **Assistant/conflicts.** Consistent app bars, progressive disclosure of drafts
   and diffs, one primary action per state, readable findings and explicit recovery.
 - **Setup/seeds/share.** Focused steps and clearly distinguished progress,
