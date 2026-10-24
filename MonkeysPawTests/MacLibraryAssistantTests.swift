@@ -127,6 +127,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         let h = try MacLibraryAssistantHarness(source: source)
         defer { h.close() }
         let view = try h.assistant()
+        XCTAssertEqual(view.flow, .review)
         try h.request { view.review() }
         try h.respond(["summary": "Two findings", "findings": [
             ["criterion": "clarity", "severity": "high", "quote": quote, "problem": "Unclear", "suggestion": "Clarify"],
@@ -154,12 +155,29 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertNil(text.layoutManager?.temporaryAttribute(.backgroundColor,
             atCharacterIndex: text.selectedRange().location, effectiveRange: nil))
         view.editInstruction("Clarify the template")
+        let transcript = view.state.transcript
+        view.flow = .improve
+        XCTAssertEqual(view.state.selectedFindings, [0, 1])
+        XCTAssertEqual(view.state.instruction, "Clarify the template")
+        XCTAssertEqual(view.improveTitle, LibraryAssistantStrings.generateImprovements)
+        view.flow = .review
+        XCTAssertEqual(view.state.transcript, transcript)
+        XCTAssertEqual(view.state.selectedFindings, [0, 1])
+        XCTAssertEqual(view.improveTitle, LibraryAssistantStrings.improveFindings)
+        XCTAssertEqual(h.transport.requests.count, 1, "Changing tabs must not send a request")
         try h.request { view.improve() }
         let request = String(decoding: try XCTUnwrap(h.transport.requests.last?.body), as: UTF8.self)
         XCTAssertTrue(request.contains("Unclear"))
         XCTAssertTrue(request.contains("Missing"))
         XCTAssertTrue(request.contains("Clarify the template"))
         try h.respond(MacLibraryAssistantHarness.artifact(body: "Improved"))
+        let candidate = view.state.candidate?.content.canonicalBytes
+        let diff = view.state.diff
+        view.flow = .improve
+        view.flow = .review
+        XCTAssertEqual(view.state.candidate?.content.canonicalBytes, candidate)
+        XCTAssertEqual(view.state.diff, diff)
+        XCTAssertTrue(view.canAccept)
         view.accept()
         h.work.drain()
         XCTAssertEqual(view.state.phase, .saved)
@@ -172,10 +190,12 @@ final class MacLibraryAssistantTests: XCTestCase {
         let h = try MacLibraryAssistantHarness(source: "{{old}}")
         defer { h.close() }
         let view = try h.assistant()
+        view.flow = .improve
         view.editInstruction("Rename the placeholder")
         XCTAssertTrue(view.canImprove)
         try h.request { view.improve() }
         try h.respond(MacLibraryAssistantHarness.artifact(body: "{{new}}"))
+        XCTAssertEqual(h.transport.requests.count, 1, "Direct improvement does not run a review")
         XCTAssertEqual(view.state.diff?.placeholderWarnings, [.renamed(from: "old", to: "new")])
         XCTAssertNotNil(view.state.diff?.frontMatter)
         h.presentation.edit("Changed {{old}}")
@@ -479,9 +499,12 @@ final class MacLibraryAssistantTests: XCTestCase {
         defer { h.close() }
         let original = try h.assistant()
         let service = try XCTUnwrap(h.delegate.assistantService)
+        h.presentation.generatePromptWithAssistant()
+        XCTAssertTrue(h.presentation.isGeneratingPrompt)
         original.brief = "Brief"
         try h.request { original.write() }
         h.presentation.selectPath("two.md")
+        XCTAssertFalse(h.presentation.isGeneratingPrompt)
         XCTAssertFalse(original.canWrite)
         XCTAssertEqual(try h.assistant().writeDisabledMessage, LibraryAssistantStrings.busy)
         h.work.drain()
@@ -492,9 +515,12 @@ final class MacLibraryAssistantTests: XCTestCase {
         let otherFiles = try RootedFileStore(root: otherRoot)
         try otherFiles.createRoot()
         try otherFiles.write(Data("Other graph".utf8), at: "one.md")
+        h.presentation.generatePromptWithAssistant()
+        XCTAssertTrue(h.presentation.isGeneratingPrompt)
         second.brief = "Another brief"
         try h.request { second.write() }
         XCTAssertEqual(h.delegate.switchLibrary(to: otherRoot), .switched)
+        XCTAssertFalse(h.presentation.isGeneratingPrompt)
         XCTAssertNil(h.presentation.assistant)
         XCTAssertFalse(second.canWrite)
         XCTAssertTrue(h.delegate.assistantService === service)
@@ -735,6 +761,161 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertTrue(text.hasMarkedText())
         XCTAssertNil(text.layoutManager?.temporaryAttribute(.backgroundColor, atCharacterIndex: 1, effectiveRange: nil))
         coordinator.deactivate()
+    }
+
+    func testGenerationCommandUsesSeparateSheetAndCreatesOnlyAfterAccept() throws {
+        var dialogs: [MacLibraryAssistantDialog] = []
+        let source = "current-template-not-for-generation"
+        let h = try MacLibraryAssistantHarness(source: source, editorDialog: { _, dialog, respond in
+            let record = MacLibraryAssistantDialog(dialog: dialog, respond: respond)
+            dialogs.append(record)
+            return { record.cancelled = true }
+        })
+        defer { h.close() }
+        h.presentation.showInspector(.fields)
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        let window = try XCTUnwrap(controller.window)
+        let command = NSMenuItem(title: MainMenuStrings.generatePrompt,
+            action: #selector(LibraryWindowController.writeWithAssistant(_:)), keyEquivalent: "")
+        XCTAssertTrue(controller.validateLibraryMenuItem(command, in: window))
+        controller.writeWithAssistant(nil)
+        let generation = try XCTUnwrap(dialogs.last)
+        guard case .promptGeneration(let view) = generation.dialog else { return XCTFail("Expected generation sheet") }
+        XCTAssertTrue(h.presentation.isGeneratingPrompt)
+        XCTAssertFalse(h.presentation.isAssistantVisible)
+        XCTAssertFalse(controller.validateLibraryMenuItem(command, in: window))
+        XCTAssertEqual(h.transport.requests.count, 0)
+        XCTAssertEqual(try h.files.listFiles().count, 1)
+        view.brief = "A separate new template"
+        try h.request { view.write() }
+        let request = String(decoding: try XCTUnwrap(h.transport.requests.last?.body), as: UTF8.self)
+        XCTAssertTrue(request.contains("A separate new template"))
+        XCTAssertFalse(request.contains(source))
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        let candidate = try XCTUnwrap(view.state.candidate?.content.canonicalBytes)
+        XCTAssertEqual(try h.files.listFiles().count, 1)
+        view.accept()
+        h.work.drain()
+        XCTAssertFalse(h.presentation.isGeneratingPrompt)
+        XCTAssertTrue(generation.cancelled)
+        let path = try XCTUnwrap(h.presentation.editorState.prompt?.relativePath)
+        XCTAssertNotEqual(path, "one.md")
+        XCTAssertEqual(try h.files.read(at: path), candidate)
+        XCTAssertEqual(try h.files.read(at: "one.md"), Data(source.utf8))
+        generation.respond(.dismissPromptGeneration)
+        XCTAssertEqual(try h.files.listFiles().count, 2, "A retired sheet cannot discard a saved prompt")
+    }
+
+    func testGenerationSheetSuspendsForDirtyGuardAndRetainsCandidate() throws {
+        var dialogs: [MacLibraryAssistantDialog] = []
+        let h = try MacLibraryAssistantHarness(editorDialog: { _, dialog, respond in
+            let record = MacLibraryAssistantDialog(dialog: dialog, respond: respond)
+            dialogs.append(record)
+            return { record.cancelled = true }
+        })
+        defer { h.close() }
+        h.presentation.edit("Unsaved source")
+        h.presentation.generatePromptWithAssistant()
+        let generation = try XCTUnwrap(dialogs.last)
+        let view = try h.assistant()
+        view.brief = "A new template"
+        try h.request { view.write() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        let candidate = view.state.candidate?.content.canonicalBytes
+        view.accept()
+        XCTAssertTrue(generation.cancelled)
+        let guardDialog = try XCTUnwrap(dialogs.last)
+        guard case .decision = guardDialog.dialog else { return XCTFail("Expected unsaved-edit guard") }
+        generation.respond(.dismissPromptGeneration)
+        XCTAssertTrue(view.state.isAccepting, "Suspending a sheet must not cancel acceptance")
+        guardDialog.respond(.decision(.cancel))
+        h.work.drain()
+        guard case .promptGeneration(let resumed) = try XCTUnwrap(dialogs.last).dialog else {
+            return XCTFail("Expected the generation sheet to resume")
+        }
+        XCTAssertTrue(resumed === view)
+        XCTAssertEqual(view.state.candidate?.content.canonicalBytes, candidate)
+        XCTAssertEqual(view.brief, "A new template")
+        XCTAssertEqual(h.presentation.editorState.source, "Unsaved source")
+        XCTAssertEqual(try h.files.listFiles().count, 1)
+        view.accept()
+        try XCTUnwrap(dialogs.last).respond(.decision(.save))
+        h.work.drain()
+        XCTAssertTrue(h.presentation.isGeneratingPrompt)
+        XCTAssertFalse(view.canAccept, "Saving the source requires a fresh diff")
+        view.showDiff()
+        h.work.drain()
+        XCTAssertTrue(view.canAccept)
+        view.accept()
+        h.work.drain()
+        XCTAssertFalse(h.presentation.isGeneratingPrompt)
+        let savedSource = PromptCodec.parseFile(try h.files.read(at: "one.md"), filename: "one.md")
+        XCTAssertEqual(savedSource.body, "Unsaved source")
+        XCTAssertEqual(try h.files.listFiles().count, 2)
+    }
+
+    func testOpeningAndClosingGenerationPreservesCurrentPromptWork() throws {
+        enum Stage: CaseIterable { case review, candidate }
+        for stage in Stage.allCases {
+            var dialogs: [MacLibraryAssistantDialog] = []
+            let h = try MacLibraryAssistantHarness(editorDialog: { _, dialog, respond in
+                let record = MacLibraryAssistantDialog(dialog: dialog, respond: respond)
+                dialogs.append(record)
+                return { record.cancelled = true }
+            })
+            defer { h.close() }
+            let view = try h.assistant()
+            try h.request { view.review() }
+            try h.respond(["summary": "Review", "findings": [
+                ["criterion": "clarity", "severity": "low", "quote": "Original",
+                 "problem": "Unclear", "suggestion": "Clarify"]
+            ]], phase: .draft)
+            view.toggleFinding(0)
+            view.editInstruction("Clarify the template")
+            if stage == .candidate {
+                try h.request { view.improve() }
+                try h.respond(MacLibraryAssistantHarness.artifact())
+            }
+            let before = view.state
+            let requests = h.transport.requests.count
+            h.presentation.generatePromptWithAssistant()
+            let dialog = try XCTUnwrap(dialogs.last)
+            guard case .promptGeneration(let generation) = dialog.dialog else { return XCTFail("Expected generation") }
+            XCTAssertFalse(generation === view)
+            XCTAssertNil(generation.state.artifact)
+            dialog.respond(.dismissPromptGeneration)
+            XCTAssertTrue(try h.assistant() === view)
+            XCTAssertEqual(view.state.review, before.review)
+            XCTAssertEqual(view.state.selectedFindings, before.selectedFindings)
+            XCTAssertEqual(view.state.instruction, before.instruction)
+            XCTAssertEqual(view.state.candidate?.content.canonicalBytes, before.candidate?.content.canonicalBytes)
+            XCTAssertEqual(view.state.diff, before.diff)
+            XCTAssertEqual(view.state.transcript, before.transcript)
+            XCTAssertEqual(h.transport.requests.count, requests)
+            XCTAssertEqual(try h.files.listFiles().count, 1)
+        }
+    }
+
+    func testNativeGenerationSheetDismissalAndCancelCompleteOnce() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let parent = try XCTUnwrap(h.delegate.libraryWindow?.window)
+        let dismissed = expectation(description: "Generation sheet closed")
+        var replies: [LibraryEditorResponse] = []
+        let cancel = LibraryWindowController.presentEditorDialog(in: parent,
+            dialog: .promptGeneration(try h.assistant())) { response in
+                replies.append(response)
+                dismissed.fulfill()
+            }
+        XCTAssertEqual(parent.attachedSheet?.title, LibraryAssistantStrings.generationTitle)
+        XCTAssertNotNil(parent.attachedSheet?.contentViewController)
+        XCTAssertEqual((parent.attachedSheet as? NSPanel)?.hidesOnDeactivate, false)
+        cancel()
+        wait(for: [dismissed], timeout: 3)
+        cancel()
+        XCTAssertEqual(replies, [.dismissPromptGeneration])
+        XCTAssertEqual(h.transport.requests.count, 0)
+        XCTAssertEqual(try h.files.listFiles().count, 1)
     }
 }
 

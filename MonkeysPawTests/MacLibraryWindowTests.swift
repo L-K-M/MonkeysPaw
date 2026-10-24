@@ -484,6 +484,11 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(controller.toolbarDefaultItemIdentifiers(toolbar), [.toggleSidebar, .sidebarTrackingSeparator,
             .flexibleSpace, .libraryNewPrompt, .libraryListSeparator, .libraryEditorMode, .flexibleSpace, .libraryFavorite,
             .libraryAssistant, .librarySearch, .inspectorTrackingSeparator, .toggleInspector])
+        let newPrompt = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .libraryNewPrompt,
+            willBeInsertedIntoToolbar: false) as? NSMenuToolbarItem)
+        XCTAssertEqual(newPrompt.menu.items.map(\.title), [MainMenuStrings.blankPrompt, MainMenuStrings.generatePrompt])
+        XCTAssertEqual(newPrompt.menu.items.map(\.action), [#selector(LibraryWindowController.newDocument(_:)),
+            #selector(LibraryWindowController.writeWithAssistant(_:))])
         for id in [NSToolbarItem.Identifier.libraryReveal, .libraryImport, .libraryDelete, .space] {
             XCTAssertTrue(controller.toolbarAllowedItemIdentifiers(toolbar).contains(id))
         }

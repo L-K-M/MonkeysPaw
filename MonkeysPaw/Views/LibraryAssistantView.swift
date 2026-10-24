@@ -3,22 +3,25 @@ import MonkeysPawCore
 import SwiftUI
 
 struct LibraryAssistantView: View {
+    enum Purpose { case currentPrompt, newPrompt }
+
     @ObservedObject var presentation: LibraryAssistantViewState
+    var purpose = Purpose.currentPrompt
     @FocusState private var instructionFocused: Bool
     @State private var appliedFocusRevision: UInt64 = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker(LibraryAssistantStrings.flow, selection: $presentation.flow) {
-                Text(LibraryAssistantStrings.write).tag(LibraryAssistantViewState.Flow.write)
-                Text(LibraryAssistantStrings.review).tag(LibraryAssistantViewState.Flow.review)
-                Text(LibraryAssistantStrings.improve).tag(LibraryAssistantViewState.Flow.improve)
+            if purpose == .currentPrompt {
+                Picker(LibraryAssistantStrings.flow, selection: $presentation.flow) {
+                    Text(LibraryAssistantStrings.reviewAndImprove).tag(LibraryAssistantViewState.Flow.review)
+                    Text(LibraryAssistantStrings.improveDirectly).tag(LibraryAssistantViewState.Flow.improve)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+                .disabled(presentation.isWorking || presentation.state.isAccepting)
             }
-            .pickerStyle(.segmented)
-            // The inspector is narrow; the segment titles explain themselves.
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-            .disabled(presentation.isWorking || presentation.state.isAccepting)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     inputs
@@ -28,9 +31,12 @@ struct LibraryAssistantView: View {
                     if presentation.isWorking {
                         HStack { ProgressView().controlSize(.small); Text(LibraryAssistantStrings.working) }
                     }
-                    Text(presentation.resultMessage).fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("library-assistant-result")
-                    if let review = presentation.state.review { findings(review) }
+                    if !presentation.resultMessage.isEmpty {
+                        Text(presentation.resultMessage).fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("library-assistant-result")
+                    }
+                    if purpose == .currentPrompt, presentation.flow == .review,
+                       let review = presentation.state.review { findings(review) }
                     if let artifact = presentation.state.artifact { draft(artifact) }
                     issues
                     if let diff = presentation.state.diff { LibraryDiffView(diff: diff) }
@@ -61,23 +67,25 @@ struct LibraryAssistantView: View {
     }
 
     @ViewBuilder private var inputs: some View {
-        switch presentation.flow {
-        case .write:
+        if purpose == .newPrompt {
             Text(LibraryAssistantStrings.writeHint).font(.caption)
             TextEditor(text: $presentation.brief).frame(minHeight: 72, maxHeight: 120)
                 .accessibilityLabel(LibraryAssistantStrings.brief)
                 .disabled(presentation.isWorking || presentation.state.isAccepting)
-            Button(LibraryAssistantStrings.write, action: presentation.write).disabled(!presentation.canWrite)
+            Button(LibraryAssistantStrings.generate, action: presentation.write).disabled(!presentation.canWrite)
                 .accessibilityIdentifier("library-assistant-write")
             if let message = presentation.writeDisabledMessage { Text(message).font(.caption) }
-        case .review:
-            Text(LibraryAssistantStrings.reviewHint).font(.caption)
-            Button(LibraryAssistantStrings.review, action: presentation.review).disabled(!presentation.canReview)
-                .accessibilityIdentifier("library-assistant-review")
-            if let message = presentation.sourceDisabledMessage { Text(message).font(.caption) }
-        case .improve:
-            instruction
-            if let message = presentation.sourceDisabledMessage { Text(message).font(.caption) }
+        } else {
+            switch presentation.flow {
+            case .review:
+                Text(LibraryAssistantStrings.reviewHint).font(.caption)
+                Button(LibraryAssistantStrings.review, action: presentation.review).disabled(!presentation.canReview)
+                    .accessibilityIdentifier("library-assistant-review")
+                if let message = presentation.sourceDisabledMessage { Text(message).font(.caption) }
+            case .improve:
+                instruction
+                if let message = presentation.sourceDisabledMessage { Text(message).font(.caption) }
+            }
         }
     }
 
@@ -89,6 +97,9 @@ struct LibraryAssistantView: View {
                 .focused($instructionFocused)
                 .disabled(presentation.isWorking || presentation.state.isAccepting)
             Text(LibraryAssistantStrings.instructionHint).font(.caption)
+            if presentation.flow == .improve, !presentation.state.selectedFindings.isEmpty {
+                Text(LibraryAssistantStrings.selectedFindingsHint).font(.caption)
+            }
             Button(presentation.improveTitle, action: presentation.improve).disabled(!presentation.canImprove)
                 .accessibilityIdentifier("library-assistant-improve")
         }
@@ -120,7 +131,7 @@ struct LibraryAssistantView: View {
                 }
                 Divider()
             }
-            if presentation.flow != .improve { instruction }
+            instruction
         }
         .accessibilityIdentifier("library-assistant-findings")
     }
@@ -168,17 +179,21 @@ struct LibraryAssistantView: View {
             if presentation.isWorking || presentation.state.isAccepting {
                 Button(LibraryAssistantStrings.cancel, action: presentation.cancel)
             } else {
-                HStack {
-                    Button(LibraryAssistantStrings.showDiff, action: presentation.showDiff).disabled(!presentation.canShowDiff)
-                    Button(LibraryAssistantStrings.accept, action: presentation.accept).disabled(!presentation.canAccept)
-                        .accessibilityIdentifier("library-assistant-accept")
-                    Button(LibraryAssistantStrings.reject, action: presentation.reject)
-                        .accessibilityIdentifier("library-assistant-reject")
+                if presentation.state.artifact != nil {
+                    HStack {
+                        Button(LibraryAssistantStrings.showDiff, action: presentation.showDiff).disabled(!presentation.canShowDiff)
+                        Button(LibraryAssistantStrings.accept, action: presentation.accept).disabled(!presentation.canAccept)
+                            .accessibilityIdentifier("library-assistant-accept")
+                        Button(LibraryAssistantStrings.reject, action: presentation.reject)
+                            .accessibilityIdentifier("library-assistant-reject")
+                    }
                 }
-                TextField(LibraryAssistantStrings.feedback, text: $presentation.feedback)
-                    .accessibilityLabel(LibraryAssistantStrings.feedback)
-                Button(LibraryAssistantStrings.retry, action: presentation.retry).disabled(!presentation.canRetry)
-                    .accessibilityIdentifier("library-assistant-retry")
+                if presentation.canRetry {
+                    TextField(LibraryAssistantStrings.feedback, text: $presentation.feedback)
+                        .accessibilityLabel(LibraryAssistantStrings.feedback)
+                    Button(LibraryAssistantStrings.retry, action: presentation.retry)
+                        .accessibilityIdentifier("library-assistant-retry")
+                }
             }
         }
     }

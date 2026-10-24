@@ -195,6 +195,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             }
             else if let request = self.presentation.fileCommandRequest { desired = .fileCommand(request) }
             else if let request = self.presentation.newPromptRequest { desired = .newPrompt(request) }
+            else if self.presentation.isGeneratingPrompt, let assistant = self.presentation.assistant {
+                desired = .promptGeneration(assistant)
+            }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
             self.endDialog()
@@ -223,6 +226,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                         self.presentation.resolveFileCommand(response, id: request.id)
                     case (.newPrompt(let request), _):
                         self.presentation.resolveNewPrompt(response, id: request.id)
+                    case (.promptGeneration, .dismissPromptGeneration):
+                        self.presentation.dismissPromptGeneration()
                     default: break
                     }
                 }
@@ -410,7 +415,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             switch response {
             case .decision(.save), .rename, .move, .createPrompt:
                 button.keyEquivalent = "\r"
-            case .decision(.cancel), .dismissConflict, .cancelFileCommand:
+            case .decision(.cancel), .dismissConflict, .cancelFileCommand, .dismissPromptGeneration:
                 button.keyEquivalent = "\u{1b}"
             case .decision(.discard):
                 button.keyEquivalent = isRevert ? "" : "d"
@@ -438,6 +443,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     static func presentEditorDialog(in window: NSWindow, dialog: LibraryEditorDialog,
                                     done: @escaping (LibraryEditorResponse) -> Void) -> (() -> Void) {
+        if case .promptGeneration(let assistant) = dialog {
+            return presentPromptGeneration(in: window, assistant: assistant, done: done)
+        }
         let alert = makeEditorAlert(for: dialog)
         let responses = dialog.responses
         alert.beginSheetModal(for: window) { response in
@@ -451,6 +459,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             case .decision: done(.decision(.cancel))
             case .conflict: done(.dismissConflict)
             case .fileCommand, .newPrompt: done(.cancelFileCommand)
+            case .promptGeneration: done(.dismissPromptGeneration)
             }
         }
         if case .newPrompt = dialog {

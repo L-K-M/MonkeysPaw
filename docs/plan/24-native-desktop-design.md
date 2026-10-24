@@ -94,8 +94,23 @@ The example shows Source; Edit opens the properties form and body editor.
   editor with Keep Server, Keep Mine, Keep Both and an expandable
   comparison.
 - **Inspector.** Fields (the parsed fields and prompt details), History
-  (revisions, preview, Restore) and Assistant (write, review, improve),
-  chosen with a segmented control at its top.
+  (revisions, preview, Restore) and Assistant, chosen with a segmented
+  control at its top. On macOS, Assistant has two current-prompt tabs:
+  **Review & Improve** and **Improve Directly**. Review returns selectable
+  findings followed by optional instructions and **Improve selected findings**.
+  Direct improvement needs only an instruction; its action is **Generate
+  improvements**. Switching tabs preserves instructions, selected findings and
+  the candidate. Both routes show the same diff and explicit Accept/Reject.
+- **Assistant creation (macOS).** File and the toolbar's **New Prompt** menu
+  offer **Blank Prompt…** (⌘N) and **Generate with Assistant…**. Generation
+  opens a separate sheet with a brief, candidate and diff; it sends no current
+  prompt text. Its own Assistant session preserves the current prompt's review,
+  instructions and candidate when generation opens or closes. It uses §7.3's
+  existing creation destination and acceptance contract. Unsaved-edit and
+  conflict sheets temporarily replace the generation
+  sheet without losing its candidate. Closing cancels it; switching editor
+  sessions or libraries retires it. Linux and Android retain their existing
+  Assistant navigation; request, prompt and acceptance semantics are unchanged.
 - **Empty and error states.** Centered placeholder text in the list and
   editor; library unavailability, import progress and import reports use
   bars and sheets rather than permanent rows.
@@ -122,7 +137,7 @@ The example shows Source; Edit opens the properties form and body editor.
 | Menu | Items |
 |---|---|
 | Monkey's Paw | About, Check for Updates…, Settings… ⌘,, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q |
-| File | New Prompt… ⌘N, Import… ⇧⌘I, Close ⌘W, Save ⌘S, Duplicate ⇧⌘S, Rename…, Move To ▸, Revert to Saved, Show in Finder, Delete… |
+| File | New Prompt ▸ (Blank Prompt… ⌘N, Generate with Assistant…), Import… ⇧⌘I, Close ⌘W, Save ⌘S, Duplicate ⇧⌘S, Rename…, Move To ▸, Revert to Saved, Show in Finder, Delete… |
 | Edit | Undo/Redo (named by the text system), Cut, Copy, Paste, Paste and Match Style, Delete, Select All, Find ▸ (Find… ⌘F, Find Next ⌘G, Find Previous ⇧⌘G, Use Selection for Find ⌘E, Search Library ⌥⌘F), Spelling and Grammar ▸ |
 | View | Edit ⌘1, Preview ⌘2, Source ⌘3, Show/Hide Prompt Details, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
 | Prompt | Add to/Remove from Favourites ⌘D, Review with Assistant ⌘R, Improve with Assistant ⌘I |

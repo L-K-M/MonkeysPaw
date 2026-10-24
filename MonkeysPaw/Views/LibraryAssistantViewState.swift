@@ -4,12 +4,12 @@ import SwiftUI
 
 /// A native binding for one editor session. Core owns requests, merging and saves.
 final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    enum Flow: Hashable { case write, review, improve }
+    enum Flow: Hashable { case review, improve }
 
     @Published private(set) var state: AssistantState
     @Published private(set) var editorState: EditorState
     @Published private(set) var libraryAvailable: Bool
-    @Published var flow = Flow.write
+    @Published var flow = Flow.review
     @Published var brief = ""
     @Published var feedback = ""
     @Published private(set) var instructionFocusRevision: UInt64 = 0
@@ -84,7 +84,11 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     var canRetry: Bool { requestDisabledMessage == nil && model?.canRetry == true }
     var canShowDiff: Bool { requestDisabledMessage == nil && model?.canShowDiff == true }
     var canSelectFindings: Bool { canReview && !state.isStale }
-    var improveTitle: String { state.mutationAccess == .privateCopy ? "Improve a private copy" : "Improve" }
+    var improveTitle: String {
+        if state.mutationAccess == .privateCopy { return "Improve a private copy" }
+        return flow == .review && !state.selectedFindings.isEmpty
+            ? LibraryAssistantStrings.improveFindings : LibraryAssistantStrings.generateImprovements
+    }
 
     var footer: String {
         let destination = [state.providerHost, state.modelID].compactMap { $0 }.joined(separator: " · ")
@@ -106,6 +110,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         if state.phase == .saved || state.phase == .failed, let outcome = state.acceptanceOutcome {
             return LibraryAssistantStrings.acceptance(outcome)
         }
+        if state.review != nil { return LibraryAssistantStrings.reviewReady }
         return LibraryAssistantStrings.phase(state.phase)
     }
 

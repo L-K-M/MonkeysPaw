@@ -46,6 +46,7 @@ final class LibraryViewState: ObservableObject {
     @Published var fieldSettingsDraft: LibraryFieldSettingsDraft?
     @Published private(set) var commandMessage: String?
     @Published private(set) var assistant: LibraryAssistantViewState?
+    @Published private(set) var isGeneratingPrompt = false
     @Published private(set) var assistantSaveMessage: String?
     @Published private(set) var quoteHighlight: LibrarySourceHighlight?
     @Published private(set) var conflict: LibraryConflictViewState?
@@ -114,34 +115,57 @@ final class LibraryViewState: ObservableObject {
     var isResolvingConflict: Bool { conflict?.isResolving == true }
     var canEditSource: Bool { isActive && libraryAvailable && !isResolvingConflict && editorState.canEdit }
     var canShowAssistant: Bool { isActive && libraryAvailable && !isResolvingConflict && makeAssistant != nil && scheduler != nil }
+    var canGeneratePrompt: Bool {
+        canShowAssistant && !isGeneratingPrompt && assistant?.isWorking != true && assistant?.state.isAccepting != true
+            && editorState.status != .loading && editorState.status != .saving && editorState.status != .commandRunning
+            && editorState.pendingDecision == nil && editorState.queuedActions.isEmpty && editorState.conflict == nil
+    }
 
     func showAssistant() {
-        guard canShowAssistant, let makeAssistant, let scheduler else { return }
-        if assistant == nil {
-            let revision = bindingRevision
-            let session = editor.assistantSnapshot?.session
-            let path = editor.state.prompt?.relativePath
-            let view = LibraryAssistantViewState(model: makeAssistant(), editor: editor,
-                available: libraryAvailable, main: mainThread, scheduler: scheduler) { [weak self] outcome in
-                    guard let self, self.isActive, self.bindingRevision == revision,
-                          self.editor.assistantSnapshot?.session == session,
-                          self.editor.state.prompt?.relativePath == path else { return }
-                    self.assistantSaveMessage = LibraryAssistantStrings.acceptance(outcome)
-                }
-            view.onRequest = { [weak self] in self?.assistantSaveMessage = nil }
-            view.onHighlight = { [weak self] range in
-                guard let self, self.isActive, self.bindingRevision == revision else { return }
-                self.quoteHighlight = range.flatMap { range in
-                    self.editor.state.source.map { LibrarySourceHighlight(byteRange: range, sourceBytes: Data($0.utf8)) }
-                }
-                if range != nil { self.editorMode = .source }
-            }
-            assistantSession = session
-            assistantPrompt = editor.state.prompt
-            assistant = view
-        }
+        guard canShowAssistant else { return }
+        bindAssistant()
         if inspectorPane != .assistant { inspectorPane = .assistant }
         if !isInspectorVisible { isInspectorVisible = true }
+    }
+
+    func generatePromptWithAssistant() {
+        guard canGeneratePrompt else { return }
+        bindAssistant()
+        assistant?.close()
+        isGeneratingPrompt = true
+        onEditorChange?()
+    }
+
+    func dismissPromptGeneration() {
+        guard isGeneratingPrompt else { return }
+        isGeneratingPrompt = false
+        assistant?.close()
+        onEditorChange?()
+    }
+
+    private func bindAssistant() {
+        guard assistant == nil, let makeAssistant, let scheduler else { return }
+        let revision = bindingRevision
+        let session = editor.assistantSnapshot?.session
+        let path = editor.state.prompt?.relativePath
+        let view = LibraryAssistantViewState(model: makeAssistant(), editor: editor,
+            available: libraryAvailable, main: mainThread, scheduler: scheduler) { [weak self] outcome in
+                guard let self, self.isActive, self.bindingRevision == revision,
+                      self.editor.assistantSnapshot?.session == session,
+                      self.editor.state.prompt?.relativePath == path else { return }
+                self.assistantSaveMessage = LibraryAssistantStrings.acceptance(outcome)
+            }
+        view.onRequest = { [weak self] in self?.assistantSaveMessage = nil }
+        view.onHighlight = { [weak self] range in
+            guard let self, self.isActive, self.bindingRevision == revision else { return }
+            self.quoteHighlight = range.flatMap { range in
+                self.editor.state.source.map { LibrarySourceHighlight(byteRange: range, sourceBytes: Data($0.utf8)) }
+            }
+            if range != nil { self.editorMode = .source }
+        }
+        assistantSession = session
+        assistantPrompt = editor.state.prompt
+        assistant = view
     }
 
     var isAssistantVisible: Bool { isInspectorVisible && inspectorPane == .assistant }
@@ -234,6 +258,7 @@ final class LibraryViewState: ObservableObject {
     }
 
     private func retireAssistantBinding() {
+        isGeneratingPrompt = false
         let old = assistant
         assistant = nil
         old?.retire()
