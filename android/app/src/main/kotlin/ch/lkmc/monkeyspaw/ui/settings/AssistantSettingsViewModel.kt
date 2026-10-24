@@ -272,7 +272,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
     }
 
     private fun applySyncKeyBinding(binding: SyncKeyBinding) {
-        val changed = syncKeyAccountID != binding.userID || binding.status == AssistantSyncKeyStatus.UNAVAILABLE
+        val changed = syncKeyAccountID != binding.userID
         syncKeyAccountID = binding.userID
         if (changed) {
             syncKeyOperationPermit?.set(false)

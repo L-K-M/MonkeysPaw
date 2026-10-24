@@ -37,7 +37,16 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
     private val secrets = TestSecrets { assertTrue(onWorker, "Secret IO must run on the worker") }
     private val userID = ch.lkmc.monkeyspaw.core.domain.ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAV")!!
     private var accountUserID: ch.lkmc.monkeyspaw.core.domain.ULID? = null
-    private val syncAccount = ch.lkmc.monkeyspaw.di.SyncAccountUser { assertTrue(onWorker); accountUserID }
+    private var accountReadError: Exception? = null
+    private var accountReadGate: CompletableDeferred<Unit>? = null
+    private val syncAccount = ch.lkmc.monkeyspaw.di.SyncAccountUser {
+        assertTrue(onWorker)
+        val gate = accountReadGate
+        accountReadGate = null
+        gate?.await()
+        accountReadError?.let { throw it }
+        accountUserID
+    }
     private val syncKeys = lazy {
         assertTrue(onWorker)
         ProviderSyncKeyService(secrets, ch.lkmc.monkeyspaw.core.ports.Entropy { count -> ByteArray(count) { i -> i.toByte() } })
@@ -661,6 +670,75 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertEquals("Staged profile", model.state.value.draft!!.displayName)
     }
 
+    @Test fun `same account tier failure preserves sync key reveal and staged input through recovery`() = runTest(scheduler) {
+        accountUserID = userID
+        val model = model()
+        model.syncKeyGenerate(); runCurrent()
+        val revealed = assertNotNull(model.state.value.syncKey.revealedKey)
+        val entered = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(ByteArray(32) { (it + 1).toByte() })
+        model.setSyncKeyInput(entered)
+        val reset = model.state.value.syncKey.inputReset
+        secrets.readError = IllegalStateException("temporary tier read failure")
+        model.refresh(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.UNAVAILABLE, model.state.value.syncKey.status)
+        assertEquals(revealed, model.state.value.syncKey.revealedKey)
+        assertEquals(reset, model.state.value.syncKey.inputReset)
+        secrets.readError = null
+        model.refresh(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, model.state.value.syncKey.status)
+        assertEquals(revealed, model.state.value.syncKey.revealedKey)
+        assertEquals(reset, model.state.value.syncKey.inputReset)
+        model.syncKeyEnter(); runCurrent()
+        assertEquals(entered, model.state.value.syncKey.revealedKey)
+        assertEquals(entered, secrets.values[SecretAccount.providerSync(userID)]!!.withValue { it })
+    }
+
+    @Test fun `unknown account binding clears sync key reveal and staged input`() = runTest(scheduler) {
+        accountUserID = userID
+        val model = model()
+        model.syncKeyGenerate(); runCurrent()
+        assertNotNull(model.state.value.syncKey.revealedKey)
+        model.setSyncKeyInput(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { 7 }))
+        val reset = model.state.value.syncKey.inputReset
+        accountReadError = IllegalStateException("account unavailable")
+        model.refresh(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.UNAVAILABLE, model.state.value.syncKey.status)
+        assertNull(model.state.value.syncKey.revealedKey)
+        assertTrue(model.state.value.syncKey.inputReset > reset)
+        accountReadError = null
+        model.refresh(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, model.state.value.syncKey.status)
+        assertNull(model.state.value.syncKey.revealedKey)
+        model.syncKeyEnter(); runCurrent()
+        assertEquals(AssistantSyncKeyNotice.INVALID_KEY, model.state.value.syncKey.notice)
+    }
+
+    @Test fun `same account unavailable refresh does not revoke a queued sync key action`() = runTest(scheduler) {
+        accountUserID = userID
+        val model = model()
+        val gate = CompletableDeferred<Unit>()
+        accountReadGate = gate
+        val before = secrets.writes
+        model.syncKeyGenerate(); runCurrent()
+        assertTrue(model.state.value.syncKey.busy)
+        assertEquals(before, secrets.writes)
+        val reset = model.state.value.syncKey.inputReset
+        secrets.readError = IllegalStateException("temporary tier read failure")
+        model.refresh(); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.UNAVAILABLE, model.state.value.syncKey.status)
+        assertTrue(model.state.value.syncKey.busy)
+        assertEquals(reset, model.state.value.syncKey.inputReset)
+        secrets.readError = null
+        gate.complete(Unit); runCurrent()
+        assertEquals(before + 1, secrets.writes)
+        val stored = assertNotNull(secrets.values[SecretAccount.providerSync(userID)])
+        assertEquals(stored.withValue { it }, model.state.value.syncKey.revealedKey)
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, model.state.value.syncKey.status)
+        assertFalse(model.state.value.syncKey.busy)
+        assertNull(model.state.value.syncKey.notice)
+    }
+
     @Test fun `sync key operation stays bound to its admitted account after navigation`() = runTest(scheduler) {
         val other = ch.lkmc.monkeyspaw.core.domain.ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAZ")!!
         for (started in listOf(false, true)) {
@@ -679,6 +757,14 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
             assertTrue(model.state.value.syncKey.revealedKey == null, "Retired account operations must not reveal a key")
             assertTrue(secrets.values[SecretAccount.providerSync(other)] == null,
                 "An action for the previous account must not provision the new account")
+            if (started) {
+                val stored = assertNotNull(secrets.values[SecretAccount.providerSync(userID)],
+                    "An admitted write must finish for its original account")
+                assertEquals(43, stored.withValue { it }.length)
+            } else {
+                assertNull(secrets.values[SecretAccount.providerSync(userID)],
+                    "An operation not admitted before the account change must not write")
+            }
             model.close()
         }
     }

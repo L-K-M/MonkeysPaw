@@ -157,15 +157,23 @@ public final class ProviderSyncKeyModel: CustomStringConvertible,
 
     private static func readBinding(keys: ProviderSyncKeyService,
                                     accountUserID: () throws -> ULID?) -> Binding {
+        let resolvedUserID: ULID?
+        do { resolvedUserID = try accountUserID() }
+        catch { return Binding(userID: nil, status: .unavailable) }
+        guard let userID = resolvedUserID else { return Binding(userID: nil, status: .noAccount) }
+
         do {
-            guard let userID = try accountUserID() else { return Binding(userID: nil, status: .noAccount) }
             let status = try keys.tier(userID: userID).map(Status.provisioned) ?? .missing
             return Binding(userID: userID, status: status)
-        } catch { return Binding(userID: nil, status: .unavailable) }
+        } catch {
+            // A tier failure leaves the resolved account known, so its only
+            // revealed copy can remain visible while provisioning is disabled.
+            return Binding(userID: userID, status: .unavailable)
+        }
     }
 
     private func publish(_ binding: Binding, revealed: String?, notice: Notice? = nil) {
-        let changed = userID != binding.userID || binding.status == .unavailable
+        let changed = userID != binding.userID
         userID = binding.userID
         state = State(status: binding.status, busy: operationRequest != nil,
             notice: notice, revealedKey: changed ? nil : revealed,

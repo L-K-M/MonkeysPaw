@@ -22,6 +22,56 @@ final class ProviderSyncKeyModelTests: XCTestCase {
         XCTAssertTrue(h.model.state.revealedKey == nil, "A key for a previous account must stay hidden")
     }
 
+    func testSameAccountTierReadFailurePreservesRevealedKey() {
+        let h = SyncKeyModelHarness()
+        h.model.generate()
+        let revealed = h.model.state.revealedKey
+        XCTAssertNotNil(revealed)
+        h.secrets.readError = .locked
+
+        h.model.refresh()
+
+        XCTAssertEqual(h.model.state.status, .unavailable)
+        XCTAssertFalse(h.model.state.canEdit)
+        XCTAssertTrue(h.model.state.revealedKey == revealed, "A tier read failure must not lose the same account's only reveal")
+
+        h.secrets.readError = nil
+        h.model.refresh()
+        XCTAssertEqual(h.model.state.status, .provisioned(.secretService))
+        XCTAssertTrue(h.model.state.revealedKey == revealed)
+    }
+
+    func testGeneratePreservesRevealedKeyWhenPostWriteTierReadFails() {
+        let h = SyncKeyModelHarness()
+        h.secrets.onWrite = { h.secrets.readError = .locked }
+
+        h.model.generate()
+
+        XCTAssertEqual(h.secrets.writes, [.providerSync(SyncTestValues.user)])
+        XCTAssertEqual(h.model.state.status, .unavailable)
+        XCTAssertFalse(h.model.state.busy)
+        XCTAssertFalse(h.model.state.canEdit)
+        XCTAssertNotNil(h.model.state.revealedKey, "A committed key must remain available when only its tier read fails")
+    }
+
+    func testUnresolvedAccountStillClearsRevealedKey() {
+        let h = SyncKeyModelHarness()
+        h.model.generate()
+        XCTAssertNotNil(h.model.state.revealedKey)
+        h.account.isUnavailable = true
+
+        h.model.refresh()
+
+        XCTAssertEqual(h.model.state.status, .unavailable)
+        XCTAssertFalse(h.model.state.canEdit)
+        XCTAssertTrue(h.model.state.revealedKey == nil, "An unresolved account must not retain a previous account's reveal")
+
+        h.account.isUnavailable = false
+        h.model.refresh()
+        XCTAssertEqual(h.model.state.status, .provisioned(.secretService))
+        XCTAssertTrue(h.model.state.revealedKey == nil, "Resolving the account again must not restore a retired reveal")
+    }
+
     func testQueuedGenerateCannotMoveToANewerAccount() {
         let h = SyncKeyModelHarness()
         h.work.isHeld = true
@@ -152,6 +202,7 @@ final class ProviderSyncKeyModelTests: XCTestCase {
 
 private final class SyncKeyAccount {
     var userID: ULID? = SyncTestValues.user
+    var isUnavailable = false
 }
 
 private final class SyncKeyModelHarness {
@@ -172,6 +223,7 @@ private final class SyncKeyModelHarness {
         model = ProviderSyncKeyModel(keys: ProviderSyncKeyService(secrets: secrets, entropy: entropy),
             accountUserID: {
                 XCTAssertFalse(marker.isUI, "Account metadata must be read away from the UI thread")
+                if account.isUnavailable { throw FileStoreError.ioFailure }
                 return account.userID
             }, work: work, mainThread: main)
     }
@@ -179,10 +231,14 @@ private final class SyncKeyModelHarness {
 
 private final class SyncKeyModelSecrets: SecretStore {
     var onWrite: (() -> Void)?
+    var readError: SecretStoreError?
     private var values: [SecretAccount: StoredSecret] = [:]
     private(set) var writes: [SecretAccount] = []
 
-    func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? { values[account] }
+    func read(account: SecretAccount, source: SecretReadSource) throws -> StoredSecret? {
+        if let readError { throw readError }
+        return values[account]
+    }
     func write(_ value: SecretValue, account: SecretAccount) throws -> SecretTier {
         writes.append(account)
         values[account] = StoredSecret(value: value, tier: .secretService)
