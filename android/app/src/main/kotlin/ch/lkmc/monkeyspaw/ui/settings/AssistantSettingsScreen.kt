@@ -3,6 +3,8 @@ package ch.lkmc.monkeyspaw.ui.settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -16,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -147,13 +150,19 @@ internal fun AssistantSettingsScreen(
                         modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
                         colors = pawInputColors(MaterialTheme.colorScheme.surfaceContainerLowest))
                     Text(stringResource(R.string.assistant_provider_kind), style = MaterialTheme.typography.labelLarge)
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        ProviderKind.entries.forEachIndexed { index, kind ->
-                            SegmentedButton(selected = draft.kind == kind, onClick = { onKind(kind) },
-                                enabled = state.canEditDraft,
-                                shape = SegmentedButtonDefaults.itemShape(index, ProviderKind.entries.size)) {
+                    // Give long protocol labels room to wrap at the user's font size.
+                    Column(Modifier.selectableGroup()) {
+                        for (kind in ProviderKind.entries) {
+                            Row(Modifier.fillMaxWidth().heightIn(min = PawLayout.touchTarget)
+                                .selectable(selected = draft.kind == kind, enabled = state.canEditDraft,
+                                    role = Role.RadioButton, onClick = { onKind(kind) })
+                                .padding(vertical = PawSpacing.small),
+                                horizontalArrangement = Arrangement.spacedBy(PawSpacing.small),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = draft.kind == kind, onClick = null, enabled = state.canEditDraft)
                                 Text(stringResource(if (kind == ProviderKind.ANTHROPIC) R.string.assistant_anthropic
-                                    else R.string.assistant_compatible))
+                                    else R.string.assistant_compatible), style = MaterialTheme.typography.bodyLarge,
+                                    modifier = Modifier.weight(1f))
                             }
                         }
                     }
