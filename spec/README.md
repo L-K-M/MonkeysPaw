@@ -300,7 +300,8 @@ builtin and deferred reserved names. Tokens have `kind`: `literal` with
 A render result is `{text}` or `{error}` with a typed discriminator:
 `invalid_prompt`, `unsupported_format` with decimal-string `version`,
 `required_value_missing`/`choice_value_invalid` with `field`, or
-`builtin_missing` with `name`. Supplied snapshots and values are raw strings.
+`builtin_missing` with `name`, or `output_too_large` for an expansion over the
+2 MiB UTF-8 output budget. Supplied snapshots and values are raw strings.
 No test reads a system clipboard or clock.
 
 The §5 clarifications are pinned here: ASCII names; next-closer grammar with

@@ -3,6 +3,7 @@ package ch.lkmc.monkeyspaw.core.domain
 /** Shared bounds used by the portable content layer and its consumers. */
 object Limits {
     const val maxPromptBytes = 256 * 1024
+    const val maxRenderedPromptBytes = 2 * 1024 * 1024
     const val importFileCapBytes = 256 * 1024
     const val capturedTextCapBytes = 256 * 1024
     const val promptFormatVersion = 1

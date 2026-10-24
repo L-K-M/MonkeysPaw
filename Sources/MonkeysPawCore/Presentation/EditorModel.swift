@@ -73,6 +73,8 @@ public struct EditorState: Equatable, Sendable {
     public fileprivate(set) var form: PromptForm?
     public fileprivate(set) var preview = ""
     public fileprivate(set) var previewFailure: PromptRenderError?
+    /// A valid source can exceed the output budget without blocking source edits.
+    public fileprivate(set) var previewOutputFailure: PromptRenderError?
     public fileprivate(set) var conflict: EditorConflict?
     public fileprivate(set) var pendingDecision: EditorPendingDecision?
     public fileprivate(set) var queuedActions: [EditorDiscardAction] = []
@@ -98,7 +100,8 @@ public struct EditorState: Equatable, Sendable {
             && lhs.stamp == rhs.stamp && lhs.isDirty == rhs.isDirty && lhs.status == rhs.status
             && lhs.readOnlyReason == rhs.readOnlyReason && lhs.isPrivate == rhs.isPrivate && lhs.issues == rhs.issues
             && lhs.fields == rhs.fields && lhs.form == rhs.form && editorSourceEqual(lhs.preview, rhs.preview)
-            && lhs.previewFailure == rhs.previewFailure && lhs.conflict == rhs.conflict
+            && lhs.previewFailure == rhs.previewFailure && lhs.previewOutputFailure == rhs.previewOutputFailure
+            && lhs.conflict == rhs.conflict
             && lhs.pendingDecision == rhs.pendingDecision && lhs.queuedActions == rhs.queuedActions
             && lhs.historyMaintenanceFailed == rhs.historyMaintenanceFailed
             && lhs.provenanceMaintenanceFailed == rhs.provenanceMaintenanceFailed && lhs.lastCopy == rhs.lastCopy
@@ -700,6 +703,7 @@ public final class EditorModel: @unchecked Sendable {
         let names = Set(effective.map(\.name))
         state.fields = effective + document.frontMatter.fields.filter { !names.contains($0.name) }
         state.previewFailure = nil
+        state.previewOutputFailure = nil
         guard document.canRender else {
             state.preview = ""
             state.previewFailure = document.isReadOnly ? .unsupportedFormat(document.frontMatter.format) : .invalidPrompt
@@ -713,11 +717,8 @@ public final class EditorModel: @unchecked Sendable {
         // Preview has deliberately different empty/choice rules from delivery:
         // a missing default remains a literal marker, even for a choice. Use
         // the codec's single-pass tokens, never FillService.builtinSnapshot.
-        state.preview = document.template.tokens.map { token in
-            switch token {
-            case .literal(let text): return text
-            case .escapedOpener: return "{{"
-            case .placeholder(let name):
+        do {
+            state.preview = try PromptRenderer.expand(document.template.tokens) { name in
                 switch name {
                 case "clipboard": return "{clipboard}"
                 case "date": return date
@@ -725,7 +726,13 @@ public final class EditorModel: @unchecked Sendable {
                 default: return defaults[name] ?? "{\(name)}"
                 }
             }
-        }.joined()
+        } catch let error as PromptRenderError {
+            state.preview = ""
+            state.previewOutputFailure = error
+        } catch {
+            state.preview = ""
+            state.previewOutputFailure = .invalidPrompt
+        }
     }
 
     /// Match effectiveFields' first-declaration rule even for duplicate input.

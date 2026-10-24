@@ -201,6 +201,9 @@ public enum Limits {
     /// §8.3: cap prompt bodies at 256 KiB on both clients and the server.
     public static let maxPromptBytes: Int = 256 * kibibyte
 
+    /// §5.3: bound substitution amplification separately from the source size.
+    public static let maxRenderedPromptBytes: Int = 2 * mebibyte
+
     /// §8.3: bound passwords to 72 UTF-8 bytes to avoid bcrypt truncation.
     public static let maxPasswordBytes: Int = 72
 

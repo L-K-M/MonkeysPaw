@@ -988,12 +988,14 @@ internal class EditorViewModel @Inject constructor(
     private fun applyProjection(projection: EditorDocumentState) {
         currentState = state.value.copy(title = projection.title, issues = projection.issues,
             fields = projection.fields, preview = projection.preview, previewAvailable = projection.previewAvailable,
+            previewFailure = projection.previewFailure, sourceValid = projection.sourceValid,
             isPrivate = projection.isPrivate, fieldSettings = projection.fieldSettings, form = projection.form,
             editMode = if (projection.form == null) EditorEditMode.SOURCE else state.value.editMode, validating = false)
     }
 
     private fun projectFromState() = EditorDocumentState(state.value.title, state.value.issues,
-        state.value.fields, state.value.preview, state.value.previewAvailable, state.value.isPrivate, state.value.fieldSettings, state.value.form)
+        state.value.fields, state.value.preview, state.value.previewAvailable, state.value.isPrivate, state.value.fieldSettings, state.value.form,
+        state.value.previewFailure, state.value.sourceValid)
     private fun project(document: PromptDocument) = projectEditor(document, clock.now(), ZoneId.systemDefault())
     private fun selection(entry: LibraryEntry) = LibrarySelection(entry.identity, entry.relativePath)
     private fun current(snapshot: EditorSnapshot): Boolean = active && session == snapshot.session

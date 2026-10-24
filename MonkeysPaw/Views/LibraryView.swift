@@ -347,15 +347,20 @@ struct LibraryEditorView: View {
 
     @ViewBuilder
     private var previewBody: some View {
-        switch presentation.preview {
-        case .none:
-            Text(LibraryStrings.noSelection).foregroundStyle(.secondary)
-        case .rendered(let text):
-            Text(verbatim: text)
-        case .issues(let issues):
-            ForEach(Array(issues.enumerated()), id: \.offset) { issue in
-                Label(EditorStrings.issue(issue.element), systemImage: "xmark.octagon.fill")
-                    .foregroundStyle(.red)
+        if let error = presentation.editorState.previewOutputFailure {
+            Label(error.description, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.secondary)
+        } else {
+            switch presentation.preview {
+            case .none:
+                Text(LibraryStrings.noSelection).foregroundStyle(.secondary)
+            case .rendered(let text):
+                Text(verbatim: text)
+            case .issues(let issues):
+                ForEach(Array(issues.enumerated()), id: \.offset) { issue in
+                    Label(EditorStrings.issue(issue.element), systemImage: "xmark.octagon.fill")
+                        .foregroundStyle(.red)
+                }
             }
         }
     }

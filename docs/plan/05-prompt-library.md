@@ -335,6 +335,12 @@ literal     = any text that is not an escape or a placeholder ;
   warning. Pasted Handlebars and Jinja prompts survive untouched.
 - **Single-pass rendering.** Values are inserted raw: no HTML escaping and
   no re-scan. A value containing `{{x}}` stays literal.
+- **Expanded output.** Rendering and editor default previews share a 2 MiB
+  UTF-8 output budget (`Limits.maxRenderedPromptBytes`). Count every literal,
+  escape and substituted value before appending; never truncate a delivery.
+  Overflow returns a typed output-size error with advice to shorten fields or
+  clipboard text. The source remains valid and editable/savable; smaller values
+  can render successfully. Picker, fill, editor and repeat show the limit reason.
 - **Reuse.** The same name used twice is one field, filled once.
 - **Ordering.** Fields appear in order of first use in the body. Declared
   fields that never appear are a validation warning.

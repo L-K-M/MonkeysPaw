@@ -39,16 +39,29 @@ public enum PromptRenderer {
             resolved[name.rawValue] = value
         }
 
+        return try expand(document.template.tokens) { name in
+            guard let value = resolved[name] else { throw PromptRenderError.invalidPrompt }
+            return value
+        }
+    }
+
+    /// Shared by delivery and the editor's distinct default/marker preview.
+    /// Count at most the remaining budget plus one byte before appending.
+    static func expand(_ tokens: [TemplateToken], placeholder: (String) throws -> String) throws -> String {
         var result = ""
-        for token in document.template.tokens {
+        var byteCount = 0
+        for token in tokens {
+            let piece: String
             switch token {
-            case .literal(let text): result += text
-            case .escapedOpener: result += "{{"
-            case .placeholder(let name):
-                // All names were resolved above; deferred names cannot pass validation.
-                guard let value = resolved[name] else { throw PromptRenderError.invalidPrompt }
-                result += value
+            case .literal(let text): piece = text
+            case .escapedOpener: piece = "{{"
+            case .placeholder(let name): piece = try placeholder(name)
             }
+            let remaining = Limits.maxRenderedPromptBytes - byteCount
+            let pieceBytes = piece.utf8.prefix(remaining + 1).count
+            guard pieceBytes <= remaining else { throw PromptRenderError.outputTooLarge }
+            result += piece
+            byteCount += pieceBytes
         }
         return result
     }
@@ -60,6 +73,7 @@ public enum PromptRenderError: Error, Equatable, CustomStringConvertible, Sendab
     case missingRequiredValue(String)
     case invalidChoiceValue(String)
     case missingBuiltin(BuiltinName)
+    case outputTooLarge
 
     /// Identifiers are available to the form, but error descriptions contain no
     /// template fragments or supplied values, even if a caller prints an error.
@@ -70,6 +84,7 @@ public enum PromptRenderError: Error, Equatable, CustomStringConvertible, Sendab
         case .missingRequiredValue: return "Fill every required field before rendering."
         case .invalidChoiceValue: return "Select a listed choice value before rendering."
         case .missingBuiltin: return "Supply every builtin snapshot used by this prompt."
+        case .outputTooLarge: return "The filled prompt exceeds 2 MiB. Shorten its fields or clipboard text."
         }
     }
 }
