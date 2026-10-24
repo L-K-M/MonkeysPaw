@@ -356,8 +356,8 @@ public final class PickerModel: @unchecked Sendable {
                          invocation: DeliveryInvocation, recording: RepeatRecording?) {
         let text: String
         do { text = try fill.render(entry.document, values: [:], builtins: builtins) }
-        catch let error as PromptRenderError {
-            selectedPreview = .renderFailure(error)
+        catch PromptRenderError.outputTooLarge {
+            selectedPreview = .renderFailure(.outputTooLarge)
             onChange?()
             return
         } catch {
