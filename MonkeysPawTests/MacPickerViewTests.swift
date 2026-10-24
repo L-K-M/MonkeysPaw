@@ -596,7 +596,11 @@ final class MacPickerViewTests: XCTestCase {
         let names = (0..<12).map { "field\($0)" }
         let definitions = names.enumerated().map { position, name in
             let definition = ["type: text", "type: multiline", "type: choice, options: [One, Two]"][position % 3]
-            return "  \(name): {\(definition)}"
+            // The control must remain visible even when its description makes
+            // the row taller than the form's viewport.
+            let description = position == names.count / 2
+                ? ", description: " + String(repeating: "Explain this field. ", count: 60) : ""
+            return "  \(name): {\(definition)\(description)}"
         }.joined(separator: "\n")
         let body = names.map { "{{\($0)}}" }.joined(separator: " ")
         try files.write(Data("---\nfields:\n\(definitions)\n---\n\(body)".utf8), at: "scrolling.md")

@@ -56,6 +56,42 @@ final class PanelControllerTests: XCTestCase {
         XCTAssertTrue(controller.isActiveAndVisible, "Activation must not leave typing in the previous window")
     }
 
+    func testHideRevokesDeferredPresentationFocus() throws {
+        let originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
+        }
+        let controller = PanelController(mainThread: DispatchMainThread(),
+                                         scheduler: DispatchScheduler(), log: OSLogSink())
+        controller.show()
+        let panel = try XCTUnwrap(NSApp.windows.compactMap { $0 as? PromptPanel }.first {
+            !originalWindows.contains(ObjectIdentifier($0))
+        })
+        controller.hide()
+        panel.resignKey()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertFalse(controller.isVisible)
+        XCTAssertFalse(panel.isKeyWindow)
+    }
+
+    func testRootReplacementRevokesDeferredPresentationFocus() throws {
+        let originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
+        }
+        let controller = PanelController(mainThread: DispatchMainThread(),
+                                         scheduler: DispatchScheduler(), log: OSLogSink())
+        controller.show()
+        let panel = try XCTUnwrap(NSApp.windows.compactMap { $0 as? PromptPanel }.first {
+            !originalWindows.contains(ObjectIdentifier($0))
+        })
+        controller.rootView = nil
+        panel.resignKey()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertTrue(controller.isVisible)
+        XCTAssertFalse(panel.isKeyWindow)
+    }
+
     func testEscapeMayRestoreWhilePanelIsKeyButOwnedWindowDismissalMayNot() {
         let panel = PromptPanel(content: NSView())
         let setup = NSWindow()

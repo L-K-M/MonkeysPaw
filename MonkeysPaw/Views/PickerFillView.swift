@@ -21,7 +21,7 @@ struct PickerFillView: View {
             .onChange(of: model.focusIndex) { _, position in
                 guard let position else { return }
                 // Native focus alone does not reveal controls in SwiftUI's scroller.
-                proxy.scrollTo(position)
+                proxy.scrollTo(position, anchor: .top)
             }
         }
         .accessibilityLabel(Strings.fillForm)
