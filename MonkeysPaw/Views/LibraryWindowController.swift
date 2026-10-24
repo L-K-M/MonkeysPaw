@@ -400,6 +400,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         guard !isTornDown, let field = searchItem?.searchField else { return }
         let editor = ownedSearchEditor(for: field)
         guard editor?.hasMarkedText() != true else { return }
+        // During IME commit the cell can lag behind its live editor. Echoing
+        // that already-present text back into the cell can end the session.
+        if let editor, editor.string.utf8.elementsEqual(query.utf8) { return }
         let controlChanged = !field.stringValue.utf8.elementsEqual(query.utf8)
         let editorChanged = editor.map { !$0.string.utf8.elementsEqual(query.utf8) } ?? false
         guard controlChanged || editorChanged else { return }
