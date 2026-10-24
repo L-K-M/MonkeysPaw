@@ -49,6 +49,7 @@
     <string name="fill_values_not_saved">Your prompt was delivered, but your field values could not be remembered.</string>
     <string name="fill_usage_not_saved">Your prompt was delivered, but this use could not be saved.</string>
     <string name="fill_read_only">This prompt format is read-only and cannot be delivered.</string>
+    <string name="fill_output_too_large">Rendered prompt exceeds 2 MiB. Shorten field values or reduce repeated placeholders.</string>
     <string name="fill_invalid_prompt">Resolve the prompt errors before delivery.</string>
     <string name="fill_snapshot_pending">Preparing the preview…</string>
     <string name="fill_preview">Preview</string>

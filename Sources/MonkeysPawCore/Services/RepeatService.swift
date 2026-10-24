@@ -393,6 +393,7 @@ public final class RepeatService: @unchecked Sendable, CustomStringConvertible, 
         guard let invocation = operation.invocation else { return }
         let text: String
         do { text = try fill.render(resolved.entry.document, values: resolved.values, builtins: builtins) }
+        catch PromptRenderError.outputTooLarge { finish(operation, review(resolved.entry, .outputTooLarge)); return }
         catch { finish(operation, review(resolved.entry, .sourceChanged)); return }
         let mode: DeliveryMode = snapshot.record.copyOnly ? .copyOnly : .paste(pasteChord(invocation))
         delivery.deliver(text, mode: mode, invocation: invocation, isValid: {

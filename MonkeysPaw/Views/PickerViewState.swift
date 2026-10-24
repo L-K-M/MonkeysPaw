@@ -136,6 +136,7 @@ final class PickerViewState: ObservableObject {
         case .none: return ""
         case .body(let text): return text
         case .issues(let issues): return issues.map(\.message).joined(separator: "\n")
+        case .renderFailure(let error): return error.description
         }
     }
 

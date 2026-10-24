@@ -133,7 +133,7 @@ internal object FixtureContracts {
                     result["text"].stringValue()
                 } else {
                     val extra = when (result["error"].stringValue()) {
-                        "invalid_prompt" -> emptySet()
+                        "invalid_prompt", "output_too_large" -> emptySet()
                         "unsupported_format" -> setOf("version")
                         "required_value_missing", "choice_value_invalid" -> setOf("field")
                         "builtin_missing" -> setOf("name")

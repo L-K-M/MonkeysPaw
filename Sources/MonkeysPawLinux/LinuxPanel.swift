@@ -389,6 +389,7 @@ final class LinuxPanel: PanelWindow {
             switch picker.selectedPreview {
             case .body(let text): setPreview(text)
             case .issues(let issues): setPreview(issues.map(\.message).joined(separator: "\n"))
+            case .renderFailure(let error): setPreview(error.description)
             case .none: setPreview("")
             }
             initialFocus = queryEntry

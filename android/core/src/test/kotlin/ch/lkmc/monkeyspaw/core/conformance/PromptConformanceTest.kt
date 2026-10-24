@@ -210,6 +210,7 @@ internal object PromptFixtures {
 
     private fun renderFailure(error: PromptRenderError): JsonObject = buildJsonObject {
         when (error) {
+            PromptRenderError.OutputTooLarge -> put("error", "output_too_large")
             PromptRenderError.InvalidPrompt -> put("error", "invalid_prompt")
             is PromptRenderError.UnsupportedFormat -> { put("error", "unsupported_format"); put("version", error.version.decimalValue) }
             is PromptRenderError.MissingRequiredValue -> { put("error", "required_value_missing"); put("field", error.field) }

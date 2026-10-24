@@ -29,6 +29,7 @@ public enum PickerPreview: Equatable, Sendable {
     /// form open. Row selection never reads clipboard or remembered text.
     case body(String)
     case issues([PromptIssue])
+    case renderFailure(PromptRenderError)
 }
 
 public struct PickerNoMatches: Equatable, Sendable {
@@ -355,9 +356,11 @@ public final class PickerModel: @unchecked Sendable {
                          invocation: DeliveryInvocation, recording: RepeatRecording?) {
         let text: String
         do { text = try fill.render(entry.document, values: [:], builtins: builtins) }
-        catch {
-            // The entry already passed canRender; unexpected renderer failures
-            // still leave its template body visible.
+        catch PromptRenderError.outputTooLarge {
+            selectedPreview = .renderFailure(.outputTooLarge)
+            onChange?()
+            return
+        } catch {
             selectedPreview = .body(entry.document.body)
             onChange?()
             return

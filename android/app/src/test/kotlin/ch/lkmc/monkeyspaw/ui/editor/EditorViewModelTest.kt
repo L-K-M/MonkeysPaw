@@ -501,6 +501,42 @@ internal class EditorViewModelTest : TemporaryFiles() {
     }
 
     @Test
+    fun `oversized preview remains a valid editable saveable source and permits a private copy`() = runTest {
+        val source = "---\nfields: {x: {default: " + "a".repeat(1024) + "}}\n---\n" + "{{x}}".repeat(2049)
+        put(libraryDir.resolve("a.md"), source.encodeToByteArray())
+        val model = model()
+        open(model)
+        runCurrent()
+        assertTrue(model.state.value.sourceValid)
+        assertTrue(model.state.value.issues.isEmpty())
+        assertFalse(model.state.value.previewAvailable)
+        assertEquals("", model.state.value.preview)
+        assertEquals(PromptRenderError.OutputTooLarge, model.state.value.previewFailure)
+        assertTrue(model.state.value.canEdit)
+        assertTrue(model.state.value.canSave)
+        assertTrue(model.state.value.canPrivateCopy)
+        model.edit(source + "!")
+        runCurrent()
+        model.save()
+        runCurrent()
+        assertFalse(model.state.value.dirty)
+        assertEquals(PromptRenderError.OutputTooLarge, model.state.value.previewFailure)
+        val saved = library().load("a.md").document
+        assertTrue(saved.body == "{{x}}".repeat(2049) + "!")
+        assertTrue(saved.frontMatter.fields.single().defaultValue == "a".repeat(1024))
+        bytesAre(assertNotNull(model.state.value.source).encodeToByteArray())
+        model.privateCopy("Copy.md")
+        runCurrent()
+        assertEquals("Copy.md", model.state.value.relativePath)
+        assertTrue(library().load("Copy.md").document.canRender)
+        assertEquals(PromptRenderError.OutputTooLarge, model.state.value.previewFailure)
+        model.edit("Short enough")
+        runCurrent()
+        assertTrue(model.state.value.previewAvailable)
+        assertNull(model.state.value.previewFailure)
+    }
+
+    @Test
     fun `preview uses defaults markers strict local dates and one-pass tokens without delivery`() {
         val source = "---\nfields:\n  unused:\n    description: Kept\n  a:\n    default: '{{clipboard}}'\n  choice:\n    type: choice\n    options: [one, two]\n  detail:\n    type: multiline\n    optional: true\n    remember: false\n---\n{{detail}} {{a}} {{choice}} {{missing}} {{date}} {{time}} {{clipboard}} \\{{literal}} {{#if x}}"
         val state = projectEditor(PromptCodec.parse(source, "a.md"), Instant.EPOCH, ZoneId.of("Asia/Kolkata"))
