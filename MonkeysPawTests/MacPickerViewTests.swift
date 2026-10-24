@@ -104,6 +104,32 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.fillModel?.values["topic"], "Retained draft")
     }
 
+    func testAccessibilityActivationOpensTheChosenResultForm() throws {
+        try files.write(Data("---\ntitle: Alpha\n---\n{{first}}".utf8), at: "alpha.md")
+        try files.write(Data("---\ntitle: Beta\n---\n{{second}}".utf8), at: "beta.md")
+        let picker = try open()
+        XCTAssertEqual(picker.selectionIndex, 0)
+
+        try activatePickerResult(at: 1)
+
+        XCTAssertTrue(spin { picker.state == .fill })
+        XCTAssertEqual(picker.fillModel?.fields.map(\.name), ["second"])
+        XCTAssertEqual(picker.fillModel?.preferredMode, .paste(.standard))
+    }
+
+    func testAccessibilityActivationUsesAnAlreadySelectedResultWithoutFields() throws {
+        try files.write(Data("Accessible delivery".utf8), at: "accessible.md")
+        let clipboard = MacRepeatClipboard()
+        let picker = try start(clipboard: clipboard, pasteInjectors: [])
+        picker.open()
+        XCTAssertTrue(spin { self.controller.isVisible })
+        XCTAssertEqual(picker.selectionIndex, 0)
+
+        try activatePickerResult(at: 0)
+
+        XCTAssertTrue(spin { clipboard.writes.last == "Accessible delivery" && !self.controller.isVisible })
+    }
+
     func testFooterPasteAndCopyDeliverThroughExistingClipboardPath() throws {
         try files.write(Data("Footer delivery".utf8), at: "footer.md")
         let clipboard = MacRepeatClipboard()
@@ -948,6 +974,30 @@ final class MacPickerViewTests: XCTestCase {
     private func isFocused(_ field: NSTextField, in panel: NSWindow) -> Bool {
         guard let editor = field.currentEditor() else { return false }
         return panel.firstResponder === editor
+    }
+
+    /// Run AX lookup and press off-main so wait(for:) can service the request
+    /// on AppKit's main run loop instead of blocking the target of the press.
+    private func activatePickerResult(at position: Int) throws {
+        let panel = try currentPanel()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let activated = expectation(description: "Activate picker result through Accessibility")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            var result: AXUIElement?
+            repeat {
+                result = Self.accessibilityElement("picker-result-\(position)", in: application)
+                if result == nil { Thread.sleep(forTimeInterval: 0.05) }
+            } while result == nil && ProcessInfo.processInfo.systemUptime < deadline
+            if let result {
+                XCTAssertEqual(AXUIElementPerformAction(result, kAXPressAction as CFString), .success)
+            } else {
+                XCTFail("Missing accessible picker result \(position)")
+            }
+            activated.fulfill()
+        }
+        wait(for: [activated], timeout: 5)
     }
 
     /// Confirms the footer exposes the button to Accessibility, then performs

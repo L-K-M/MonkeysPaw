@@ -181,6 +181,8 @@ and keep drafts. Toggling a visible non-key panel raises it. The footer resolves
 the captured pid to the remembered application's name without changing the
 focus tracker's pid/bundle-id identity.
 Typing after native result-list focus retakes search and continues the query.
+The default accessibility action on a macOS picker result selects and uses
+that result, matching double-click; a single click only selects it.
 Pending text focus retries when the panel becomes key after deferred activation;
 removing the native view or withdrawing the focus request cancels that retry.
 Printable keys on a focused native control keep its native behavior.
