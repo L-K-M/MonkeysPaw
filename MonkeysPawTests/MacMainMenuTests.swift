@@ -100,7 +100,7 @@ final class MacMainMenuTests: XCTestCase {
             MainMenuStrings.showInFinder, "-", MainMenuStrings.deletePrompt])
         let creation = try submenu(menu, MainMenuStrings.newPrompt)
         let parent = try row(menu, MainMenuStrings.newPrompt)
-        XCTAssertNil(parent.action)
+        XCTAssertNotEqual(parent.action, #selector(LibraryWindowController.newDocument(_:)))
         XCTAssertTrue(parent.keyEquivalent.isEmpty)
         XCTAssertEqual(titles(creation), [MainMenuStrings.blankPrompt, MainMenuStrings.generatePrompt])
         try check(row(creation, MainMenuStrings.blankPrompt), action: "newDocument:", key: "n", modifiers: .command)

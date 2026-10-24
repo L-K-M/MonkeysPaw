@@ -19,8 +19,11 @@ enum LibrarySearchTestSupport {
     static func type(_ query: String, in controller: LibraryWindowController) throws -> (field: NSSearchField, editor: NSTextView) {
         let input = try begin(controller)
         input.editor.insertText(query, replacementRange: NSRange(location: 0, length: (input.editor.string as NSString).length))
-        XCTAssertEqual(input.editor.string, query)
+        // Toolbar updates can replace the shared field editor during typing.
+        let editor = try XCTUnwrap(input.field.currentEditor() as? NSTextView)
+        XCTAssertTrue(controller.window?.firstResponder === editor)
+        XCTAssertEqual(editor.string, query)
         XCTAssertEqual(controller.presentation.snapshot.filter, query, "Native typing must reach Core")
-        return input
+        return (input.field, editor)
     }
 }
