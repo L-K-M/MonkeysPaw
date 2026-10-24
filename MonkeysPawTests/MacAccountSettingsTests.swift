@@ -495,6 +495,63 @@ final class MacAccountSettingsTests: XCTestCase {
         XCTAssertEqual(transport.heldCount, 0)
     }
 
+    func testAssistantSyncKeyFollowsAccountWithoutDiscardingProviderDraft() throws {
+        delegate.showSettings()
+        let controller = try XCTUnwrap(delegate.settingsWindow)
+        let assistant = try XCTUnwrap(controller.presentation.assistant)
+        XCTAssertTrue(spin { assistant.state.operation == nil && assistant.syncKey?.status == .noAccount })
+        assistant.addProfile()
+        assistant.renameProfile("Staged profile")
+        assistant.setModelID("staged-model")
+        let draftID = assistant.state.draft?.id
+        let account = try openAccount()
+        try login(account)
+
+        XCTAssertTrue(spin { assistant.syncKey?.status == .missing }, "Signing in must refresh the retained Assistant settings")
+        XCTAssertEqual(assistant.state.draft?.id, draftID)
+        XCTAssertEqual(assistant.state.draft?.displayName, "Staged profile")
+        XCTAssertEqual(assistant.state.draft?.modelID, "staged-model")
+
+        assistant.syncKeyGenerate()
+        XCTAssertTrue(spin { assistant.syncKey?.busy == false && assistant.syncKey?.revealedKey != nil })
+        let revealed = assistant.syncKey?.revealedKey
+        account.refresh()
+        waitIdle(account)
+        XCTAssertTrue(assistant.syncKey?.revealedKey == revealed, "Same-account publications must preserve the one-time reveal")
+        account.signOut()
+        waitIdle(account)
+        XCTAssertTrue(spin { assistant.syncKey?.status == .noAccount && assistant.syncKey?.revealedKey == nil },
+            "Signing out must remove the old account's visible key")
+        XCTAssertEqual(assistant.state.draft?.id, draftID)
+        XCTAssertEqual(assistant.state.draft?.displayName, "Staged profile")
+        XCTAssertFalse(assistant.canEditSyncKey)
+        transport.user = AccountSettingsHTTP.otherUser
+        try login(account)
+        XCTAssertTrue(spin { assistant.syncKey?.status == .missing && assistant.canEditSyncKey })
+        XCTAssertTrue(assistant.syncKey?.revealedKey == nil, "Another account must not display the old key")
+    }
+
+    func testLibraryReplacementKeepsTheProviderDraftAndRebindsSyncKeyState() throws {
+        delegate.showSettings()
+        let controller = try XCTUnwrap(delegate.settingsWindow)
+        let assistant = try XCTUnwrap(controller.presentation.assistant)
+        XCTAssertTrue(spin { assistant.state.operation == nil && assistant.syncKey?.busy == false })
+        assistant.addProfile()
+        assistant.renameProfile("Draft survives a library change")
+        let draftID = assistant.state.draft?.id
+        let reset = assistant.syncKey?.inputReset
+        let other = directory.appendingPathComponent("other-assistant-library", isDirectory: true)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: false)
+        controller.presentation.selectedTab = .general
+        try XCTUnwrap(delegate.generalSettingsModel).chooseFolder(other.path)
+        XCTAssertTrue(spin { self.delegate.libraryDirectory == other && assistant.syncKey?.busy == false })
+        XCTAssertTrue(controller.presentation.assistant === assistant)
+        XCTAssertEqual(assistant.state.draft?.id, draftID)
+        XCTAssertEqual(assistant.state.draft?.displayName, "Draft survives a library change")
+        XCTAssertNotEqual(assistant.syncKey?.inputReset, reset)
+        XCTAssertEqual(assistant.syncKey?.status, .noAccount)
+    }
+
     private func openAccount() throws -> AccountSettingsViewState {
         delegate.showSettings()
         let controller = try XCTUnwrap(delegate.settingsWindow)

@@ -18,6 +18,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
     private var work: LinuxBackgroundWork!
     private weak var model: AssistantSettingsModel?
     private var modelCount = 0
+    private var syncAccountUserID: ULID?
     private var sentinel = ""
 
     override func setUpWithError() throws {
@@ -564,6 +565,28 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         XCTAssertEqual(try labelText("test-result"), "")
     }
 
+    func testSyncKeyAccountChangeClearsNativeEntryAndPreservesProviderDraft() throws {
+        try show()
+        XCTAssertTrue(settled { self.model?.syncKey?.state.status == .noAccount })
+        XCTAssertFalse(try sensitive("sync-generate"))
+        try click("add")
+        XCTAssertTrue(settled { self.model?.state.isNewProfile == true })
+        try input("name", "Staged profile")
+        XCTAssertTrue(settled { self.model?.state.draft?.displayName == "Staged profile" })
+        let draftID = model?.state.draft?.id
+        syncAccountUserID = ULID("01ARZ3NDEKTSV4RRFFQ69G5FAV")!
+        view.accountBindingDidChange()
+        XCTAssertTrue(settled { self.model?.syncKey?.state.status == .missing && self.model?.syncKey?.state.busy == false })
+        XCTAssertTrue(try sensitive("sync-generate"))
+        try input("sync-entry", "typed input for the old account")
+        syncAccountUserID = nil
+        view.accountBindingDidChange()
+        XCTAssertTrue(settled { self.model?.syncKey?.state.status == .noAccount })
+        XCTAssertEqual(try entryText("sync-entry"), "")
+        XCTAssertEqual(model?.state.draft?.id, draftID)
+        XCTAssertEqual(model?.state.draft?.displayName, "Staged profile")
+    }
+
     private func seed(kind: ProviderKind = .openaiCompatible) throws -> ProviderDraft {
         let draft = ProviderDraft(displayName: "Saved", kind: kind,
             baseURL: kind == .anthropic ? "https://api.anthropic.com" : "http://localhost:11434/v1",
@@ -584,7 +607,10 @@ final class LinuxAssistantSettingsTests: XCTestCase {
                         anthropic: AnthropicClient(transport: self.transport),
                         openAICompatible: OpenAIClient(transport: self.transport, providerState: ProviderStateStore(files: self.files)),
                         work: self.work, main: main)
-                    let model = AssistantSettingsModel(settings: self.service, assistant: assistant, work: self.work, mainThread: main)
+                    let syncKey = ProviderSyncKeyModel(keys: ProviderSyncKeyService(secrets: self.secrets, entropy: SystemEntropy()),
+                        accountUserID: { [weak self] in self?.syncAccountUserID }, work: self.work, mainThread: main)
+                    let model = AssistantSettingsModel(settings: self.service, assistant: assistant,
+                        work: self.work, mainThread: main, syncKey: syncKey)
                     self.model = model
                     self.modelCount += 1
                     return model
