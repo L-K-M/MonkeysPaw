@@ -28,6 +28,7 @@ class SyncEngine internal constructor(
     private val wallClock: Clock,
     private val freshID: () -> ULID,
     private val monotonicClock: MonotonicClock,
+    private val providerSyncStep: ProviderSyncStep? = null,
 ) {
     /** Construct on IO, after checking the established root; construction performs local journal gating only. */
     constructor(
@@ -36,12 +37,18 @@ class SyncEngine internal constructor(
         states: SyncStateStore, accounts: SyncAccountStore,
         scope: CoroutineScope, io: CoroutineDispatcher, clock: Clock, entropy: Entropy,
         monotonicClock: MonotonicClock = MonotonicClock(System::nanoTime),
+        providerSettings: ProviderSyncInput? = null,
     ) : this(makeSyncGraph(library, libraryOperations, dataFiles, dataOperations, states, accounts),
-        scope, io, clock, { ULID.generate(clock.now(), entropy.bytes(Limits.ulidEntropyBytes)) }, monotonicClock)
+        scope, io, clock, { ULID.generate(clock.now(), entropy.bytes(Limits.ulidEntropyBytes)) }, monotonicClock,
+        providerSettings?.let { ProviderSyncStep(dataFiles, dataOperations, it.providers, it.keys, entropy) })
 
     constructor(local: SyncLocalGraph, scope: CoroutineScope, io: CoroutineDispatcher, clock: Clock, entropy: Entropy,
-                monotonicClock: MonotonicClock = MonotonicClock(System::nanoTime)) :
-        this(local.graph, scope, io, clock, { ULID.generate(clock.now(), entropy.bytes(Limits.ulidEntropyBytes)) }, monotonicClock)
+                monotonicClock: MonotonicClock = MonotonicClock(System::nanoTime),
+                providerSettings: ProviderSyncInput? = null) :
+        this(local.graph, scope, io, clock, { ULID.generate(clock.now(), entropy.bytes(Limits.ulidEntropyBytes)) },
+            monotonicClock, providerSettings?.let {
+                ProviderSyncStep(local.graph.files, local.dataOperations, it.providers, it.keys, entropy)
+            })
 
     private class Session(val binding: SyncLibraryIdentity, val client: SyncHTTPClient, val device: String)
     private enum class RunKind { PASS, RECOVERY }
@@ -401,9 +408,9 @@ class SyncEngine internal constructor(
         val permit = SyncWorkPermit(session.binding, epoch, parent)
         val generation = epoch
         val coordinator = SyncCoordinator(permit, session.client, graph.files, graph.states, graph.accounts,
-            graph.mutations, graph.journal, graph.pending, session.device, freshID, wallClock::now, monotonicClock) {
-            lock.withLock { if (epoch == generation) mutableLibraryVersion.value++ }
-        }
+            graph.mutations, graph.journal, graph.pending, session.device, freshID, wallClock::now, monotonicClock,
+            committed = { lock.withLock { if (epoch == generation) mutableLibraryVersion.value++ } },
+            providerSettings = providerSyncStep)
         val run = Active(epoch, triggerVersion, parent, coordinator)
         active = run
         dirty = false
@@ -458,7 +465,8 @@ class SyncEngine internal constructor(
         var completed: SyncReport? = null
         result.fold({ pass ->
             val success = !pass.rerun && pass.counts.fileErrors == 0 && pass.counts.pending == 0
-            mutableReport.value = reports.value.copy(counts = pass.counts, details = pass.details, offline = false,
+            mutableReport.value = reports.value.copy(counts = pass.counts, details = pass.details,
+                providerSync = pass.providerSync, offline = false,
                 retrying = false, lastSuccess = if (success) wallClock.now() else reports.value.lastSuccess)
             retry?.cancel()
             retry = null

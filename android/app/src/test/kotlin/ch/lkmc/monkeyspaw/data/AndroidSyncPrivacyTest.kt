@@ -110,7 +110,10 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
         // Real disk IO must use real cleanup deadlines rather than auto-advanced virtual time.
         val sync = AppModule.syncRepository(startup, library, local, scope, io, Clock { Instant.parse(time) },
             Entropy { count -> ByteArray(count).also(SecureRandom()::nextBytes) }, MonotonicClock(System::nanoTime),
-            Lazy { auditedSecrets }, Lazy { HttpTransport(::respond) }, settings, AppModule.syncWorkHooks(Lazy { scheduler }))
+            Lazy { auditedSecrets }, Lazy { HttpTransport(::respond) },
+            Lazy { ProviderSettingsService(ProviderSettingsStore(files), auditedSecrets, io) },
+            Lazy { ProviderSyncKeyService(auditedSecrets, Entropy { count -> ByteArray(count) }) },
+            settings, AppModule.syncWorkHooks(Lazy { scheduler }))
 
         suspend fun close() {
             scope.coroutineContext.job.cancelAndJoin()
@@ -364,6 +367,11 @@ internal class AndroidSyncPrivacyTest : TemporaryFiles() {
                 pulls++
                 HttpResponse(200, body = PullResponse.codec.encode(PullResponse(database,
                     listOf(SyncScope(ScopeIdentity.User(currentUser), Mode.SNAPSHOT, 1, "u-1", false, emptyList())), emptyList())))
+            }
+            request.url.endsWith("/me/provider-settings") -> {
+                // No sync key is provisioned; the step reports keyRequired after this GET.
+                HttpResponse(200, body = ProviderSettingsDocument.codec.encode(
+                    ProviderSettingsDocument(0, null, time)))
             }
             request.url.endsWith("/groups/join") -> {
                 sentinels.add(request.body!!.decodeToString())

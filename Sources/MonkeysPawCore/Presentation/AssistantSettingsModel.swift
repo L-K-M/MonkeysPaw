@@ -7,6 +7,8 @@ protocol AssistantSettingsProviding {
     func selectProfile(_ id: ProviderProfileID?) throws
     func deleteProfile(_ id: ProviderProfileID) throws
     func secretTier(for id: ProviderProfileID) throws -> SecretTier?
+    func observe(_ observer: @escaping @Sendable () -> Void) -> UUID
+    func removeObserver(_ id: UUID)
 }
 
 extension ProviderSettingsService: AssistantSettingsProviding {}
@@ -134,6 +136,8 @@ public final class AssistantSettingsModel: CustomStringConvertible,
     /// Composition invalidates live Assistant sessions even for credential-only
     /// edits and accepted mutations that finish after Settings closes.
     public var onProfilesChanged: (() -> Void)?
+    /// §26 sync-key provisioning; nil where sync is not composed.
+    public let syncKey: ProviderSyncKeyModel?
     public private(set) var state: State
 
     private let settings: AssistantSettingsProviding
@@ -151,31 +155,56 @@ public final class AssistantSettingsModel: CustomStringConvertible,
     private var keyInputReset = UUID()
     private var activeTestID: ConnectionTestRequestID?
     private var test: AssistantSettingsTest?
+    private var storeObserver: UUID?
 
     public convenience init(settings: ProviderSettingsService, assistant: AssistantService,
-                            work: BackgroundWork, mainThread: MainThread) {
-        self.init(settings: settings, testing: assistant, work: work, mainThread: mainThread)
+                            work: BackgroundWork, mainThread: MainThread,
+                            syncKey: ProviderSyncKeyModel? = nil) {
+        self.init(settings: settings, testing: assistant, work: work, mainThread: mainThread, syncKey: syncKey)
     }
 
     init(settings: AssistantSettingsProviding, testing: AssistantSettingsTesting,
-         work: BackgroundWork, mainThread: MainThread) {
+         work: BackgroundWork, mainThread: MainThread, syncKey: ProviderSyncKeyModel? = nil) {
         self.settings = settings
         self.testing = testing
         self.work = work
         self.mainThread = mainThread
+        self.syncKey = syncKey
         // Even a cached snapshot's lock can wait for a native secret operation.
         snapshot = ProviderSettingsSnapshot(settings: try! ProviderSettings(), readOnlyError: nil)
         state = State(profiles: [], selectedProfileID: nil, draft: nil,
             keyEdit: .keep, keyStorage: .none, operation: .loading, readOnlyError: nil,
             error: nil, availableModels: [], testResult: nil, isTesting: false, keyInputReset: keyInputReset)
+        // A remote apply rewrites the file out-of-band; the open page reloads,
+        // but staged draft edits survive the reload.
+        storeObserver = settings.observe { [weak self, mainThread] in
+            mainThread.run { [weak self] in
+                guard let self else { return }
+                self.loadSettings(preserveDraft: true)
+                self.syncKey?.refresh()
+            }
+        }
         mainThread.run { [weak self] in self?.loadSettings() }
     }
 
-    deinit { test?.cancel() }
+    deinit { test?.cancel(); storeObserver.map(settings.removeObserver) }
 
     /// Discards staged edits and returns to the active saved profile.
     public func refresh() {
         mainThread.run { self.loadSettings() }
+    }
+
+    private func loadSettings(preserveDraft: Bool = false) {
+        perform(.loading, edit: { _ in }) { _ in
+            self.error = self.snapshot.readOnlyError
+            // Observer-triggered reloads keep staged edits; an unedited or
+            // absent draft still re-derives so remote selection applies.
+            let staged = self.draft
+            let committed = staged.flatMap { current in
+                self.snapshot.settings.profiles.first { $0.id == current.id } }
+            let keepDraft = staged != nil && (committed == nil || staged != committed.map(ProviderDraft.init(profile:)))
+            if !preserveDraft || !keepDraft { self.useDraft(self.selectedDraft()) }
+        }
     }
 
     public func addProfile(kind: ProviderKind = .anthropic) {
@@ -303,13 +332,6 @@ public final class AssistantSettingsModel: CustomStringConvertible,
         case (.replace(let left), .replace(let right)):
             return left.withValue { value in right.withValue { value.utf8.elementsEqual($0.utf8) } }
         default: return false
-        }
-    }
-
-    private func loadSettings() {
-        perform(.loading, edit: { _ in }) { _ in
-            self.error = self.snapshot.readOnlyError
-            self.useDraft(self.selectedDraft())
         }
     }
 

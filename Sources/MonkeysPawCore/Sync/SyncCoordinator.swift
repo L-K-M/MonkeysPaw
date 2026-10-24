@@ -145,6 +145,7 @@ struct SyncPassResult {
     var counts = SyncCounts()
     var details: [SyncFileDetail] = []
     var rerun = false
+    var providerSync: ProviderSyncOutcome?
 }
 
 enum SyncCoordinatorError: Error { case recoveryRequired, noProgress, fileErrors }
@@ -162,6 +163,7 @@ final class SyncCoordinator {
     private let collector: SyncPullCollector
     private let client: SyncHTTPClient
     private let push: SyncPushEngine
+    private let providerSettings: ProviderSyncStep?
     private let device: String
     private let freshID: () throws -> ULID
     private let date: () -> Date
@@ -171,6 +173,7 @@ final class SyncCoordinator {
     init(binding: SyncLibraryIdentity, epoch: UInt64, client: SyncHTTPClient,
          files: FileStore, states: SyncStateStore, accounts: SyncAccountStore,
          mutations: SyncLibraryMutations, journal: SyncApplyJournal, pending: SyncPendingOperationStore,
+         providerSettings: ProviderSyncStep? = nil,
          device: String, freshID: @escaping () throws -> ULID,
          date: @escaping () -> Date, now: @escaping () -> ContinuousClock.Instant) throws {
         permit = SyncWorkPermit(binding: binding, epoch: epoch)
@@ -186,6 +189,7 @@ final class SyncCoordinator {
         self.now = now
         let client = client.permitting(permit)
         self.client = client
+        self.providerSettings = providerSettings
         collector = SyncPullCollector(client: client, files: files, userID: binding.account.userID, now: now, permit: permit)
         push = try SyncPushEngine(binding: binding, client: client, states: states, pending: pending,
             mutations: mutations, journal: journal, ownership: { try accounts.binding(for: binding.root) },
@@ -309,6 +313,12 @@ final class SyncCoordinator {
                 progress(result)
                 // Membership refresh precedes any further push after a denial.
                 if outcome == .refreshMemberships { break }
+            }
+            // §26 S9: provider settings sync follows the prompt push phase in
+            // the same pass, under this permit and its permitted client.
+            if let step = providerSettings {
+                result.providerSync = try await step.run(client: client, identity: permit.binding.account, permit: permit)
+                progress(result)
             }
             try permit.check()
             let final = try scan(currentState())

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDropDown
@@ -15,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import ch.lkmc.monkeyspaw.R
@@ -48,6 +50,11 @@ internal fun AssistantSettingsScreen(
     onRefresh: () -> Unit,
     onTest: () -> Unit,
     onCancelTest: () -> Unit,
+    onSyncKeyInput: (String) -> Unit,
+    onSyncKeyGenerate: () -> Unit,
+    onSyncKeyEnter: () -> Unit,
+    onSyncKeyRemove: () -> Unit,
+    onSyncKeyDismissReveal: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onBack)
@@ -208,6 +215,8 @@ internal fun AssistantSettingsScreen(
                 PawEmptyState(stringResource(R.string.assistant_empty_title), stringResource(R.string.assistant_empty),
                     Icons.Rounded.SmartToy)
             }
+            AssistantSyncKeySection(state.syncKey, onSyncKeyInput, onSyncKeyGenerate,
+                onSyncKeyEnter, onSyncKeyRemove, onSyncKeyDismissReveal)
         }
     }
     if (privacyDetails) AlertDialog(onDismissRequest = { privacyDetails = false },
@@ -232,6 +241,50 @@ internal fun AssistantSettingsScreen(
         }, dismissButton = {
             TextButton(onClick = { deleteConfirmation = null }) { Text(stringResource(R.string.fill_cancel)) }
         })
+}
+
+/** §26 S12: the dedicated key encrypts synced provider settings; it is entered here,
+ * revealed once, and never uploaded. */
+@Composable
+private fun AssistantSyncKeySection(syncKey: AssistantSyncKey, onSyncKeyInput: (String) -> Unit,
+    onGenerate: () -> Unit, onEnter: () -> Unit, onRemove: () -> Unit, onDismissReveal: () -> Unit) {
+    AssistantSection(stringResource(R.string.assistant_sync_title)) {
+        Text(stringResource(when (syncKey.status) {
+            AssistantSyncKeyStatus.NO_ACCOUNT -> R.string.assistant_sync_no_account
+            AssistantSyncKeyStatus.MISSING -> R.string.assistant_sync_missing
+            AssistantSyncKeyStatus.PROVISIONED -> R.string.assistant_sync_provisioned
+            AssistantSyncKeyStatus.UNAVAILABLE -> R.string.assistant_sync_unavailable
+        }), style = MaterialTheme.typography.bodyMedium)
+        syncKey.notice?.let {
+            PawMessage(stringResource(when (it) {
+                AssistantSyncKeyNotice.INVALID_KEY -> R.string.assistant_sync_notice_invalid
+                AssistantSyncKeyNotice.OPERATION_FAILED -> R.string.assistant_sync_notice_failed
+            }), tone = PawMessageTone.ERROR)
+        }
+        syncKey.revealedKey?.let { key ->
+            PawMessage(stringResource(R.string.assistant_sync_reveal), tone = PawMessageTone.INFO)
+            SelectionContainer {
+                Text(key, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+            }
+            TextButton(onClick = onDismissReveal) { Text(stringResource(R.string.assistant_sync_hide)) }
+        }
+        AssistantSettingsKeyField(syncKey.inputReset, syncKey.canEdit,
+            stringResource(R.string.assistant_sync_key_placeholder), onSyncKeyInput, Modifier.fillMaxWidth())
+        if (syncKey.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+            FilledTonalButton(onClick = onGenerate, enabled = syncKey.canEdit) {
+                Text(stringResource(R.string.assistant_sync_generate))
+            }
+            TextButton(onClick = onEnter, enabled = syncKey.canEdit) {
+                Text(stringResource(R.string.assistant_sync_enter))
+            }
+            TextButton(onClick = onRemove,
+                enabled = syncKey.canEdit && syncKey.status == AssistantSyncKeyStatus.PROVISIONED,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                Text(stringResource(R.string.assistant_sync_remove))
+            }
+        }
+    }
 }
 
 @Composable

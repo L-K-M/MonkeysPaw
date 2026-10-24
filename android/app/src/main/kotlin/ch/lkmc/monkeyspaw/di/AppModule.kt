@@ -23,6 +23,8 @@ import ch.lkmc.monkeyspaw.core.llm.AnthropicClient
 import ch.lkmc.monkeyspaw.core.llm.OpenAIClient
 import ch.lkmc.monkeyspaw.core.services.SyncEngine
 import ch.lkmc.monkeyspaw.core.services.SyncAccountService
+import ch.lkmc.monkeyspaw.core.services.ProviderSyncKeyService
+import ch.lkmc.monkeyspaw.core.sync.ProviderSyncInput
 import ch.lkmc.monkeyspaw.data.*
 import dagger.Module
 import dagger.Provides
@@ -44,6 +46,10 @@ internal annotation class IoDispatcher
 
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
+internal annotation class MainDispatcher
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
 internal annotation class ApplicationScope
 
 @Qualifier
@@ -56,6 +62,10 @@ internal object AppModule {
     @Provides
     @IoDispatcher
     fun ioDispatcher(): CoroutineDispatcher = Dispatchers.IO
+
+    @Provides
+    @MainDispatcher
+    fun mainDispatcher(): CoroutineDispatcher = Dispatchers.Main.immediate
 
     @Provides
     @Singleton
@@ -164,9 +174,11 @@ internal object AppModule {
     fun syncRepository(startup: AndroidSyncStartup, library: LibraryService, repository: LibraryRepository,
         @ApplicationScope scope: CoroutineScope, @IoDispatcher io: CoroutineDispatcher, clock: Clock,
         entropy: Entropy, monotonic: MonotonicClock, secrets: Lazy<SecretStore>, http: Lazy<HttpTransport>,
+        providers: Lazy<ProviderSettingsService>, providerKeys: Lazy<ProviderSyncKeyService>,
         settings: AndroidSettingsStore, work: SyncWorkHooks = SyncWorkHooks.None): AndroidSyncRepository =
         AndroidSyncRepository(startup, library, repository, scope, io,
-            { local -> SyncEngine(local, scope, io, clock, entropy, monotonic) },
+            { local -> SyncEngine(local, scope, io, clock, entropy, monotonic,
+                providerSettings = ProviderSyncInput(providers.get(), providerKeys.get())) },
             { engine, local -> SyncAccountService(engine, local.accounts, secrets.get(), http.get(), startup.libraryRoot, io, monotonic,
                 tlsTrust = { server -> settings.read().syncTls?.trustFor(server) ?: SyncTLSTrust.SYSTEM }) }, settings, work)
 
@@ -225,7 +237,19 @@ internal object AppModule {
     @Provides
     @Singleton
     fun providerSettings(store: ProviderSettingsStore, secrets: SecretStore,
-        @IoDispatcher io: CoroutineDispatcher): ProviderSettingsService = ProviderSettingsService(store, secrets, io)
+        @IoDispatcher io: CoroutineDispatcher, changes: AssistantProviderChanges,
+        @ApplicationScope scope: CoroutineScope, @MainDispatcher main: CoroutineDispatcher): ProviderSettingsService =
+        // The observer must exist the moment the service does — whoever
+        // constructs it first (sync pass or settings UI). Remote applies
+        // commit in the sync pass; retire sessions from UI work.
+        ProviderSettingsService(store, secrets, io).also { service ->
+            service.observeChanges { scope.launch(main) { changes.changed() } }
+        }
+
+    @Provides
+    @Singleton
+    fun providerSyncKeys(secrets: SecretStore, entropy: Entropy): ProviderSyncKeyService =
+        ProviderSyncKeyService(secrets, entropy)
 
     @Provides
     @Singleton
@@ -258,6 +282,14 @@ internal object AppModule {
     fun assistantGraph(service: AssistantService, access: AssistantAccess, clock: MonotonicClock): AssistantGraph =
         AssistantGraph(service, access, clock)
 
+    /** The assistant settings key section reads the persisted account metadata only. */
+    @Provides
+    @Singleton
+    fun syncAccountUser(repository: Lazy<AndroidSyncRepository>): SyncAccountUser = SyncAccountUser {
+        repository.get().graph().local.accountMetadata().account?.identity?.userID
+    }
+
+    /** The sync repository registers the settings observer at construction. */
     @Provides
     @Singleton
     fun providerChanges(): AssistantProviderChanges = AssistantProviderChanges()

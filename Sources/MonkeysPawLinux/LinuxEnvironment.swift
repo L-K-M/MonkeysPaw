@@ -782,8 +782,15 @@ final class LinuxEnvironment {
                     session: self.session.currentSession(),
                     makeAssistant: { [weak self] in
                         guard let self, !self.isShutDown else { return nil }
+                        let syncKey = self.currentLibraryGraph?.sync.map { graph in
+                            ProviderSyncKeyModel(keys: ProviderSyncKeyService(secrets: self.secretStore,
+                                    entropy: SystemEntropy()),
+                                accountUserID: { try graph.accounts.configuredAccountUserID() },
+                                work: self.backgroundWork, mainThread: self.mainThread)
+                        }
                         let model = AssistantSettingsModel(settings: self.providerSettingsService,
-                            assistant: self.assistantService, work: self.backgroundWork, mainThread: self.mainThread)
+                            assistant: self.assistantService, work: self.backgroundWork,
+                            mainThread: self.mainThread, syncKey: syncKey)
                         model.onProfilesChanged = { [weak self] in
                             self?.currentLibraryGraph?.assistant?.profileChanged()
                         }
@@ -1169,9 +1176,12 @@ final class LinuxEnvironment {
         do {
             let access = try GroupAccessService(library: library, states: states, accounts: accounts,
                 libraryRoot: directory.path)
+            let entropy = SystemEntropy()
             let service = try SyncService(library: library, libraryOperations: libraryOperations,
                 dataFiles: dataFiles, dataOperations: dataOperations, states: states, accounts: accounts,
-                scheduler: timer, mainThread: mainThread, clock: clock, entropy: SystemEntropy())
+                scheduler: timer, mainThread: mainThread, clock: clock, entropy: entropy,
+                providerSettings: ProviderSyncInput(providers: providerSettingsService,
+                    keys: ProviderSyncKeyService(secrets: secretStore, entropy: entropy)))
             let account = try SyncAccountService(sync: service, accounts: accounts, secrets: secretStore,
                 transport: suppliedSyncTransport ?? assistantTransport, libraryRoot: directory.path)
             let graph = SyncGraph(service: service, accounts: accounts, accountService: account, access: access, scheduler: timer)

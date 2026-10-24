@@ -34,25 +34,94 @@ class ProviderSettingsStore(private val files: StateStore) {
     }
 
     internal suspend fun update(change: suspend (ProviderSettings) -> ProviderSettings,
-                                rollback: suspend () -> Unit = {}) = mutex.withLock {
-        // Once a compound edit starts, cancellation cannot strand a committed secret
-        // between metadata publication and compensation. Queued edits remain cancellable.
-        withContext(NonCancellable) {
-            val loaded = loadCurrent()
-            try {
-                val next = change(loaded.settings)
-                if (next != loaded.settings || loaded.needsRewrite) write(next, loaded.objectValue)
-                cached = ProviderSettingsSnapshot(next)
-            } catch (error: Exception) {
-                try { rollback() }
-                catch (_: Exception) {
-                    cached = ProviderSettingsSnapshot(loaded.settings, ProviderSettingsError.SecretRollbackFailed)
-                    System.err.println("Provider secret restoration failed.")
-                    throw ProviderSettingsError.SecretRollbackFailed
+                                rollback: suspend () -> Unit = {}) {
+        var committed = false
+        try {
+            mutex.withLock {
+                // Once a compound edit starts, cancellation cannot strand a committed secret
+                // between metadata publication and compensation. Queued edits remain cancellable.
+                withContext(NonCancellable) {
+                    val loaded = loadCurrent()
+                    try {
+                        val next = change(loaded.settings)
+                        if (next != loaded.settings || loaded.needsRewrite) write(next, loaded.objectValue)
+                        cached = ProviderSettingsSnapshot(next)
+                        committed = next != loaded.settings || loaded.needsRewrite
+                    } catch (error: Exception) {
+                        try { rollback() }
+                        catch (_: Exception) {
+                            cached = ProviderSettingsSnapshot(loaded.settings, ProviderSettingsError.SecretRollbackFailed)
+                            System.err.println("Provider secret restoration failed.")
+                            throw ProviderSettingsError.SecretRollbackFailed
+                        }
+                        throw error
+                    }
                 }
-                throw error
             }
+        } finally {
+            // §26 S10: successful updates and remote applies notify; observers
+            // run after the mutation lock is released and must not reenter.
+            if (committed) notifyChanged()
         }
+    }
+
+    /** The raw stored object alongside the validated settings, under the lock.
+     * A missing file exports an empty object; callers substitute the default. */
+    internal suspend fun <T> withDocument(body: suspend (JsonObject, ProviderSettings) -> T): T = mutex.withLock {
+        val loaded = loadCurrent()
+        cached = ProviderSettingsSnapshot(loaded.settings)
+        body(loaded.objectValue, loaded.settings)
+    }
+
+    /** §26 S7: the mutation runs while local settings are still installed; the
+     * verbatim remote object then commits under the same lock. Secret edits
+     * inside the mutation are compensated through `rollback` on any failure,
+     * so a rejected commit cannot strand the secret store. */
+    internal suspend fun applySynced(objectValue: JsonObject,
+                                     mutate: suspend (ProviderSettings, ProviderSettings) -> Unit,
+                                     rollback: suspend () -> Unit = {}) {
+        var committed = false
+        try {
+            mutex.withLock {
+                withContext(NonCancellable) {
+                    val loaded = loadCurrent()
+                    val remote = try { settingsFrom(objectValue) }
+                    catch (_: Exception) { throw ProviderSettingsError.CorruptFile }
+                    try {
+                        mutate(loaded.settings, remote)
+                        files.write(ProviderSettingsJson.encode(objectValue), path)
+                    } catch (error: Exception) {
+                        try { rollback() }
+                        catch (_: Exception) {
+                            cached = ProviderSettingsSnapshot(loaded.settings, ProviderSettingsError.SecretRollbackFailed)
+                            System.err.println("Provider secret restoration failed.")
+                            throw ProviderSettingsError.SecretRollbackFailed
+                        }
+                        if (error is CancellationException || error is ProviderSettingsError) throw error
+                        System.err.println("Provider settings write failed.")
+                        throw ProviderSettingsError.WriteFailed
+                    }
+                    cached = ProviderSettingsSnapshot(remote)
+                    committed = true
+                }
+            }
+        } finally {
+            if (committed) notifyChanged()
+        }
+    }
+
+    private val observers = java.util.concurrent.ConcurrentHashMap<Long, () -> Unit>()
+    private val observerSequence = java.util.concurrent.atomic.AtomicLong(0)
+
+    /** §26 S10: remote applies and committed edits notify on a driver-agnostic
+     * path. Observers run after the mutation lock; they must not reenter. */
+    fun observeChanges(observer: () -> Unit): Long =
+        observerSequence.getAndIncrement().also { observers[it] = observer }
+
+    fun removeObserver(token: Long) { observers.remove(token) }
+
+    private fun notifyChanged() {
+        observers.values.forEach { observer -> try { observer() } catch (_: Exception) { } }
     }
 
     private fun loadCurrent(): Loaded {
@@ -78,16 +147,20 @@ class ProviderSettingsStore(private val files: StateStore) {
         catch (error: ProviderSettingsError.UnsupportedVersion) { throw error }
         catch (_: Exception) { throw ProviderSettingsError.CorruptFile }
 
-        return try {
-            if (ProviderSettingsJson.version(objectValue["version"]) != ProviderSettings.currentVersion.toLong()) {
-                throw ProviderSettingsError.CorruptFile
-            }
-            val profiles = objectValue["profiles"] as? JsonArray ?: throw ProviderSettingsError.CorruptFile
-            val selected = objectValue["selectedProfileID"].let {
-                if (it == null || it == JsonNull) null else ProviderProfileID.parse(ProviderSettingsJson.text(it))
-            }
-            Loaded(ProviderSettings(profiles.map(::decodeProfile), selected), objectValue, false)
-        } catch (_: Exception) { throw ProviderSettingsError.CorruptFile }
+        return try { Loaded(settingsFrom(objectValue), objectValue, false) }
+        catch (_: Exception) { throw ProviderSettingsError.CorruptFile }
+    }
+
+    /** The same strict decode the file path applies, over any parsed object. */
+    private fun settingsFrom(objectValue: JsonObject): ProviderSettings {
+        if (ProviderSettingsJson.version(objectValue["version"]) != ProviderSettings.currentVersion.toLong()) {
+            throw ProviderSettingsError.CorruptFile
+        }
+        val profiles = objectValue["profiles"] as? JsonArray ?: throw ProviderSettingsError.CorruptFile
+        val selected = objectValue["selectedProfileID"].let {
+            if (it == null || it == JsonNull) null else ProviderProfileID.parse(ProviderSettingsJson.text(it))
+        }
+        return ProviderSettings(profiles.map(::decodeProfile), selected)
     }
 
     private fun decodeProfile(value: JsonElement): ProviderProfile {

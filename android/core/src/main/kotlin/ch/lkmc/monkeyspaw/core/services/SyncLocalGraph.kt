@@ -13,6 +13,7 @@ class SyncLocalGraph(
     libraryRoot: String,
 ) {
     private val root = SyncLibraryRoot(libraryRoot)
+    internal val dataOperations = dataOperations
     val states = SyncStateStore(dataFiles, dataOperations)
     val accounts = SyncAccountStore(dataFiles, dataOperations)
     internal val graph = makeSyncGraph(library, libraryOperations, dataFiles, dataOperations, states, accounts)

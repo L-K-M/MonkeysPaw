@@ -3,6 +3,7 @@
 | Asset | Protection |
 |---|---|
 | API keys, device token | OS secret store. Never stored in settings, argv, or logs. `secret-tool` gets the secret on stdin. Types holding secrets have redacted descriptions and reflection output. |
+| Synced provider keys | Provider API keys cross the wire only inside the §26 AES-256-GCM document sealed under the per-account `provider-sync:<user>` key; the server stores opaque ciphertext it cannot read. The sync key is generated on one device, entered manually on the others as 43-character base64url, lives in the platform secret store, and is never uploaded, logged, or re-displayed after its one-time reveal. |
 | Prompts on the device | Local files. The app sends them only through explicit Assistant inputs (`private: true` blocks Review/Improve), or through enabled sync to the configured server. Android opts out of Auto Backup (§10.6). |
 | Prompts on the server | TLS in transit. On disk they are plaintext in SQLite. Volume encryption is the operator's job, and SECURITY.md says so. No end-to-end encryption in v1 (D12). |
 | Server accounts | bcrypt 12. Hashed device tokens. Login backoff. Invite-only. Admins cannot read private prompts through the API. |
@@ -154,7 +155,11 @@ Tool input is capped at 8,191 bytes, below its 8 KiB truncation threshold.
 - Providers see what you send.
 - The sync server operator can read every prompt on it. So can an admin who
   resets a password. The permission model protects members from each other,
-  not from the operator.
+  not from the operator. The provider-settings document is the exception:
+  it is AES-256-GCM ciphertext under the device-provisioned sync key, so
+  the operator cannot read synced provider keys from it. The operator can
+  still withhold or roll back the document; a forged or cross-account
+  document fails authentication on the device (§26 S5).
 - The Linux file tier is not encrypted.
 - Development desktop builds can be unsigned; macOS packaging is ad-hoc by
   default with an optional configured identity and no notarization workflow.

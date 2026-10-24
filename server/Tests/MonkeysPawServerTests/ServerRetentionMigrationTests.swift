@@ -24,7 +24,7 @@ struct ServerRetentionMigrationTests {
             let key = try await repository.string("SELECT hex(secret) AS bytes FROM snapshot_cursor_key", column: "bytes")
             try await repository.database.migrate()
             try await repository.database.migrate()
-            #expect(try await repository.count("schema_migrations") == 5)
+            #expect(try await repository.count("schema_migrations") == ServerMigration.current.count)
             #expect(try await MetaRepository(database: repository.database).databaseID() == identity)
             #expect(try await repository.promptStorageState() == before)
             #expect(try await repository.string("SELECT hex(secret) AS bytes FROM snapshot_cursor_key", column: "bytes") == key)
@@ -61,7 +61,7 @@ struct ServerRetentionMigrationTests {
                 #expect(try await repository.database.read { try await $0.raw("SELECT name FROM sqlite_master WHERE name = \(bind: name)").first() == nil })
             }
             try await repository.database.migrate()
-            #expect(try await repository.count("schema_migrations") == 5)
+            #expect(try await repository.count("schema_migrations") == ServerMigration.current.count)
         }
     }
 }

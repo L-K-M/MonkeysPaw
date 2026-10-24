@@ -37,6 +37,8 @@ public final class ProviderSettingsStore: @unchecked Sendable {
     private let lock = NSLock()
     // UI snapshots must not wait behind a native secret prompt under lock.
     private let snapshotLock = NSLock()
+    private let observerLock = NSLock()
+    private var changeObservers: [UUID: @Sendable () -> Void] = [:]
     private let path = "provider-settings.json"
     private var cached = ProviderSettingsSnapshot(settings: try! ProviderSettings(), readOnlyError: nil)
 
@@ -68,13 +70,85 @@ public final class ProviderSettingsStore: @unchecked Sendable {
         return try body(loaded.settings)
     }
 
+    /// §26 S10: successful updates and remote applies notify; the observer is
+    /// invoked after the store lock is released.
+    @discardableResult public func observe(_ observer: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        observerLock.lock()
+        changeObservers[id] = observer
+        observerLock.unlock()
+        return id
+    }
+
+    public func removeObserver(_ id: UUID) {
+        observerLock.lock()
+        changeObservers[id] = nil
+        observerLock.unlock()
+    }
+
+    private func notifyChanged() {
+        observerLock.lock()
+        let observers = Array(changeObservers.values)
+        observerLock.unlock()
+        for observer in observers { observer() }
+    }
+
+    /// The raw stored object alongside the validated settings, under the lock.
+    /// A missing file exports an empty object; callers substitute the default.
+    func withDocument<T>(_ body: ([String: Any], ProviderSettings) throws -> T) throws -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        let loaded = try loadCurrent()
+        publish(ProviderSettingsSnapshot(settings: loaded.settings, readOnlyError: nil))
+        return try body(loaded.object, loaded.settings)
+    }
+
+    /// §26 S7: the mutation runs while local settings are still installed; the
+    /// verbatim remote object then commits under the same lock. Secret edits
+    /// inside the mutation are compensated through `rollback` on any failure,
+    /// so a rejected commit cannot strand the secret store.
+    func applySynced(_ object: [String: Any],
+                     mutate: (ProviderSettings, ProviderSettings) throws -> Void,
+                     rollback: () throws -> Void = {}) throws {
+        var committed = false
+        lock.lock()
+        defer {
+            lock.unlock()
+            if committed { notifyChanged() }
+        }
+        let loaded = try loadCurrent()
+        let parsed = try settings(from: object)
+        do {
+            try mutate(loaded.settings, parsed)
+            let bytes = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            try files.write(bytes, at: path)
+        } catch {
+            do { try rollback() }
+            catch {
+                publish(ProviderSettingsSnapshot(settings: loaded.settings, readOnlyError: .secretRollbackFailed))
+                log?.write(.error, "Provider secret restoration failed.")
+                throw ProviderSettingsError.secretRollbackFailed
+            }
+            if error is CancellationError { throw error }
+            if let error = error as? ProviderSettingsError { throw error }
+            log?.write(.warning, "Provider settings write failed.")
+            throw ProviderSettingsError.writeFailed(error as? FileStoreError ?? .ioFailure)
+        }
+        publish(ProviderSettingsSnapshot(settings: parsed, readOnlyError: nil))
+        committed = true
+    }
+
     /// Secret operations run inside the same lock as validation and publication.
     /// Compensate a successful secret edit if metadata cannot commit. FileStore
     /// has no compare-and-swap, so external writers can still race read/write.
     func update(_ change: (ProviderSettings) throws -> ProviderSettings,
                 rollback: () throws -> Void = {}) throws {
+        var committed = false
         lock.lock()
-        defer { lock.unlock() }
+        defer {
+            lock.unlock()
+            if committed { notifyChanged() }
+        }
         let loaded = try loadCurrent()
         do {
             let next = try change(loaded.settings)
@@ -82,6 +156,7 @@ public final class ProviderSettingsStore: @unchecked Sendable {
                 try write(next, preserving: loaded.object)
             }
             publish(ProviderSettingsSnapshot(settings: next, readOnlyError: nil))
+            committed = next != loaded.settings || loaded.needsRewrite
         } catch {
             do { try rollback() }
             catch {
@@ -115,13 +190,17 @@ public final class ProviderSettingsStore: @unchecked Sendable {
         catch { throw ProviderSettingsError.corruptFile }
 
         do {
-            let data = try JSONSerialization.data(withJSONObject: object)
-            let payload = try JSONDecoder().decode(Payload.self, from: data)
-            guard payload.version == ProviderSettings.currentVersion else { throw ProviderSettingsError.corruptFile }
-            let settings = try ProviderSettings(profiles: payload.profiles.map { try $0.profile() },
-                                                selectedProfileID: payload.selectedProfileID)
-            return Loaded(settings: settings, object: object, needsRewrite: false)
+            return Loaded(settings: try settings(from: object), object: object, needsRewrite: false)
         } catch { throw ProviderSettingsError.corruptFile }
+    }
+
+    /// The same strict decode the file path applies, over any parsed object.
+    private func settings(from object: [String: Any]) throws -> ProviderSettings {
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let payload = try JSONDecoder().decode(Payload.self, from: data)
+        guard payload.version == ProviderSettings.currentVersion else { throw ProviderSettingsError.corruptFile }
+        return try ProviderSettings(profiles: payload.profiles.map { try $0.profile() },
+                                    selectedProfileID: payload.selectedProfileID)
     }
 
     private func write(_ settings: ProviderSettings, preserving original: [String: Any]) throws {

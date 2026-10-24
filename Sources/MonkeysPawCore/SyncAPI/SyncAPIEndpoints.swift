@@ -35,6 +35,8 @@ extension SyncAPI {
         .init("POST", "/api/v1/auth/password", request: "PasswordChangeRequest", response: "EmptyResponse"),
         .init("GET", "/api/v1/me", response: "MeResponse"),
         .init("DELETE", "/api/v1/me/devices/{id}", parameters: "IDPath", response: "EmptyResponse"),
+        .init("GET", "/api/v1/me/provider-settings", response: "ProviderSettingsDocument"),
+        .init("PUT", "/api/v1/me/provider-settings", request: "PutProviderSettingsRequest", response: "ProviderSettingsResponse"),
         .init("POST", "/api/v1/sync/pull", request: "PullRequest", response: "PullResponse"),
         .init("GET", "/api/v1/prompts/{id}", parameters: "IDPath", response: "Prompt"),
         .init("PUT", "/api/v1/prompts/{id}", request: "PutPromptRequest", parameters: "IDPath", response: "WriteResponse"),

@@ -98,6 +98,8 @@ internal class AccountViewModelTest : TemporaryFiles() {
                 }
                 request.url.endsWith("/me") -> HttpResponse(200, body = MeResponse.codec.encode(MeResponse(user(), memberships, listOf(
                     Device(deviceA, "Android", time, time, null, true), Device(deviceB, "Desktop", time, null, null, false)))))
+                request.url.endsWith("/me/provider-settings") -> HttpResponse(200,
+                    body = ProviderSettingsDocument.codec.encode(ProviderSettingsDocument(0, null, time)))
                 request.url.endsWith("/sync/pull") -> HttpResponse(200, body = PullResponse.codec.encode(PullResponse(databaseID,
                     listOf(SyncScope(ScopeIdentity.User(userID), Mode.SNAPSHOT, 1, "u-1", false, emptyList())) +
                         memberships.map { SyncScope(ScopeIdentity.Group(it.groupID, it.name, it.role), Mode.SNAPSHOT, 1, "g-1", false, emptyList()) }, emptyList())))
@@ -128,7 +130,9 @@ internal class AccountViewModelTest : TemporaryFiles() {
         }
         private var draw = 0
         val sync = AppModule.syncRepository(startup, library, local, scope, dispatcher, Clock { Instant.parse(time) },
-            Entropy { count -> ByteArray(count) { (draw++).toByte() } }, MonotonicClock(System::nanoTime), Lazy { secrets }, Lazy { transport }, settings, hooks)
+            Entropy { count -> ByteArray(count) { (draw++).toByte() } }, MonotonicClock(System::nanoTime), Lazy { secrets }, Lazy { transport },
+            Lazy { ProviderSettingsService(ProviderSettingsStore(files), secrets, dispatcher) },
+            Lazy { ProviderSyncKeyService(secrets, Entropy { count -> ByteArray(count) }) }, settings, hooks)
         fun user() = User(userID, "person", null, AccountKind.MEMBER, time, null)
         suspend fun login() = sync.login(server, "person", SecretValue(password), "Android")
         suspend fun close() { scope.cancel(); scope.coroutineContext[Job]!!.join() }

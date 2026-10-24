@@ -113,6 +113,13 @@ internal class SyncHTTPClient(
     suspend fun pull(request: PullRequest, deadlineNanos: Long? = null): PullResponse =
         send(HttpMethod.POST, "/sync/pull", PullResponse.codec, encode(request, PullRequest.codec), deadlineNanos = deadlineNanos)
 
+    suspend fun providerSettings(deadlineNanos: Long? = null): ProviderSettingsDocument =
+        send(HttpMethod.GET, "/me/provider-settings", ProviderSettingsDocument.codec, deadlineNanos = deadlineNanos)
+
+    suspend fun putProviderSettings(request: PutProviderSettingsRequest, deadlineNanos: Long? = null): ProviderSettingsResponse =
+        send(HttpMethod.PUT, "/me/provider-settings", ProviderSettingsResponse.codec,
+            encode(request, PutProviderSettingsRequest.codec), deadlineNanos = deadlineNanos)
+
     suspend fun joinGroup(request: JoinGroupRequest, deadlineNanos: Long? = null): GroupMembership =
         send(HttpMethod.POST, "/groups/join", GroupMembership.codec, encode(request, JoinGroupRequest.codec), deadlineNanos = deadlineNanos)
 

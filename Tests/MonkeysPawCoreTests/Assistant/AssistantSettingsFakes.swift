@@ -98,6 +98,31 @@ final class AssistantSettingsProviderFake: AssistantSettingsProviding {
         if let tierError { throw tierError }
         return tiers[id]
     }
+
+    private let observerLock = NSLock()
+    private var observers: [UUID: @Sendable () -> Void] = [:]
+
+    func observe(_ observer: @escaping @Sendable () -> Void) -> UUID {
+        observerLock.lock()
+        defer { observerLock.unlock() }
+        let id = UUID()
+        observers[id] = observer
+        return id
+    }
+
+    func removeObserver(_ id: UUID) {
+        observerLock.lock()
+        defer { observerLock.unlock() }
+        observers[id] = nil
+    }
+
+    /// Simulates a committed write landing while the model is open.
+    func notifyChanged() {
+        observerLock.lock()
+        let snapshot = Array(observers.values)
+        observerLock.unlock()
+        snapshot.forEach { $0() }
+    }
 }
 
 final class AssistantSettingsTestFake: AssistantSettingsTest {

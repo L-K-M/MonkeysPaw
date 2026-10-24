@@ -145,7 +145,9 @@ final class SchemaTests: XCTestCase {
             SyncAPI.RevisionSummary.self, SyncAPI.RevisionsResponse.self, SyncAPI.Revision.self,
             SyncAPI.FeedPrompt.self, SyncAPI.AccountKind.self, SyncAPI.Role.self,
             SyncAPI.InviteRole.self, SyncAPI.WriteOrigin.self, SyncAPI.RevisionOrigin.self,
-            SyncAPI.Mode.self, SyncAPI.Severity.self, SyncAPI.PromptScope.self
+            SyncAPI.Mode.self, SyncAPI.Severity.self, SyncAPI.PromptScope.self,
+            SyncAPI.ProviderSettingsDocument.self, SyncAPI.ProviderSettingsResponse.self,
+            SyncAPI.PutProviderSettingsRequest.self
         ]
         let readers = Dictionary(uniqueKeysWithValues: types.map { ($0.schemaName, $0) })
         XCTAssertEqual(Set(readers.keys), Set(SyncAPI.schemas.map(\.name)))

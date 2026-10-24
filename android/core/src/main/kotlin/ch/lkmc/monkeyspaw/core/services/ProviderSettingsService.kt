@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.SecretStore
+import ch.lkmc.monkeyspaw.core.sync.ProviderSyncPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -11,6 +12,10 @@ import kotlinx.serialization.json.*
 class ProviderSettingsService(private val store: ProviderSettingsStore, private val secrets: SecretStore,
                               private val io: CoroutineDispatcher) {
     val snapshot: ProviderSettingsSnapshot get() = store.snapshot
+
+    /** §26 S10: remote applies and committed edits notify; the token removes the observer. */
+    fun observeChanges(observer: () -> Unit): Long = store.observeChanges(observer)
+    fun removeObserver(token: Long) = store.removeObserver(token)
 
     suspend fun save(draft: ProviderDraft): Unit = withContext(io) {
         var undo: (suspend () -> Unit)? = null
@@ -74,6 +79,52 @@ class ProviderSettingsService(private val store: ProviderSettingsStore, private 
             ProviderConnection(id, profile.kind, profile.baseURL, profile.modelID, key)
         }
     }
+
+    /** §26 S4/S6: the stored object verbatim, plus the persisted bound envelope
+     * for each referenced account. A missing persisted value falls back to the
+     * last decrypted remote document. */
+    internal suspend fun exportSyncPayload(remoteSecrets: Map<String, String>): ProviderSyncPayload = withContext(io) {
+        store.withDocument { objectValue, settings ->
+            val stored = if (objectValue.isEmpty()) defaultObject else objectValue
+            val secrets = mutableMapOf<String, String>()
+            for (profile in settings.profiles) {
+                val account = profile.secretReference ?: continue
+                if (account.namespace != "provider") continue
+                val persisted = readSecret(account, SecretReadSource.PERSISTED)
+                if (persisted != null) persisted.value.withValue { secrets[account.rawValue] = it }
+                else remoteSecrets[account.rawValue]?.let { secrets[account.rawValue] = it }
+            }
+            ProviderSyncPayload(stored, secrets)
+        }
+    }
+
+    /** §26 S7: write the payload's secrets for referenced provider accounts and
+     * drop local provider secrets the remote metadata no longer references,
+     * then commit the metadata object verbatim. A metadata failure restores
+     * every mutated account through the same rollback contract as edits. */
+    internal suspend fun applySynced(objectValue: JsonObject, payload: Map<String, String>) = withContext(io) {
+        val undo = ArrayDeque<suspend () -> Unit>()
+        store.applySynced(objectValue, mutate = { current, remote ->
+            val referenced = remote.profiles.mapNotNull { it.secretReference }
+                .filter { it.namespace == "provider" }.toSet()
+            for (account in referenced) {
+                val envelope = payload[account.rawValue] ?: continue
+                undo.addLast(editSecret(account, SecretValue(envelope)))
+            }
+            val previous = current.profiles.mapNotNull { it.secretReference }
+                .filter { it.namespace == "provider" }.toSet()
+            for (account in previous - referenced) {
+                undo.addLast(editSecret(account, null))
+            }
+        }, rollback = { for (restore in undo.reversed()) restore() })
+    }
+
+    /** A missing file exports the canonical empty settings document. */
+    internal val defaultObject: JsonObject get() = JsonObject(linkedMapOf(
+        "version" to JsonPrimitive(ProviderSettings.currentVersion),
+        "profiles" to JsonArray(emptyList()),
+        "selectedProfileID" to JsonNull,
+    ))
 
     /** Presentation receives the tier, never the stored value. */
     suspend fun secretTier(id: ProviderProfileID): SecretTier? = withContext(io) {

@@ -63,6 +63,8 @@ internal class ResolveViewModelTest : TemporaryFiles() {
                 request.url.endsWith("/me") -> HttpResponse(200, body = MeResponse.codec.encode(MeResponse(
                     User(userID, "person", null, AccountKind.MEMBER, time, null),
                     if (group) listOf(GroupMembership(groupID, "Team", role)) else emptyList(), emptyList())))
+                request.url.endsWith("/me/provider-settings") -> HttpResponse(200,
+                    body = ProviderSettingsDocument.codec.encode(ProviderSettingsDocument(0, null, time)))
                 request.url.endsWith("/sync/pull") -> {
                     fun scope(identity: ScopeIdentity, wire: PromptScope) = SyncScope(identity, Mode.SNAPSHOT, 10, "after", false,
                         remote.values.filter { it.scope == wire }.sortedBy { it.id }
@@ -101,7 +103,9 @@ internal class ResolveViewModelTest : TemporaryFiles() {
         private var draw = 0
         val mono = MonotonicClock { dispatcher.scheduler.currentTime * 1_000_000 }
         val sync = AppModule.syncRepository(startup, library, local, scope, dispatcher, clock,
-            Entropy { count -> ByteArray(count) { (draw++).toByte() } }, mono, Lazy { secrets }, Lazy { transport }, settings)
+            Entropy { count -> ByteArray(count) { (draw++).toByte() } }, mono, Lazy { secrets }, Lazy { transport },
+            Lazy { ProviderSettingsService(ProviderSettingsStore(files), secrets, dispatcher) },
+            Lazy { ProviderSyncKeyService(secrets, Entropy { count -> ByteArray(count) }) }, settings)
         val model = ResolveViewModel(sync).also { models.put("resolver-$number", it) }
         val editor = EditorViewModel(local, dispatcher, clock, scope).also { models.put("editor-$number", it) }
         val browser = LibraryViewModel(local, dispatcher).also { models.put("browser-$number", it) }

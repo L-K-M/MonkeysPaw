@@ -561,9 +561,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forgetAllConfirmation: forgetAllConfirmation,
             mainThread: mainThread, activation: windowActivation, folderChooser: folderChooser,
             openSetup: { [weak self] in self?.showSetup() },
-            makeAssistant: {
-                AssistantSettingsModel(settings: providers, assistant: assistant,
-                    work: backgroundWork, mainThread: mainThread)
+            makeAssistant: { [weak self] in
+                guard let self else {
+                    return AssistantSettingsModel(settings: providers, assistant: assistant,
+                        work: backgroundWork, mainThread: mainThread)
+                }
+                let syncKey = self.syncComposition.map { composition in
+                    ProviderSyncKeyModel(keys: ProviderSyncKeyService(secrets: self.secrets,
+                            entropy: SystemEntropy()),
+                        accountUserID: { try composition.accounts.configuredAccountUserID() },
+                        work: backgroundWork, mainThread: mainThread)
+                }
+                return AssistantSettingsModel(settings: providers, assistant: assistant,
+                    work: backgroundWork, mainThread: mainThread, syncKey: syncKey)
             }, onProviderChange: { [weak self] in self?.libraryWindow?.presentation.assistantProfileChanged() },
             makeAccount: { [weak self] in
                 guard let self, !self.isShutDown else { return nil }
@@ -1016,7 +1026,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 libraryRoot: libraryDirectory.path)
             let sync = try SyncService(library: library, libraryOperations: libraryOperations,
                 dataFiles: data, dataOperations: dataOperations, states: states, accounts: accounts,
-                scheduler: scheduler, mainThread: main, clock: clock, entropy: SystemEntropy())
+                scheduler: scheduler, mainThread: main, clock: clock, entropy: SystemEntropy(),
+                providerSettings: providerSettingsService.map {
+                    ProviderSyncInput(providers: $0, keys: ProviderSyncKeyService(secrets: secrets, entropy: SystemEntropy()))
+                })
             let generation = libraryGeneration
             let repeatMain = mainThread
             let account = try SyncAccountService(sync: sync, accounts: accounts, secrets: secrets,

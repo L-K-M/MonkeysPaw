@@ -234,6 +234,11 @@ class MainActivity : ComponentActivity() {
                             onClearKey = assistantSettings::clearKey, onKeyInputDiscarded = assistantSettings::discardTypedKey,
                             onSave = assistantSettings::save, onRefresh = assistantSettings::refresh,
                             onTest = assistantSettings::testConnection, onCancelTest = assistantSettings::cancelTest,
+                            onSyncKeyInput = assistantSettings::setSyncKeyInput,
+                            onSyncKeyGenerate = assistantSettings::syncKeyGenerate,
+                            onSyncKeyEnter = assistantSettings::syncKeyEnter,
+                            onSyncKeyRemove = assistantSettings::syncKeyRemove,
+                            onSyncKeyDismissReveal = assistantSettings::syncKeyDismissReveal,
                             modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                         ) else if (editing.isOpen) EditorScreen(
                             state = editing, onEdit = editor::edit, onEditForm = editor::editForm, onEditMode = editor::setEditMode,

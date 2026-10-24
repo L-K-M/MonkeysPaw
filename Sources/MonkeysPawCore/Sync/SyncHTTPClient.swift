@@ -135,6 +135,15 @@ struct SyncHTTPClient: Sendable, CustomStringConvertible, CustomDebugStringConve
         try await send(.post, "/api/v1/sync/pull", body: encode(request), deadline: deadline)
     }
 
+    func providerSettings(deadline: ContinuousClock.Instant? = nil) async throws -> SyncAPI.ProviderSettingsDocument {
+        try await send(.get, "/api/v1/me/provider-settings", deadline: deadline)
+    }
+
+    func putProviderSettings(_ request: SyncAPI.PutProviderSettingsRequest,
+                             deadline: ContinuousClock.Instant? = nil) async throws -> SyncAPI.ProviderSettingsResponse {
+        try await send(.put, "/api/v1/me/provider-settings", body: encode(request), deadline: deadline)
+    }
+
     func createGroup(_ request: SyncAPI.CreateGroupRequest, deadline: ContinuousClock.Instant? = nil) async throws -> SyncAPI.Group {
         try await send(.post, "/api/v1/groups", body: encode(request), deadline: deadline)
     }

@@ -78,7 +78,10 @@ enum DTOFixtureCorpus {
             SyncAPI.RevisionOrigin.schemaName: reader(SyncAPI.RevisionOrigin.self),
             SyncAPI.Mode.schemaName: reader(SyncAPI.Mode.self),
             SyncAPI.Severity.schemaName: reader(SyncAPI.Severity.self),
-            SyncAPI.PromptScope.schemaName: reader(SyncAPI.PromptScope.self)
+            SyncAPI.PromptScope.schemaName: reader(SyncAPI.PromptScope.self),
+            SyncAPI.ProviderSettingsDocument.schemaName: reader(SyncAPI.ProviderSettingsDocument.self),
+            SyncAPI.PutProviderSettingsRequest.schemaName: reader(SyncAPI.PutProviderSettingsRequest.self),
+            SyncAPI.ProviderSettingsResponse.schemaName: reader(SyncAPI.ProviderSettingsResponse.self)
         ]
     }()
 

@@ -83,6 +83,12 @@ public final class SyncAccountStore: @unchecked Sendable {
     /// metadata without constructing an Account model or resolving a secret.
     public var hasConfiguredAccount: Bool { connection.snapshot.value?.account != nil }
 
+    /// §26: the account owning provider-sync secrets; nil while signed out or
+    /// unreadable. Reads current connection metadata, never the credential.
+    public func configuredAccountUserID() throws -> ULID? {
+        try loadAccount()?.identity.userID
+    }
+
     /// Repeat uses validated cached identity without reading a credential or disk.
     public func repeatBinding(libraryRoot: String) throws -> RepeatBinding {
         guard readOnlyError == nil else { throw RepeatFailure.invalidBinding }
