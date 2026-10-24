@@ -12,6 +12,7 @@ struct LibrarySourceHighlight {
 /// SwiftUI publications must never replace an active marked-text composition.
 struct LibrarySourceEditor: NSViewRepresentable {
     enum Content { case source, body }
+    enum LoadState { case loading, ready }
     let source: String
     let path: RelativePath?
     let revision: UInt64
@@ -21,6 +22,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
     var focusRevision: UInt64 = 0
     var isVisible = true
     var content = Content.source
+    var loadState = LoadState.ready
 
     func makeCoordinator() -> Coordinator { Coordinator(onEdit: onEdit) }
 
@@ -29,7 +31,8 @@ struct LibrarySourceEditor: NSViewRepresentable {
         Self.updateVisibility(isVisible, in: scroll)
         if let text = scroll.documentView as? LibrarySourceTextView {
             context.coordinator.update(text, source: source, path: path, revision: revision,
-                isEditable: isEditable, onEdit: onEdit, highlight: highlight, focusRevision: focusRevision)
+                isEditable: isEditable, onEdit: onEdit, highlight: highlight, focusRevision: focusRevision,
+                loadState: loadState)
         }
         return scroll
     }
@@ -81,7 +84,8 @@ struct LibrarySourceEditor: NSViewRepresentable {
         Self.updateVisibility(isVisible, in: scroll)
         guard let text = scroll.documentView as? LibrarySourceTextView else { return }
         context.coordinator.update(text, source: source, path: path, revision: revision,
-            isEditable: isEditable, onEdit: onEdit, highlight: highlight, focusRevision: focusRevision)
+            isEditable: isEditable, onEdit: onEdit, highlight: highlight, focusRevision: focusRevision,
+            loadState: loadState)
     }
 
     static func updateVisibility(_ visible: Bool, in scroll: NSScrollView) {
@@ -103,6 +107,7 @@ struct LibrarySourceEditor: NSViewRepresentable {
         private var onEdit: (String) -> Void
         private var path: RelativePath?
         private var revision: UInt64 = 0
+        private var loadState = LoadState.ready
         private var isActive = true
         private var isUpdating = false
         private var highlightID: UUID?
@@ -126,11 +131,16 @@ struct LibrarySourceEditor: NSViewRepresentable {
 
         func update(_ text: NSTextView, source: String, path: RelativePath?, revision: UInt64 = 0,
                     isEditable: Bool, onEdit: @escaping (String) -> Void,
-                    highlight: LibrarySourceHighlight? = nil, focusRevision: UInt64 = 0) {
+                    highlight: LibrarySourceHighlight? = nil, focusRevision: UInt64 = 0,
+                    loadState: LoadState = .ready) {
             guard isActive else { return }
             requestedFocusRevision = focusRevision
             textView = text
+            // A loading placeholder is not an edit. The loaded file establishes
+            // the baseline instead of registering Undo back to an empty buffer.
             let changedSession = self.path != path || self.revision != revision
+                || (self.loadState == .loading && loadState == .ready)
+            self.loadState = loadState
             if changedSession {
                 // Retire native input before assigning the new model callback.
                 // unmarkText can publish synchronously through onSourceChange.

@@ -94,6 +94,7 @@ struct PickerTextInput: NSViewRepresentable {
     var onFocus: () -> Void = {}
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
     var isBezeled = true
+    var resetRevision: UInt64 = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange) }
 
@@ -112,7 +113,7 @@ struct PickerTextInput: NSViewRepresentable {
 
     func updateNSView(_ field: PickerTextField, context: Context) {
         context.coordinator.onChange = onChange
-        if field.stringValue != value { field.stringValue = value }
+        context.coordinator.render(value, in: field, resetRevision: resetRevision)
         field.fieldKind = kind
         field.isEnabled = context.environment.isEnabled
         field.onFocus = onFocus
@@ -131,10 +132,38 @@ struct PickerTextInput: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         var onChange: (String) -> Void
+        private var resetRevision: UInt64?
+        private var isUpdating = false
         init(onChange: @escaping (String) -> Void) { self.onChange = onChange }
 
+        func render(_ value: String, in field: NSTextField, resetRevision: UInt64) {
+            let reset = self.resetRevision != resetRevision
+            self.resetRevision = resetRevision
+            let editor = field.currentEditor() as? NSTextView
+            guard reset || editor?.hasMarkedText() != true else { return }
+            let nativeValue = editor?.string ?? field.stringValue
+            guard reset || !nativeValue.utf8.elementsEqual(value.utf8) else { return }
+            let selection = editor?.selectedRange()
+            isUpdating = true
+            defer { isUpdating = false }
+            editor?.inputContext?.discardMarkedText()
+            editor?.unmarkText()
+            field.stringValue = value
+            // The cell and its live field editor can hold different strings.
+            if let editor = field.currentEditor() as? NSTextView {
+                editor.string = value
+                editor.breakUndoCoalescing()
+                editor.undoManager?.removeAllActions()
+                if let selection {
+                    let length = value.utf16.count
+                    let location = min(selection.location, length)
+                    editor.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
+                }
+            }
+        }
+
         func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSTextField else { return }
+            guard !isUpdating, let field = notification.object as? NSTextField else { return }
             onChange(field.stringValue)
         }
 
@@ -168,6 +197,7 @@ struct PickerMultilineInput: NSViewRepresentable {
     let focusRevision: UInt64
     let onChange: (String) -> Void
     let onFocus: () -> Void
+    var resetRevision: UInt64 = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange) }
 
@@ -195,7 +225,7 @@ struct PickerMultilineInput: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let text = scroll.documentView as? PickerMultilineTextView else { return }
         context.coordinator.onChange = onChange
-        if text.string != value { text.string = value }
+        context.coordinator.render(value, in: text, resetRevision: resetRevision)
         text.isEditable = context.environment.isEnabled
         text.onFocus = onFocus
         text.identifier = NSUserInterfaceItemIdentifier(identifier)
@@ -205,10 +235,30 @@ struct PickerMultilineInput: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onChange: (String) -> Void
+        private var resetRevision: UInt64?
+        private var isUpdating = false
         init(onChange: @escaping (String) -> Void) { self.onChange = onChange }
 
+        func render(_ value: String, in text: NSTextView, resetRevision: UInt64) {
+            let reset = self.resetRevision != resetRevision
+            self.resetRevision = resetRevision
+            guard reset || !text.hasMarkedText() else { return }
+            guard reset || !text.string.utf8.elementsEqual(value.utf8) else { return }
+            let selection = text.selectedRange()
+            isUpdating = true
+            defer { isUpdating = false }
+            text.inputContext?.discardMarkedText()
+            text.unmarkText()
+            text.string = value
+            text.breakUndoCoalescing()
+            text.undoManager?.removeAllActions()
+            let length = value.utf16.count
+            let location = min(selection.location, length)
+            text.setSelectedRange(NSRange(location: location, length: min(selection.length, length - location)))
+        }
+
         func textDidChange(_ notification: Notification) {
-            guard let text = notification.object as? NSTextView else { return }
+            guard !isUpdating, let text = notification.object as? NSTextView else { return }
             onChange(text.string)
         }
     }

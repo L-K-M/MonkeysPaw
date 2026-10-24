@@ -61,6 +61,9 @@ The example shows Source; Edit opens the properties form and body editor.
 - **Structure.** An `NSSplitViewController` with a sidebar, a content list,
   the editor and an inspector (`NSSplitViewItem` sidebar, content-list and
   inspector behaviours). Panes collapse instead of widening the window.
+  At compact widths the sidebar yields to the inspector, then returns when
+  space permits or the inspector closes. An explicit sidebar choice takes
+  precedence over that automatic restoration.
 - **Toolbar.** A unified, customizable `NSToolbar` with tracking separators:
   sidebar toggle; New Prompt in the list column; an Edit/Preview/Source segmented
   control, Favourite and Assistant in the editor column; a search field
@@ -79,7 +82,10 @@ The example shows Source; Edit opens the properties form and body editor.
   folder or group. Opening a prompt follows the click's release, so a drag
   never raises the unsaved-edits alert first.
 - **Editor.** Edit shows labelled title, description, tag and privacy
-  controls above a body-only text view. Source retains the complete file in
+  controls above a body-only text view. The title stays visible; description,
+  tags and privacy use a collapsible Details section, also available from View.
+  Placeholder settings live in the Fields inspector, reachable directly from
+  the editor's placeholder count. Source retains the complete file in
   a monospaced text view; both text views keep native Find, undo and highlighted
    `{{placeholders}}`. Placeholder rows open settings without editing YAML.
    Source also edits advanced metadata and declarations.
@@ -95,6 +101,21 @@ The example shows Source; Edit opens the properties form and body editor.
   bars and sheets rather than permanent rows.
 - **Escape** clears the search field when it has focus and dismisses sheets
   and popovers. It no longer closes the window; ⌘W does.
+- **Search navigation.** Down/Up from toolbar Search selects a result without
+  clearing the query. Return edits the selected result, or the first result
+  when none is selected. A queued save/open retains that focus request until
+  the prompt loads; further search or navigation cancels it. Input-method
+  composition keeps these keys until conversion finishes.
+- **Dock reopening.** With a regular window visible, reopening raises that
+  window. With only minimized windows, it restores Library or Settings. The
+  picker opens only when there is no regular window to resume.
+- **Save feedback.** A compact Save control beside validation and draft status
+  makes explicit saving discoverable without adding a permanent button row.
+- **Undo boundaries.** Initial and external loads establish native text baselines;
+  they are never undoable replacements of an empty buffer. Typing, save
+  normalization and draft edits retain native undo. A successful Forget resets
+  live picker controls, composition and undo together, even when reset values
+  equal the previous render. A failed Forget preserves them.
 
 ### 24.4 Menus (macOS)
 
@@ -103,7 +124,7 @@ The example shows Source; Edit opens the properties form and body editor.
 | Monkey's Paw | About, Check for Updates…, Settings… ⌘,, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q |
 | File | New Prompt… ⌘N, Import… ⇧⌘I, Close ⌘W, Save ⌘S, Duplicate ⇧⌘S, Rename…, Move To ▸, Revert to Saved, Show in Finder, Delete… |
 | Edit | Undo/Redo (named by the text system), Cut, Copy, Paste, Paste and Match Style, Delete, Select All, Find ▸ (Find… ⌘F, Find Next ⌘G, Find Previous ⇧⌘G, Use Selection for Find ⌘E, Search Library ⌥⌘F), Spelling and Grammar ▸ |
-| View | Edit ⌘1, Preview ⌘2, Source ⌘3, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
+| View | Edit ⌘1, Preview ⌘2, Source ⌘3, Show/Hide Prompt Details, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
 | Prompt | Add to/Remove from Favourites ⌘D, Review with Assistant ⌘R, Improve with Assistant ⌘I |
 | Window | Minimize ⌘M, Zoom, Library ⌘L, Bring All to Front, window list |
 | Help | Monkey's Paw Help |

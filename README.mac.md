@@ -49,10 +49,16 @@ Use the sidebar for folders, tags, favourites and recent prompts. The toolbar
 search filters the prompt list; **Option+Cmd+F** focuses it. **Cmd+F** finds
 text in the visible editor.
 
+While searching, use **Down/Up** to select a result and **Return** to edit it.
+Escape clears search; a second Escape leaves the search field.
+
 - **Cmd+N** creates a prompt; **Cmd+S** saves; **Shift+Cmd+S** duplicates.
 - **Cmd+1 / Cmd+2 / Cmd+3** selects Edit, Preview or Source.
-- Edit has controls for title, description, tags and privacy, plus a body-only
-  text editor. Source edits the complete Markdown file and advanced field settings.
+- Edit keeps the title above a body-only editor. **Details** reveals description,
+  tags and privacy; View → Show Prompt Details opens it from any mode.
+- The placeholder count opens the Fields inspector. Each placeholder's
+  **Settings…** edits its type, defaults and choices in a staged sheet.
+  Source edits the complete Markdown file and advanced metadata.
 - **Option+Cmd+I** toggles the Fields, History and Assistant inspector.
 - The File menu and prompt context menu offer rename, move, reveal and delete.
 - **Cmd+W** closes the window. Escape dismisses a dialog or clears focused
@@ -62,6 +68,7 @@ Saving is explicit: each save creates a history revision. One Library window
 owns the draft; closing it keeps the menu-bar utility running. Its layout and
 toolbar are remembered. See [desktop verification](docs/platform/native-desktop.md)
 for build commands, automated coverage and remaining hardware checks.
+Clicking the Dock icon resumes an open Library or Settings window.
 
 ## Repeat and Delivery settings
 

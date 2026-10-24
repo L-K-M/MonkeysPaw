@@ -10,8 +10,8 @@ struct PickerFillView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ForEach(model.fields.indices, id: \.self) { position in
                     PickerFillFieldView(field: model.fields[position], position: position,
-                        model: model, wantsFocus: model.state == .editing && model.focusIndex == position,
-                        focusRevision: presentation.focusRevision)
+                         model: model, wantsFocus: model.state == .editing && model.focusIndex == position,
+                        focusRevision: presentation.focusRevision, resetRevision: presentation.inputResetRevision)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -28,6 +28,7 @@ private struct PickerFillFieldView: View {
     // does not invalidate SwiftUI's child-view comparison.
     let wantsFocus: Bool
     let focusRevision: UInt64
+    let resetRevision: UInt64
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -43,11 +44,13 @@ private struct PickerFillFieldView: View {
         switch field.kind {
         case .text:
             PickerTextInput(value: field.value, label: field.label, identifier: identifier,
-                wantsFocus: wantsFocus, focusRevision: focusRevision, onChange: setValue, onFocus: focus)
+                wantsFocus: wantsFocus, focusRevision: focusRevision, onChange: setValue, onFocus: focus,
+                resetRevision: resetRevision)
                 .frame(height: 26)
         case .multiline:
             PickerMultilineInput(value: field.value, label: field.label, identifier: identifier,
-                wantsFocus: wantsFocus, focusRevision: focusRevision, onChange: setValue, onFocus: focus)
+                wantsFocus: wantsFocus, focusRevision: focusRevision, onChange: setValue, onFocus: focus,
+                resetRevision: resetRevision)
                 .frame(height: 80)
         case .choice:
             PickerChoiceInput(value: field.value, options: field.options, label: field.label,

@@ -63,3 +63,35 @@ methods require the [Linux checklist](linux.md).
 Prompt formats and storage remain unchanged. Saving stays explicit because
 it creates history and sync boundaries. Unsaved changes use the existing
 draft guards; crash recovery and simultaneous document windows were not added.
+
+## Everyday Mac refinement
+
+The existing native structure remains. Metadata previously occupied nearly
+half the editor; Details now collapses it, and placeholder settings live beside
+their definitions in the inspector. Text-labelled toolbar modes distinguish
+navigation from actions. Save remains beside validation and draft status.
+
+Repeat the screenshot and interaction tour on a Mac:
+
+```sh
+TEST_RUNNER_MONKEYSPAW_UI_TOUR_DIR="$PWD/build/mac-ui-tour" \
+  xcodebuild -project MonkeysPaw.xcodeproj -scheme MonkeysPaw \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO clean test
+```
+
+The tour includes compact windows, Details, Source, inspector settings,
+native typing, undo/redo, Save with disk readback, and close/reopen in both
+appearances. `MacLibraryWindowTests` covers search arrows/Return, composition,
+draft guards and Dock reopening. `MacForgetControlsTests` checks focused native
+editors after Forget.
+
+Verified at `174ed6e` in [macOS CI](https://github.com/L-K-M/MonkeysPaw/actions/runs/40041240997):
+702 hosted tests, zero failures and one explicit login-Keychain integration
+skip. This includes Return through an in-flight save, native undo baselines,
+Forget, compact inspector layout and fresh-window sidebar restoration. The
+same run built both architectures, verified signatures/checksums and launched
+both packaged copies. `MacUITour` contains the inspected light/dark PNGs;
+`MonkeysPaw-macos-artifacts` contains the runnable preview dmg and zip.
+
+Design references: [Apple toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars)
+and [Liquid Glass adoption](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass).

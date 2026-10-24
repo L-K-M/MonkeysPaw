@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPaw
@@ -59,6 +60,7 @@ final class MacUITourTests: XCTestCase {
         tourOnboarding()
         tourLibrary(appearance: "light")
         try tourFieldSettings(appearance: "light")
+        try tourNativeEditing(appearance: "light")
         tourSettings(appearance: "light")
         tourPicker(appearance: "light")
         try tourStatusItem(appearance: "light")
@@ -67,6 +69,7 @@ final class MacUITourTests: XCTestCase {
         settle()
         tourLibrary(appearance: "dark")
         try tourFieldSettings(appearance: "dark")
+        try tourNativeEditing(appearance: "dark")
         tourSettings(appearance: "dark")
         tourPicker(appearance: "dark")
         try tourStatusItem(appearance: "dark")
@@ -136,10 +139,27 @@ final class MacUITourTests: XCTestCase {
         presentation.editorMode = .edit
         settle()
         capture(window, as: "library-\(appearance)-edit")
+        window.setContentSize(NSSize(width: 820, height: 480))
+        settle()
+        capture(window, as: "library-\(appearance)-compact")
+        if let root = window.contentView,
+           let body = nativeEditors(in: root).first(where: { $0.content == .body }) {
+            XCTAssertGreaterThan(body.enclosingScrollView?.bounds.height ?? 0, 200,
+                "The prompt must retain writing space at the minimum window size")
+        } else { XCTFail("The composed editor has no native prompt text view") }
+        presentation.toggleDetails()
+        settle()
+        capture(window, as: "library-\(appearance)-details")
+        presentation.toggleDetails()
+        window.setContentSize(NSSize(width: 1180, height: 720))
+        presentation.editorMode = .source
+        settle()
+        capture(window, as: "library-\(appearance)-source")
         presentation.setInspectorVisible(false)
         presentation.editorMode = .preview
         settle()
         capture(window, as: "library-\(appearance)-preview")
+        presentation.editorMode = .edit
         presentation.showInspector(.fields)
         settle()
         capture(window, as: "library-\(appearance)-fields")
@@ -300,7 +320,10 @@ final class MacUITourTests: XCTestCase {
             XCTFail("The tour cannot open placeholder settings for \(fieldName)")
             return
         }
-        presentation.requestFieldSettings(field)
+        presentation.showInspector(.fields)
+        settle()
+        let settings = try XCTUnwrap(accessibilityElement(in: window, identifier: "library-field-settings-\(field.name)"))
+        XCTAssertTrue(accessibilityPress(settings), "The inspector must open placeholder settings")
         settle()
         let sheet = try XCTUnwrap(window.attachedSheet, "requestFieldSettings attaches a real sheet")
         XCTAssertTrue(sheet.sheetParent === window)
@@ -349,6 +372,60 @@ final class MacUITourTests: XCTestCase {
             XCTAssertNil(window.attachedSheet)
             XCTAssertFalse(presentation.editorState.isDirty, "Cancel must leave the draft untouched")
         }
+    }
+
+    /// Type through AppKit, undo/redo, press the rendered Save button, verify
+    /// disk bytes, then close/reopen the composed Library in both appearances.
+    private func tourNativeEditing(appearance: String) throws {
+        let controller = try XCTUnwrap(delegate.libraryWindow)
+        let window = try XCTUnwrap(controller.window)
+        let presentation = controller.presentation
+        presentation.editorMode = .edit
+        presentation.setInspectorVisible(false)
+        settle()
+        let root = try XCTUnwrap(window.contentView)
+        let text = try XCTUnwrap(nativeEditors(in: root).first { $0.content == .body })
+        let original = text.string
+        XCTAssertTrue(window.makeFirstResponder(text))
+        text.setSelectedRange(NSRange(location: original.utf16.count, length: 0))
+        let undo = try XCTUnwrap(text.undoManager)
+        let groupsByEvent = undo.groupsByEvent
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = groupsByEvent }
+        undo.beginUndoGrouping()
+        let typing = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            characters: "x", charactersIgnoringModifiers: "x", isARepeat: false, keyCode: UInt16(kVK_ANSI_X)))
+        window.sendEvent(typing)
+        text.breakUndoCoalescing()
+        undo.endUndoGrouping()
+        XCTAssertEqual(text.string, original + "x")
+        XCTAssertEqual(presentation.editorState.form?.body, original + "x")
+        undo.undo()
+        XCTAssertEqual(presentation.editorState.form?.body, original)
+        undo.redo()
+        XCTAssertEqual(presentation.editorState.form?.body, original + "x")
+        settle()
+        capture(window, as: "library-\(appearance)-edited-workflow")
+        _ = describeAccessibility(of: window, as: "editing-\(appearance)")
+        let save = try XCTUnwrap(accessibilityElement(in: window, identifier: "library-save"))
+        XCTAssertTrue(accessibilityPress(save))
+        settle()
+        XCTAssertFalse(presentation.editorState.isDirty)
+        let prompt = try XCTUnwrap(presentation.editorState.prompt)
+        let file = URL(fileURLWithPath: presentation.activeLibraryPath, isDirectory: true)
+            .appendingPathComponent(prompt.relativePath.string)
+        XCTAssertEqual(PromptCodec.parseFile(try Data(contentsOf: file),
+            filename: prompt.relativePath.string).body, original + "x")
+        capture(window, as: "library-\(appearance)-saved")
+        window.performClose(nil)
+        settle()
+        XCTAssertFalse(window.isVisible)
+        delegate.showLibrary()
+        settle()
+        XCTAssertTrue(controller.window === window)
+        XCTAssertEqual(presentation.editorState.form?.body, original + "x")
+        capture(window, as: "library-\(appearance)-reopened")
     }
 
     /// The real NSStatusItem assembled here once and reused for both passes.
@@ -413,6 +490,11 @@ final class MacUITourTests: XCTestCase {
     }
 
     // MARK: - Capture
+
+    private func nativeEditors(in view: NSView) -> [LibrarySourceTextView] {
+        if let text = view as? LibrarySourceTextView { return [text] }
+        return view.subviews.flatMap(nativeEditors)
+    }
 
     private func settle(_ seconds: TimeInterval = MacUITourTests.settleTime) {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
@@ -527,9 +609,10 @@ final class MacUITourTests: XCTestCase {
     /// Windows may expose their SwiftUI tree through the content view instead.
     private func accessibilityElements(under window: NSWindow) -> [NSObject] {
         let elements = accessibilityElements(in: window)
-        if !elements.isEmpty { return elements }
-        guard let contentView = window.contentView else { return [] }
-        return accessibilityElements(in: contentView)
+        // Native window chrome can expose a partial tree while SwiftUI's
+        // content root exposes the remaining controls, especially during editing.
+        guard let contentView = window.contentView else { return elements }
+        return elements + accessibilityElements(in: contentView)
     }
 
     private func accessibilityElement(in window: NSWindow, identifier: String) -> NSObject? {

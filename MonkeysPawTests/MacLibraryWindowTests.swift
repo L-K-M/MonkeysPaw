@@ -455,8 +455,8 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(items[0].minimumThickness, 180)
         XCTAssertEqual(items[0].maximumThickness, 320)
         XCTAssertEqual(items[1].behavior, .contentList)
-        XCTAssertEqual(items[1].minimumThickness, 240)
-        XCTAssertEqual(items[2].minimumThickness, 360)
+        XCTAssertEqual(items[1].minimumThickness, 220)
+        XCTAssertEqual(items[2].minimumThickness, 300)
         XCTAssertLessThan(items[2].holdingPriority.rawValue, items[1].holdingPriority.rawValue)
         XCTAssertEqual(items[3].behavior, .inspector)
         XCTAssertEqual(items[3].minimumThickness, 280)
@@ -568,6 +568,116 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(item.state, .on)
         controller.showInFinder(nil)
         XCTAssertEqual(revealed, [root.appendingPathComponent("folder/one.md")])
+    }
+
+    func testInspectorAtMinimumWidthKeepsTheWindowFrameAndRestoresTheSidebar() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let window = try window()
+        controller.presentation.selectPath("one.md")
+        let sidebar = try XCTUnwrap(controller.splitController?.splitViewItems.first)
+        sidebar.isCollapsed = false
+        window.setContentSize(NSSize(width: 820, height: 480))
+        let frame = window.frame
+        controller.presentation.showInspector(.fields)
+        controller.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertEqual(window.frame, frame, "Opening an inspector must not widen a compact window")
+        XCTAssertFalse(try XCTUnwrap(controller.inspectorItem).isCollapsed)
+        XCTAssertTrue(sidebar.isCollapsed, "The sidebar yields space to the selected-content inspector")
+        controller.presentation.setInspectorVisible(false)
+        controller.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertEqual(window.frame, frame)
+        XCTAssertFalse(sidebar.isCollapsed, "Closing the inspector restores the previous navigation layout")
+    }
+
+    func testDetailsCommandPreservesTheDraftAndReturnsToEdit() throws {
+        let source = "---\ntitle: Note\ndescription: Summary\n---\nBody"
+        try put(source, at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let presentation = controller.presentation
+        presentation.selectPath("one.md")
+        let window = try window()
+        let item = NSMenuItem(title: LibraryFormStrings.showDetails,
+            action: #selector(LibraryWindowController.togglePromptDetails(_:)), keyEquivalent: "")
+        XCTAssertFalse(presentation.isDetailsVisible)
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        XCTAssertEqual(item.title, LibraryFormStrings.showDetails)
+        controller.togglePromptDetails(nil)
+        XCTAssertTrue(presentation.isDetailsVisible)
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        XCTAssertEqual(item.title, LibraryFormStrings.hideDetails)
+        presentation.edit(.description("Draft summary"))
+        let draft = presentation.editorState.source
+        controller.showPreview(nil)
+        XCTAssertTrue(controller.validateLibraryMenuItem(item, in: window))
+        XCTAssertEqual(item.title, LibraryFormStrings.showDetails)
+        controller.togglePromptDetails(nil)
+        XCTAssertEqual(presentation.editorMode, .edit)
+        XCTAssertTrue(presentation.isDetailsVisible)
+        controller.togglePromptDetails(nil)
+        XCTAssertFalse(presentation.isDetailsVisible)
+        XCTAssertEqual(presentation.editorState.source, draft)
+        XCTAssertTrue(presentation.editorState.isDirty)
+        XCTAssertEqual(try files.read(at: "one.md"), Data(source.utf8))
+        presentation.edit("---\ntitle: [broken\n---\nBody")
+        XCTAssertFalse(controller.validateLibraryMenuItem(item, in: window))
+    }
+
+    func testAutomaticSidebarCollapseRestoresAfterReopeningAndClosingTheInspector() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let previous = try controller()
+        let window = try window()
+        let sidebar = try XCTUnwrap(previous.splitController?.splitViewItems.first)
+        sidebar.isCollapsed = false
+        window.setContentSize(NSSize(width: 820, height: 480))
+        previous.presentation.showInspector(.fields)
+        previous.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertTrue(sidebar.isCollapsed)
+        previous.tearDown()
+
+        let main = DispatchMainThread()
+        let next = LibraryWindowController(model: try XCTUnwrap(delegate.libraryBrowserModel),
+            editor: try XCTUnwrap(delegate.editorModel), libraryPath: root.path, available: true,
+            mainThread: main, activation: WindowActivationCoordinator(mainThread: main,
+                setPolicy: { _ in }, activate: {}), revealLibrary: {})
+        defer { next.tearDown() }
+        next.show()
+        let restoredSidebar = try XCTUnwrap(next.splitController?.splitViewItems.first)
+        let inspectorWasVisible = next.presentation.isInspectorVisible
+        XCTAssertTrue(!restoredSidebar.isCollapsed || inspectorWasVisible,
+            "A restored sidebar may yield only to a visible inspector")
+        next.presentation.setInspectorVisible(false)
+        next.refreshWindowPresentation()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.4))
+        XCTAssertFalse(restoredSidebar.isCollapsed,
+            "Closing the restored inspector must restore navigation; inspector was visible: \(inspectorWasVisible)")
+    }
+
+    func testPlaceholderSettingsRemainAvailableInSourceAndPreview() throws {
+        try put("Hello {{name}}", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        let presentation = try presentation()
+        presentation.selectPath("one.md")
+        let field = try XCTUnwrap(presentation.editorState.form?.fieldSettings.first)
+        for mode in [LibraryViewState.EditorMode.edit, .source, .preview] {
+            presentation.editorMode = mode
+            XCTAssertTrue(presentation.canEditFieldSettings)
+            presentation.requestFieldSettings(field)
+            XCTAssertNotNil(presentation.fieldSettingsDraft)
+            presentation.cancelFieldSettings()
+        }
+        XCTAssertFalse(presentation.editorState.isDirty)
+        XCTAssertEqual(try files.read(at: "one.md"), Data("Hello {{name}}".utf8))
     }
 
     func testPromptTableRowsTypeSelectionKeyboardOpenAndDeleteIntent() throws {
@@ -789,6 +899,71 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertFalse(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: false))
         XCTAssertTrue(spin { !window.isMiniaturized && window.isVisible })
         XCTAssertNotEqual(delegate.pickerModel?.state, .picker, "The Dock restores the window, not the picker")
+    }
+
+    func testDockReopenWithAVisibleRegularWindowLeavesThePickerClosed() throws {
+        try put("Body", at: "one.md")
+        try start()
+        delegate.showLibrary()
+        XCTAssertTrue(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true),
+            "AppKit should raise the app's existing windows")
+        XCTAssertEqual(delegate.pickerModel?.state, .closed)
+        XCTAssertFalse(panel.isVisible)
+        delegate.showSettings()
+        XCTAssertTrue(delegate.applicationShouldHandleReopen(NSApp, hasVisibleWindows: true))
+        XCTAssertEqual(delegate.pickerModel?.state, .closed)
+        XCTAssertFalse(panel.isVisible)
+    }
+
+    func testSearchArrowKeysSelectResultsAndReturnFocusesTheEditor() throws {
+        try put("---\ntitle: Alpha\n---\nFirst", at: "a.md")
+        try put("---\ntitle: Beta\n---\nSecond", at: "b.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let presentation = controller.presentation
+        let input = try LibrarySearchTestSupport.type("a", in: controller)
+        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+            doCommandBy: #selector(NSResponder.moveDown(_:))))
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "a.md")
+        XCTAssertTrue(try window().firstResponder === input.editor, "Arrows keep search editable")
+        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+            doCommandBy: #selector(NSResponder.moveDown(_:))))
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "b.md")
+        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+            doCommandBy: #selector(NSResponder.moveUp(_:))))
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "a.md")
+        let focus = presentation.editorFocusRevision
+        try window().sendEvent(key(kVK_Return, characters: "\r", in: try window()))
+        XCTAssertGreaterThan(presentation.editorFocusRevision, focus)
+        XCTAssertEqual(presentation.snapshot.filter, "a")
+    }
+
+    func testSearchResultNavigationRespectsCompositionAndUnsavedEdits() throws {
+        try put("---\ntitle: Alpha\n---\nFirst", at: "a.md")
+        try put("---\ntitle: Beta\n---\nSecond", at: "b.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let presentation = controller.presentation
+        presentation.selectPath("a.md")
+        presentation.edit("Draft")
+        let input = try LibrarySearchTestSupport.type("a", in: controller)
+        input.editor.setMarkedText("かな", selectedRange: NSRange(location: 1, length: 0),
+            replacementRange: NSRange(location: 1, length: 0))
+        for selector in [#selector(NSResponder.moveDown(_:)), #selector(NSResponder.moveUp(_:)),
+                         #selector(NSResponder.insertNewline(_:))] {
+            XCTAssertFalse(controller.control(input.field, textView: input.editor, doCommandBy: selector))
+        }
+        input.editor.unmarkText()
+        _ = try LibrarySearchTestSupport.type("a", in: controller)
+        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+            doCommandBy: #selector(NSResponder.moveDown(_:))))
+        XCTAssertEqual(presentation.editorState.pendingDecision?.action,
+            .open(try XCTUnwrap(presentation.snapshot.rows.first { $0.relativePath == "b.md" }).selection))
+        XCTAssertEqual(presentation.editorState.source, "Draft")
+        XCTAssertEqual(presentation.editorState.prompt?.relativePath, "a.md")
+        XCTAssertEqual(try files.read(at: "a.md"), Data("---\ntitle: Alpha\n---\nFirst".utf8))
     }
 
     func testSidebarContextMenuCreatesInClickedFolderAndRevealsIt() throws {

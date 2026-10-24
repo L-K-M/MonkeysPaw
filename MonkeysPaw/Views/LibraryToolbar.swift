@@ -44,19 +44,17 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
         }
         if identifier == .libraryEditorMode {
             let labels = [EditorStrings.editTab, EditorStrings.previewTab, LibraryFormStrings.source]
-            let symbols = ["pencil", "eye", "curlybraces"]
-            let images = symbols.map { NSImage(systemSymbolName: $0, accessibilityDescription: nil) ?? NSImage() }
-            let item = NSToolbarItemGroup(itemIdentifier: identifier, images: images,
+            let item = NSToolbarItemGroup(itemIdentifier: identifier, titles: labels,
                 selectionMode: .selectOne, labels: labels, target: self, action: #selector(selectEditorMode(_:)))
-            for (index, symbol) in symbols.enumerated() {
-                item.subitems[index].image = NSImage(systemSymbolName: symbol, accessibilityDescription: labels[index])
-                item.subitems[index].toolTip = labels[index]
+            for index in labels.indices {
+                item.subitems[index].toolTip = labels[index] + " (⌘\(index + 1))"
                 item.subitems[index].paletteLabel = labels[index]
             }
             item.label = LibraryStrings.editPreview
             item.paletteLabel = item.label
             item.toolTip = item.label
             item.selectedIndex = presentation.editorMode.rawValue
+            item.visibilityPriority = .high
             return item
         }
         if identifier == .librarySearch {
@@ -150,12 +148,25 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         guard let field = control as? NSSearchField, field === searchItem?.searchField,
-              field.currentEditor() === textView, window?.firstResponder === textView,
-              commandSelector == #selector(NSResponder.cancelOperation(_:)), !textView.hasMarkedText() else { return false }
-        // Consume the clear once; a second Escape can end native search editing.
-        if textView.string.isEmpty { searchItem?.endSearchInteraction() }
-        else { clearSearch(field) }
-        return true
+               field.currentEditor() === textView, window?.firstResponder === textView,
+               !textView.hasMarkedText() else { return false }
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            // Consume the clear once; a second Escape ends native search editing.
+            if textView.string.isEmpty { searchItem?.endSearchInteraction() }
+            else { clearSearch(field) }
+            return true
+        }
+        guard commandsAvailable(in: window), presentation.canFocusFilter else { return false }
+        switch commandSelector {
+        case #selector(NSResponder.moveDown(_:)), #selector(NSResponder.moveUp(_:)):
+            presentation.moveSelection(commandSelector == #selector(NSResponder.moveDown(_:)) ? .down : .up)
+            if let table = promptList?.tableView, table.selectedRow >= 0 { table.scrollRowToVisible(table.selectedRow) }
+            return true
+        case #selector(NSResponder.insertNewline(_:)):
+            presentation.editSearchResult()
+            return true
+        default: return false
+        }
     }
 
     func controlTextDidChange(_ notification: Notification) {

@@ -249,8 +249,14 @@ struct LibraryEditorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library-editor")
         .onChange(of: presentation.editorState.prompt) { _ in showsIssues = false }
+        .sheet(item: $presentation.fieldSettingsDraft) { draft in
+            LibraryFieldSettingsSheet(draft: draft,
+                onCancel: presentation.cancelFieldSettings,
+                onApply: presentation.applyFieldSettings)
+        }
     }
 
     @ViewBuilder
@@ -306,7 +312,8 @@ struct LibraryEditorView: View {
             onEdit: presentation.edit,
             highlight: presentation.quoteHighlight,
             focusRevision: showsSource ? presentation.editorFocusRevision : 0,
-            isVisible: showsSource)
+            isVisible: showsSource,
+            loadState: presentation.editorState.status == .loading ? .loading : .ready)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -377,7 +384,14 @@ struct LibraryEditorView: View {
     private var statusBar: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             validationButton
+            if presentation.editorState.status == .saving { ProgressView().controlSize(.small) }
             statusText
+            Button(EditorStrings.save) { presentation.save() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!presentation.editorState.isDirty || !(presentation.canSave || presentation.canShowConflict))
+                .help(EditorStrings.save + " (⌘S)")
+                .accessibilityIdentifier("library-save")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -581,7 +595,18 @@ struct LibraryInspectorView: View {
             .font(.caption)
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            Text(verbatim: field.name).font(.system(.callout, design: .monospaced))
+            HStack(spacing: 8) {
+                Text(verbatim: field.name).font(.system(.callout, design: .monospaced))
+                Spacer(minLength: 0)
+                if let settings = presentation.editorState.form?.fieldSettings.first(where: { $0.name == field.name }) {
+                    Button(LibraryFieldStrings.settings) { presentation.requestFieldSettings(settings) }
+                        .buttonStyle(.borderless)
+                        .controlSize(.small)
+                        .disabled(!presentation.canEditFieldSettings)
+                        .accessibilityLabel(LibraryFieldStrings.settingsLabel(field.name))
+                        .accessibilityIdentifier("library-field-settings-\(field.name)")
+                }
+            }
         }
         .textSelection(.enabled)
     }
