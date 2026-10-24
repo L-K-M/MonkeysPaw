@@ -128,8 +128,7 @@ The example shows Source; Edit opens the properties form and body editor.
   clearing the query. Return edits the selected result, or the first result
   when none is selected. A queued save/open retains that focus request until
   the prompt loads; further search or navigation cancels it. Input-method
-  composition keeps these keys until conversion finishes. A matching model
-  echo leaves the active search editor and its cell untouched.
+  composition keeps these keys until conversion finishes.
 - **Dock reopening.** With a regular window visible, reopening raises that
   window. With only minimized windows, it restores Library or Settings. The
   picker opens only when there is no regular window to resume.
