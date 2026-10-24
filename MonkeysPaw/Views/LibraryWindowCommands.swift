@@ -46,8 +46,10 @@ extension LibraryWindowController: NSMenuItemValidation {
         case #selector(togglePromptDetails(_:)): return presentation.editorState.form != nil
         case #selector(showFields(_:)), #selector(showHistory(_:)):
             return presentation.editorState.prompt != nil
-        case #selector(showAssistant(_:)), #selector(writeWithAssistant(_:)):
+        case #selector(showAssistant(_:)):
             return presentation.canShowAssistant
+        case #selector(writeWithAssistant(_:)):
+            return presentation.canGeneratePrompt
         case #selector(reviewWithAssistant(_:)), #selector(improveWithAssistant(_:)):
             if let assistant = presentation.assistant { return assistant.canReview }
             let state = presentation.editorState
@@ -181,8 +183,7 @@ extension LibraryWindowController: NSMenuItemValidation {
     }
     @objc func writeWithAssistant(_ sender: Any?) {
         guard commandsAvailable(in: window) else { return }
-        presentation.showAssistant()
-        presentation.assistant?.flow = .write
+        presentation.generatePromptWithAssistant()
     }
     @objc func importFromMenu() {
         guard commandsAvailable(in: window) else { return }

@@ -77,14 +77,16 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
             }
             return item
         }
-        let item = NSToolbarItem(itemIdentifier: identifier)
+        let item: NSToolbarItem = identifier == .libraryNewPrompt
+            ? NSMenuToolbarItem(itemIdentifier: identifier) : NSToolbarItem(itemIdentifier: identifier)
         let symbol: String
         switch identifier {
         case .libraryNewPrompt:
             item.label = LibraryNativeStrings.newPromptToolbar
-            item.toolTip = LibraryCommandStrings.newPrompt
+            item.toolTip = MainMenuStrings.newPrompt
             symbol = "square.and.pencil"
             item.action = #selector(newDocument(_:))
+            (item as? NSMenuToolbarItem)?.menu = MainMenu.newPromptMenu()
         case .libraryFavorite:
             item.label = LibraryStrings.favourite
             item.toolTip = presentation.openPromptRow?.favorite == true ? LibraryStrings.removeFavorite : LibraryStrings.addFavorite
@@ -128,6 +130,10 @@ extension LibraryWindowController: NSToolbarDelegate, NSToolbarItemValidation, N
         }
         if item.itemIdentifier == .libraryEditorMode {
             return commandsAvailable(in: window, context: .responderChain) && presentation.editorState.prompt != nil
+        }
+        if item.itemIdentifier == .libraryNewPrompt {
+            return commandsAvailable(in: window, context: .responderChain)
+                && (presentation.canCreatePrompt || presentation.canGeneratePrompt)
         }
         guard let action = item.action else { return true }
         let menuItem = NSMenuItem(title: item.label, action: action, keyEquivalent: "")

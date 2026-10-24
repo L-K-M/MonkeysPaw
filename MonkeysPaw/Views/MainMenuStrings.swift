@@ -15,7 +15,9 @@ enum MainMenuStrings {
     static let quit = "Quit \(AppIdentity.displayName)"
 
     static let file = LibraryCommandStrings.fileMenu
-    static let newPrompt = LibraryCommandStrings.newPrompt
+    static let newPrompt = "New Prompt"
+    static let blankPrompt = "Blank Prompt…"
+    static let generatePrompt = "Generate with Assistant…"
     static let importPrompts = ImportStrings.action
     static let close = "Close"
     static let save = EditorStrings.save
@@ -70,7 +72,6 @@ enum MainMenuStrings {
     static let addFavorite = LibraryStrings.addFavorite
     static let reviewWithAssistant = "Review with Assistant"
     static let improveWithAssistant = "Improve with Assistant"
-    static let writeWithAssistant = "Write with Assistant…"
 
     static let window = "Window"
     static let minimize = "Minimize"

@@ -484,6 +484,11 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(controller.toolbarDefaultItemIdentifiers(toolbar), [.toggleSidebar, .sidebarTrackingSeparator,
             .flexibleSpace, .libraryNewPrompt, .libraryListSeparator, .libraryEditorMode, .flexibleSpace, .libraryFavorite,
             .libraryAssistant, .librarySearch, .inspectorTrackingSeparator, .toggleInspector])
+        let newPrompt = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .libraryNewPrompt,
+            willBeInsertedIntoToolbar: false) as? NSMenuToolbarItem)
+        XCTAssertEqual(newPrompt.menu.items.map(\.title), [MainMenuStrings.blankPrompt, MainMenuStrings.generatePrompt])
+        XCTAssertEqual(newPrompt.menu.items.map(\.action), [#selector(LibraryWindowController.newDocument(_:)),
+            #selector(LibraryWindowController.writeWithAssistant(_:))])
         for id in [NSToolbarItem.Identifier.libraryReveal, .libraryImport, .libraryDelete, .space] {
             XCTAssertTrue(controller.toolbarAllowedItemIdentifiers(toolbar).contains(id))
         }
@@ -955,9 +960,11 @@ final class MacLibraryWindowTests: XCTestCase {
                          #selector(NSResponder.insertNewline(_:))] {
             XCTAssertFalse(controller.control(input.field, textView: input.editor, doCommandBy: selector))
         }
+        // End the synthetic IME session before reacquiring AppKit's field editor.
+        input.editor.inputContext?.discardMarkedText()
         input.editor.unmarkText()
-        _ = try LibrarySearchTestSupport.type("a", in: controller)
-        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+        let resumed = try LibrarySearchTestSupport.type("a", in: controller)
+        XCTAssertTrue(controller.control(resumed.field, textView: resumed.editor,
             doCommandBy: #selector(NSResponder.moveDown(_:))))
         XCTAssertEqual(presentation.editorState.pendingDecision?.action,
             .open(try XCTUnwrap(presentation.snapshot.rows.first { $0.relativePath == "b.md" }).selection))
