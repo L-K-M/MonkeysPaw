@@ -896,6 +896,8 @@ final class MacPickerViewTests: XCTestCase {
         return panel.firstResponder === editor
     }
 
+    /// Run AX lookup and press off-main so wait(for:) can service the request
+    /// on AppKit's main run loop instead of blocking the target of the press.
     private func activatePickerResult(at position: Int) throws {
         let panel = try currentPanel()
         panel.contentView?.layoutSubtreeIfNeeded()
@@ -906,6 +908,7 @@ final class MacPickerViewTests: XCTestCase {
             var result: AXUIElement?
             repeat {
                 result = Self.accessibilityElement("picker-result-\(position)", in: application)
+                if result == nil { Thread.sleep(forTimeInterval: 0.05) }
             } while result == nil && ProcessInfo.processInfo.systemUptime < deadline
             if let result {
                 XCTAssertEqual(AXUIElementPerformAction(result, kAXPressAction as CFString), .success)
