@@ -111,6 +111,7 @@ final class LinuxSettingsWindow {
         gtk_stack_add_titled(mp_stack(stack), self.delivery.widget, "delivery", DeliverySettingsStrings.title)
         gtk_stack_add_titled(mp_stack(stack), assistant.widget, "assistant", LinuxAssistantSettingsStrings.tab)
         gtk_stack_add_titled(mp_stack(stack), account.widget, "account", LinuxAccountSettingsStrings.tab)
+        GTK.onSignal(assistant.widget, "map") { [weak self] in self?.assistant.refreshSyncKey() }
         GTK.onSignal(account.widget, "map") { [weak self] in self?.account.show() }
         GTK.onSignal(account.widget, "unmap") { [weak self] in self?.account.retire(.hidden) }
         gtk_window_set_child(mp_window(window), stack)
@@ -173,6 +174,10 @@ final class LinuxSettingsWindow {
     func refreshLibrarySwitchMessage() { renderGeneral() }
 
     func refreshAccountStartup() { account.refreshStartup() }
+    func accountBindingDidChange(accountUserID: (() throws -> ULID?)? = nil) {
+        guard !isDestroyed else { return }
+        assistant.accountDidChange(accountUserID: accountUserID)
+    }
 
     func rebindAccount() {
         guard !isDestroyed else { return }

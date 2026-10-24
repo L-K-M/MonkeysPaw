@@ -14,6 +14,7 @@ final class LinuxAssistantSettingsPage {
     private var needsRefresh = false
     private var isRendering = false
     private var keyInputReset: UUID?
+    private var syncInputReset: UUID?
     private var renderedProfiles: [ProviderProfile] = []
     private var renderedActiveID: ProviderProfileID?
     private var renderedModels: [ModelDescriptor] = []
@@ -226,7 +227,13 @@ final class LinuxAssistantSettingsPage {
         }
         model?.syncKey?.onChange = { [weak self] in self?.render() }
         refreshIfNeeded()
+        refreshSyncKey()
         render()
+    }
+
+    func refreshSyncKey() { model?.syncKey?.refresh() }
+    func accountDidChange(accountUserID: (() throws -> ULID?)? = nil) {
+        model?.syncKey?.accountDidChange(accountUserID: accountUserID)
     }
 
     /// Accepted saves can finish on their worker; retired callbacks cannot touch GTK.
@@ -340,17 +347,21 @@ final class LinuxAssistantSettingsPage {
         let sync = model?.syncKey
         gtk_widget_set_visible(syncSection, isShown && sync != nil ? 1 : 0)
         if let keyState = sync?.state {
+            if syncInputReset != keyState.inputReset {
+                syncInputReset = keyState.inputReset
+                mp_entry_set_text(syncEntry, "")
+            }
             setMessage(syncStatus, LinuxAssistantSettingsStrings.syncStatus(keyState.status))
             setMessage(syncNotice, keyState.notice.map(LinuxAssistantSettingsStrings.syncNotice))
             gtk_label_set_text(mp_label(syncReveal), keyState.revealedKey.map {
                 LinuxAssistantSettingsStrings.syncReveal + "\n" + $0
             } ?? "")
             gtk_widget_set_visible(syncReveal, keyState.revealedKey != nil ? 1 : 0)
-            let busy = keyState.busy
-            gtk_widget_set_sensitive(syncGenerate, !busy ? 1 : 0)
-            gtk_widget_set_sensitive(syncEnter, !busy ? 1 : 0)
-            gtk_widget_set_sensitive(syncEntry, !busy ? 1 : 0)
-            gtk_widget_set_sensitive(syncRemove, !busy && keyState.status != .noAccount
+            let canEdit = keyState.canEdit
+            gtk_widget_set_sensitive(syncGenerate, canEdit ? 1 : 0)
+            gtk_widget_set_sensitive(syncEnter, canEdit ? 1 : 0)
+            gtk_widget_set_sensitive(syncEntry, canEdit ? 1 : 0)
+            gtk_widget_set_sensitive(syncRemove, canEdit && keyState.status != .noAccount
                 && keyState.status != .missing ? 1 : 0)
             gtk_widget_set_sensitive(syncDismissReveal, keyState.revealedKey != nil ? 1 : 0)
         }

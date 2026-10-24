@@ -183,6 +183,8 @@ final class LinuxEnvironment {
         let access: GroupAccessService
         let scheduler: LinuxSyncScheduler
         var account: AccountModel?
+        var lastConnection: AccountConnection?
+        var hasLoadedAccountBinding = false
         var status: SyncStatusModel?
         var invite: InviteModel?
         var groups: GroupManagementModel?
@@ -315,7 +317,14 @@ final class LinuxEnvironment {
             currentLibraryGraph = graph
             return graph
         }
-        set { currentLibraryGraph = newValue }
+        set {
+            currentLibraryGraph = newValue
+            let accounts = newValue.sync?.accounts
+            currentSettingsWindow?.accountBindingDidChange(accountUserID: {
+                guard let accounts else { throw FileStoreError.ioFailure }
+                return try accounts.configuredAccountUserID()
+            })
+        }
     }
     private lazy var configFiles: FileStore = {
         do { return try RootedFileStore(root: paths.configDirectory) }
@@ -782,10 +791,10 @@ final class LinuxEnvironment {
                     session: self.session.currentSession(),
                     makeAssistant: { [weak self] in
                         guard let self, !self.isShutDown else { return nil }
-                        let syncKey = self.currentLibraryGraph?.sync.map { graph in
+                        let syncKey = (self.currentLibraryGraph?.sync?.accounts).map { accounts in
                             ProviderSyncKeyModel(keys: ProviderSyncKeyService(secrets: self.secretStore,
                                     entropy: SystemEntropy()),
-                                accountUserID: { try graph.accounts.configuredAccountUserID() },
+                                accountUserID: { try accounts.configuredAccountUserID() },
                                 work: self.backgroundWork, mainThread: self.mainThread)
                         }
                         let model = AssistantSettingsModel(settings: self.providerSettingsService,
@@ -1203,6 +1212,13 @@ final class LinuxEnvironment {
         sync.conflict = ConflictModel(service: ConflictResolutionService(sync: sync.service), mainThread: mainThread)
         _ = sync.account?.addObserver { [weak self, weak graph, weak sync] state in
             guard let self, let graph, let sync, !sync.retired, self.currentLibraryGraph === graph else { return }
+            let previous = sync.lastConnection
+            let hadBinding = sync.hasLoadedAccountBinding
+            if state.operation == nil { sync.hasLoadedAccountBinding = true }
+            sync.lastConnection = state.connection
+            if hadBinding && (previous?.serverURL != state.connection?.serverURL || previous?.userID != state.connection?.userID) {
+                self.currentSettingsWindow?.accountBindingDidChange()
+            }
             if sync.startupRequested, !state.isBusy {
                 self.startAccount(in: graph)
             }
