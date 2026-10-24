@@ -444,6 +444,45 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(spin { self.controller.isActiveAndVisible && self.isFocused(query, in: panel) })
     }
 
+    func testToggleFromLibraryRoutesTypingToPickerAndFill() throws {
+        try files.write(Data("{{topic}}".utf8), at: "fields.md")
+        let picker = try start()
+
+        for _ in 0..<2 {
+            delegate.showLibrary()
+            let library = try XCTUnwrap(delegate.libraryWindow?.window)
+            let search = try XCTUnwrap(delegate.libraryWindow?.searchItem?.searchField)
+            XCTAssertTrue(spin { library.isKeyWindow })
+            XCTAssertTrue(library.makeFirstResponder(search))
+
+            delegate.togglePicker()
+            let panel = try currentPanel()
+            // Let activation and blur settle without the key-event helper
+            // making the panel key on the test's behalf.
+            pump(for: Limits.blurHideDelay.timeInterval + 0.05)
+            let query = try XCTUnwrap(find("picker-query") as? PickerTextField)
+            XCTAssertTrue(panel.isKeyWindow)
+            XCTAssertTrue(NSApp.keyWindow === panel)
+            XCTAssertTrue(spin { self.isFocused(query, in: panel) })
+            try sendKeyToKeyWindow(code: UInt16(kVK_ANSI_F), characters: "f")
+            XCTAssertEqual(picker.query, "f")
+            XCTAssertEqual(search.stringValue, "")
+
+            try sendKeyToKeyWindow(code: UInt16(kVK_Return), characters: "\r", modifiers: .option)
+            let fill = try XCTUnwrap(picker.fillModel)
+            XCTAssertTrue(spin {
+                guard let field = self.find("fill-field-topic") as? PickerTextField else { return false }
+                return panel.isKeyWindow && self.isFocused(field, in: panel)
+            })
+            try sendKeyToKeyWindow(code: UInt16(kVK_ANSI_X), characters: "x")
+            XCTAssertEqual(fill.values["topic"], "x")
+            XCTAssertEqual(search.stringValue, "")
+            fill.setValue("", name: "topic")
+            picker.dismiss()
+            picker.setQuery("")
+        }
+    }
+
     func testBlurDismissesFillAndKeepsDraft() throws {
         try files.write(Data("{{topic}}".utf8), at: "fields.md")
         let picker = try open()
@@ -551,6 +590,43 @@ final class MacPickerViewTests: XCTestCase {
         picker.open()
         picker.use(mode: .copyOnly)
         XCTAssertEqual(picker.fillModel?.values["topic"], "Draft")
+    }
+
+    func testTabAndShiftTabKeepEveryFieldKindVisibleIncludingWraparound() throws {
+        let names = (0..<12).map { "field\($0)" }
+        let definitions = names.enumerated().map { position, name in
+            let definition = ["type: text", "type: multiline", "type: choice, options: [One, Two]"][position % 3]
+            return "  \(name): {\(definition)}"
+        }.joined(separator: "\n")
+        let body = names.map { "{{\($0)}}" }.joined(separator: " ")
+        try files.write(Data("---\nfields:\n\(definitions)\n---\n\(body)".utf8), at: "scrolling.md")
+        let picker = try open()
+        picker.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(picker.fillModel)
+        let panel = try currentPanel()
+        XCTAssertTrue(spin {
+            guard let field = self.find("fill-field-" + names[0]) as? PickerTextField else { return false }
+            return self.isFocused(field, in: panel)
+        })
+
+        for modifiers: NSEvent.ModifierFlags in [[], .shift] {
+            for step in names.indices {
+                try sendKey(code: UInt16(kVK_Tab), characters: "\t", modifiers: modifiers, to: panel)
+                let position = modifiers.isEmpty ? (step + 1) % names.count : names.count - 1 - step
+                XCTAssertEqual(fill.focusIndex, position)
+                let field = try XCTUnwrap(find("fill-field-" + names[position]))
+                XCTAssertTrue(spin {
+                    if let text = field as? NSTextField { return self.isFocused(text, in: panel) }
+                    return panel.firstResponder === field
+                })
+                // A multiline editor has its own scroller. Check the whole
+                // control, rather than only its caret inside that scroller.
+                let control = (field as? PickerMultilineTextView)?.enclosingScrollView ?? field
+                XCTAssertTrue(spin {
+                    control.visibleRect.contains(control.bounds.insetBy(dx: 1, dy: 1))
+                }, "Focused field is clipped: " + names[position])
+            }
+        }
     }
 
     func testMultilineReturnReachesNativeTextViewThroughLocalMonitor() throws {
@@ -940,6 +1016,15 @@ final class MacPickerViewTests: XCTestCase {
     private func sendKey(code: UInt16, characters: String, modifiers: NSEvent.ModifierFlags = [],
                          to panel: PromptPanel) throws {
         NSApp.sendEvent(try keyEvent(code: code, characters: characters, modifiers: modifiers, to: panel))
+    }
+
+    private func sendKeyToKeyWindow(code: UInt16, characters: String,
+                                    modifiers: NSEvent.ModifierFlags = []) throws {
+        let window = try XCTUnwrap(NSApp.keyWindow)
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+        NSApp.sendEvent(event)
     }
 
     private func keyEvent(code: UInt16, characters: String, modifiers: NSEvent.ModifierFlags,
