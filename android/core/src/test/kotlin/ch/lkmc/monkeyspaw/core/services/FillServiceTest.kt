@@ -8,6 +8,28 @@ import java.time.ZoneOffset
 import kotlin.test.*
 
 class FillServiceTest {
+    @Test fun oversizedExpansionNeverReachesClipboardDeliveryOrLearning() {
+        val h = ServiceHarness()
+        val entry = h.put("{{f}}".repeat(2049))
+        val values = mapOf("f" to "a".repeat(1024))
+        val before = h.state.bytesSnapshot()
+        h.clipboard.text = "prior clipboard"
+        assertEquals(PromptRenderError.OutputTooLarge,
+            assertFailsWith<PromptRenderError> { h.fill.copy(entry.document, values, PromptBuiltinValues()) })
+        for (mode in DeliveryMode.entries) {
+            assertEquals(PromptRenderError.OutputTooLarge,
+                assertFailsWith<PromptRenderError> {
+                    h.fill.deliver(entry.document, values, PromptBuiltinValues(), mode,
+                        TextDelivery { _, _ -> fail("Oversized output must not reach delivery") })
+                })
+        }
+        assertEquals("prior clipboard", h.clipboard.text)
+        assertEquals(0, h.clipboard.reads)
+        assertEquals(before, h.state.bytesSnapshot())
+        assertEquals(FillPreview.Blocked(PromptRenderError.OutputTooLarge, entry.document.issues),
+            h.fill.preview(entry.document, values, PromptBuiltinValues()))
+    }
+
     @Test fun everyModeDeliversTheSameLiteralRenderAndDoesNotLearnAtTheEffect() {
         val h = ServiceHarness()
         val entry = h.put("{{f}}|{{clipboard}}|{{f}}")

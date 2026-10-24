@@ -138,6 +138,7 @@ internal fun FillScreen(
                                 }
                             }
                             is FillPreview.Blocked -> PawMessage(stringResource(when (preview.error) {
+                                PromptRenderError.OutputTooLarge -> R.string.fill_output_too_large
                                 PromptRenderError.InvalidPrompt -> R.string.fill_invalid_prompt
                                 is PromptRenderError.UnsupportedFormat -> R.string.fill_read_only
                                 is PromptRenderError.MissingRequiredValue -> R.string.fill_required_value
