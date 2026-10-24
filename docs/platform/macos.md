@@ -833,6 +833,12 @@ in the earlier sign-in failure. Its replacement checks the identical ASCII
 grammar through Swift UTF-8 bytes, as Kotlin already does. This is a targeted
 workaround; the Xcode 27 failure mechanism remains unconfirmed.
 
+Load diagnostics now distinguish invalid secret references, profile validation
+and payload structure using static messages only. If reload still fails, the
+profile path retains Foundation control-character checks, whitespace trimming,
+UUID decoding and URLComponents parsing; the diagnostic narrows the next check.
+
+- [ ] Retain the failing build and its version/build details for comparison.
 - [ ] Rebuild and install from the workaround commit with Xcode 27. Keep the
       existing provider-settings.json and Keychain entries.
 - [ ] Quit/reopen: both profiles appear and Settings is writable. Switch

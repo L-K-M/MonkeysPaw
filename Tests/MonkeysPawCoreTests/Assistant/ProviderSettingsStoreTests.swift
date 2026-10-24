@@ -168,6 +168,39 @@ final class ProviderSettingsStoreTests: XCTestCase {
         try reopened.service.save(ProviderDraft())
     }
 
+    func testInvalidProfileDiagnosticsIdentifyTheStageWithoutMetadata() throws {
+        let source = ProviderHarness()
+        try source.service.save(ProviderDraft())
+        let original = try source.json()
+        let profiles = try XCTUnwrap(original["profiles"] as? [[String: Any]])
+        let profile = try XCTUnwrap(profiles.first)
+        let sentinel = UUID().uuidString
+        let cases: [(String, Any, String)] = [
+            ("secretReference", "provider:\(sentinel) invalid", "Provider settings contain an invalid secret reference."),
+            ("baseURL", "http://\(sentinel).example", "Provider settings fail profile validation."),
+            ("modelID", false, "Provider settings do not match the expected JSON structure.")
+        ]
+        for (field, value, diagnostic) in cases {
+            var invalid = profile
+            invalid["displayName"] = sentinel
+            invalid[field] = value
+            var object = original
+            object["profiles"] = [invalid]
+            let bytes = try JSONSerialization.data(withJSONObject: object)
+            let files = ProviderRecordingFiles()
+            try files.memory.write(bytes, at: "provider-settings.json")
+            let h = ProviderHarness(files: files)
+
+            XCTAssertEqual(h.service.snapshot.readOnlyError, .corruptFile)
+            XCTAssertEqual(h.log.lines, ["warning: " + diagnostic,
+                "warning: Provider settings read failed; settings are read-only."])
+            XCTAssertFalse(h.log.lines.joined().contains(sentinel))
+            XCTAssertEqual(try files.read(at: "provider-settings.json"), bytes)
+            XCTAssertTrue(files.attemptedWrites.isEmpty)
+            XCTAssertTrue(h.secrets.reads.isEmpty)
+        }
+    }
+
     func testExternalFutureOrCorruptReplacementBlocksReadsAndSecretEdits() throws {
         let cases: [(String, ProviderSettingsError)] = [(#"{"version":8}"#, .futureVersion(8)), ("invalid", .corruptFile)]
         for (replacement, expected) in cases {

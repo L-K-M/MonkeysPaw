@@ -52,17 +52,22 @@ final class SecretAccountTests: XCTestCase {
             let accepted = ("a"..."z").contains(character) || ("A"..."Z").contains(character)
                 || ("0"..."9").contains(character) || ["-", "_", "."].contains(character)
             for (namespace, name) in [(character, "account"), ("provider", character)] {
+                let context = "ASCII \(scalar): \(namespace.debugDescription):\(name.debugDescription)"
                 let encoded = try JSONEncoder().encode(namespace + ":" + name)
                 if accepted {
                     let account = try SecretAccount(namespace: namespace, name: name)
-                    XCTAssertEqual(try JSONDecoder().decode(SecretAccount.self, from: encoded), account)
+                    XCTAssertEqual(try JSONDecoder().decode(SecretAccount.self, from: encoded), account, context)
+                    XCTAssertEqual(try SecretAccount(coding: namespace + ":" + name), account, context)
                     continue
                 }
 
-                XCTAssertThrowsError(try SecretAccount(namespace: namespace, name: name)) {
+                XCTAssertThrowsError(try SecretAccount(namespace: namespace, name: name), context) {
                     XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
                 }
-                XCTAssertThrowsError(try JSONDecoder().decode(SecretAccount.self, from: encoded)) {
+                XCTAssertThrowsError(try JSONDecoder().decode(SecretAccount.self, from: encoded), context) {
+                    XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
+                }
+                XCTAssertThrowsError(try SecretAccount(coding: namespace + ":" + name), context) {
                     XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
                 }
             }
@@ -72,11 +77,15 @@ final class SecretAccountTests: XCTestCase {
     func testUnicodeLookalikesAndInvisibleCharactersAreNotAccounts() throws {
         for value in ["caf\u{00e9}", "cafe\u{0301}", "\u{ff41}", "\u{212a}", "id\u{feff}", "id\u{200d}", "id\u{00a0}"] {
             for (namespace, name) in [(value, "account"), ("provider", value)] {
-                XCTAssertThrowsError(try SecretAccount(namespace: namespace, name: name)) {
+                let context = namespace.debugDescription + ":" + name.debugDescription
+                XCTAssertThrowsError(try SecretAccount(namespace: namespace, name: name), context) {
                     XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
                 }
                 let encoded = try JSONEncoder().encode(namespace + ":" + name)
-                XCTAssertThrowsError(try JSONDecoder().decode(SecretAccount.self, from: encoded)) {
+                XCTAssertThrowsError(try JSONDecoder().decode(SecretAccount.self, from: encoded), context) {
+                    XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
+                }
+                XCTAssertThrowsError(try SecretAccount(coding: namespace + ":" + name), context) {
                     XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
                 }
             }
