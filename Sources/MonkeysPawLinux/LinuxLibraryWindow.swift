@@ -1359,7 +1359,8 @@ final class LinuxLibraryWindow {
         gtk_widget_set_visible(readOnlyBar, state.readOnlyReason == nil ? 0 : 1)
         gtk_label_set_text(mp_label(validation), state.issues.map(LinuxEditorStrings.issue).joined(separator: "\n"))
         let text = state.prompt == nil ? LinuxStrings.selectLibraryPrompt
-            : state.previewFailure == nil ? state.preview : state.issues.map(\.message).joined(separator: "\n")
+            : state.previewOutputFailure?.description
+                ?? (state.previewFailure == nil ? state.preview : state.issues.map(\.message).joined(separator: "\n"))
         if renderedPreview.map({ $0.utf8.elementsEqual(text.utf8) }) != true {
             renderedPreview = text
             gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(preview)), text, Int32(text.utf8.count))

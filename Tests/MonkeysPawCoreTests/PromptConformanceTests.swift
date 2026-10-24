@@ -678,6 +678,7 @@ final class PromptConformanceTests: XCTestCase {
     private func renderFailure(_ error: PromptRenderError) -> [String: Any] {
         switch error {
         case .invalidPrompt: return ["error": "invalid_prompt"]
+        case .outputTooLarge: return ["error": "output_too_large"]
         case .unsupportedFormat(let version): return ["error": "unsupported_format", "version": version.decimalValue]
         case .missingRequiredValue(let name): return ["error": "required_value_missing", "field": name]
         case .invalidChoiceValue(let name): return ["error": "choice_value_invalid", "field": name]

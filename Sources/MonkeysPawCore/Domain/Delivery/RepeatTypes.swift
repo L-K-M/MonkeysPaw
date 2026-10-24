@@ -27,7 +27,7 @@ public enum RepeatFailure: String, Error, Sendable {
 }
 
 public enum RepeatReviewReason: String, Sendable {
-    case sourceChanged, sourceUnavailable, sessionOnlyValues
+    case sourceChanged, sourceUnavailable, sessionOnlyValues, outputTooLarge
 }
 
 /// A reopening hint only. Never use the hint as an assigned identity resolver.

@@ -93,6 +93,8 @@ internal data class EditorUiState(
     val fieldSettings: List<PromptFieldSettings>? = null,
     val preview: String = "",
     val previewAvailable: Boolean = false,
+    val previewFailure: PromptRenderError? = null,
+    val sourceValid: Boolean = false,
     val isPrivate: Boolean = false,
     val quoteSelection: ReviewQuoteSelection? = null,
     val validating: Boolean = false,
@@ -117,7 +119,7 @@ internal data class EditorUiState(
     val canSave: Boolean get() = canEdit && !writing && !formUpdating && !formFailed && conflict == null && (isNew || stamp != null)
     val canCommand: Boolean get() = !isNew && stamp != null && readOnlyReason == null &&
         !writing && status != EditorStatus.LOADING && conflict == null
-    val canPrivateCopy: Boolean get() = !isNew && source != null && previewAvailable && !validating &&
+    val canPrivateCopy: Boolean get() = !isNew && source != null && sourceValid && !validating &&
         !writing && !formFailed && status == EditorStatus.READY && pendingDecision == null
     val group: GroupAccessGroup? get() = (access as? PromptAccessState.Group)?.group
 
@@ -126,7 +128,8 @@ internal data class EditorUiState(
 
 internal data class EditorDocumentState(val title: String, val issues: List<PromptIssue>,
     val fields: List<PromptField>, val preview: String, val previewAvailable: Boolean, val isPrivate: Boolean,
-    val fieldSettings: List<PromptFieldSettings>? = null, val form: EditorFormState? = null)
+    val fieldSettings: List<PromptFieldSettings>? = null, val form: EditorFormState? = null,
+    val previewFailure: PromptRenderError? = null, val sourceValid: Boolean = false)
 
 /** History rows show a localized medium date with a short time instead of the raw ISO instant. */
 internal fun editorTimestamp(instant: Instant, locale: Locale = Locale.getDefault(),
@@ -134,29 +137,23 @@ internal fun editorTimestamp(instant: Instant, locale: Locale = Locale.getDefaul
     DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(locale)
         .withZone(zone).format(instant)
 
-/** Editor preview uses tokens directly: absent defaults remain markers, including choice fields. */
+/** Editor preview uses the bounded pure renderer with one explicit local date/time snapshot. */
 internal fun projectEditor(document: PromptDocument, now: Instant, zone: ZoneId): EditorDocumentState {
     val form = PromptCodec.form(document)
     val effective = document.effectiveFields
     val used = effective.map { it.name }.toSet()
     val fields = effective + document.frontMatter.fields.filterNot { it.name in used }
-    val defaults = effective.associate { it.name to it.defaultValue.ifEmpty { "{${it.name}}" } }
     val date = DateTimeFormatter.ofPattern("uuuu-MM-dd", Locale.ROOT).withZone(zone).format(now)
     val time = DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT).withZone(zone).format(now)
-    val preview = if (!document.canRender) "" else document.template.tokens.joinToString("") { token ->
-        when (token) {
-            is TemplateToken.Literal -> token.text
-            TemplateToken.EscapedOpener -> "{{"
-            is TemplateToken.Placeholder -> when (token.name) {
-                "clipboard" -> "{clipboard}"
-                "date" -> date
-                "time" -> time
-                else -> defaults[token.name] ?: "{${token.name}}"
-            }
-        }
+    var previewFailure: PromptRenderError? = null
+    val preview = if (!document.canRender) "" else try {
+        PromptRenderer.preview(document, PromptBuiltinValues(clipboard = "{clipboard}", date = date, time = time))
+    } catch (error: PromptRenderError) {
+        previewFailure = error
+        ""
     }
-    return EditorDocumentState(document.frontMatter.title, document.issues, fields, preview, document.canRender,
+    return EditorDocumentState(document.frontMatter.title, document.issues, fields, preview, document.canRender && previewFailure == null,
         document.frontMatter.isPrivate, form?.fieldSettings, form?.let {
             EditorFormState(it.title, it.description, it.tags, it.isPrivate, it.body)
-        })
+        }, previewFailure, document.canRender)
 }

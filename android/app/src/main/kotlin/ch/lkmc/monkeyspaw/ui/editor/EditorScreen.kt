@@ -270,6 +270,7 @@ internal fun EditorScreen(
                                             style = MaterialTheme.typography.bodyLarge)
                                     }
                                 }
+                                state.previewFailure != null -> PawMessage(stringResource(R.string.editor_preview_too_large))
                                 else -> PawMessage(stringResource(R.string.editor_preview_invalid))
                             }
                         }

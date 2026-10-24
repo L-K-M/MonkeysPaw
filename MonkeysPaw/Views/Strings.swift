@@ -58,6 +58,7 @@ enum Strings {
             switch reason {
             case .sessionOnlyValues: return "Your last delivery used values kept only for that session. Open the prompt and fill it again."
             case .sourceChanged: return "Your last prompt changed. Open it and review it before delivering again."
+            case .outputTooLarge: return PromptRenderError.outputTooLarge.description
             case .sourceUnavailable: return "Your last prompt is unavailable. Check your library, then open the prompt again."
             }
         case .unavailable(let failure):
