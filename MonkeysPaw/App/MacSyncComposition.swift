@@ -13,6 +13,7 @@ final class MacSyncComposition {
     private(set) var status: SyncStatusModel
     private(set) var conflicts: ConflictModel
     var onAccountChange: (() -> Void)?
+    var onAccountBindingChange: (() -> Void)?
     var onStatusChange: ((SyncStatusState) -> Void)?
 
     private let accountService: SyncAccountService
@@ -27,6 +28,7 @@ final class MacSyncComposition {
     private var active = true
     private var startupPending = false
     private var lastConnection: AccountConnection?
+    private var hasLoadedAccountBinding = false
     private var inviteAcceptanceInFlight = false
 
     init(sync: SyncService, accounts: SyncAccountStore, states: SyncStateStore, access: GroupAccessService,
@@ -60,8 +62,14 @@ final class MacSyncComposition {
             accountStorage = model
             model.addObserver { [weak self, weak model] state in
                 guard let self, self.active else { return }
+                let hadBinding = self.hasLoadedAccountBinding
+                if state.operation == nil { self.hasLoadedAccountBinding = true }
                 if self.lastConnection != state.connection {
+                    let previous = self.lastConnection
                     self.lastConnection = state.connection
+                    if hadBinding && (previous?.serverURL != state.connection?.serverURL || previous?.userID != state.connection?.userID) {
+                        self.onAccountBindingChange?()
+                    }
                     self.groupStorage?.dismiss()
                     // Registration refreshes Account after acceptance. Keep its
                     // receipt/cleanup visible until the native view is hidden.

@@ -7,7 +7,10 @@ final class SettingsViewState: ObservableObject {
     @Published var selectedTab: Tab = .general {
         didSet {
             updateAccountVisibility()
-            if selectedTab != oldValue { onSelectedTabChange?(selectedTab) }
+            if selectedTab != oldValue {
+                if selectedTab == .assistant { assistant?.refreshSyncKey() }
+                onSelectedTabChange?(selectedTab)
+            }
         }
     }
     @Published private(set) var general: GeneralSettingsModel.State
@@ -159,6 +162,7 @@ final class SettingsViewState: ObservableObject {
     }
 
     func windowShown() {
+        if !windowIsVisible { assistant?.refreshSyncKey() }
         windowIsVisible = true
         updateAccountVisibility()
     }

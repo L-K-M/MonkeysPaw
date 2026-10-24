@@ -18,6 +18,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
 /** UI-confined staging. Core services own validation, credentials, IO and the Test deadline. */
@@ -57,6 +58,10 @@ internal class AssistantSettingsViewModel @Inject constructor(
     private var syncKeyInputReset = 0L
     private var syncKeyRevision = 0L
     private var syncKeyJob: Job? = null
+    private var syncKeyAccountID: ULID? = null
+    private var syncKeyBindingRevision = 0L
+    private var syncKeyOperationActive = false
+    private var syncKeyOperationPermit: AtomicBoolean? = null
     private var observedSettings: ProviderSettingsService? = null
     private var storeObserver: Long? = null
     private val canChangeProfiles: Boolean get() = operation == null && !snapshot.isReadOnly
@@ -237,67 +242,88 @@ internal class AssistantSettingsViewModel @Inject constructor(
         publish()
     }
 
+    private data class SyncKeyBinding(
+        val userID: ULID?, val status: AssistantSyncKeyStatus,
+    )
+
     private fun refreshSyncKey() {
-        // A refresh must not preempt a running key operation: cancelling its
-        // completion would drop a one-time reveal and leave the UI stuck busy.
-        if (syncKey.busy) return
+        // Status reads may discover an account change while an accepted key
+        // operation finishes; they never cancel that operation's storage work.
         val revision = ++syncKeyRevision
         syncKeyJob?.cancel()
         syncKeyJob = viewModelScope.launch {
-            val status = try { withContext(worker) { readSyncKeyStatus() } }
-            catch (error: CancellationException) { throw error }
-            catch (error: Exception) { AssistantSyncKeyStatus.UNAVAILABLE }
+            val binding = withContext(worker) { readSyncKeyBinding() }
             if (!alive || revision != syncKeyRevision) return@launch
-            syncKey = syncKey.copy(status = status, busy = false)
+            applySyncKeyBinding(binding)
             publish()
         }
     }
 
-    private suspend fun readSyncKeyStatus(): AssistantSyncKeyStatus {
+    private suspend fun readSyncKeyBinding(): SyncKeyBinding {
         val userID = try { syncAccount.userID() }
         catch (error: CancellationException) { throw error }
-        catch (error: Exception) { return AssistantSyncKeyStatus.UNAVAILABLE }
-            ?: return AssistantSyncKeyStatus.NO_ACCOUNT
-        return try {
+        catch (error: Exception) { return SyncKeyBinding(null, AssistantSyncKeyStatus.UNAVAILABLE) }
+            ?: return SyncKeyBinding(null, AssistantSyncKeyStatus.NO_ACCOUNT)
+        val status = try {
             if (syncKeys.get().tier(userID) != null) AssistantSyncKeyStatus.PROVISIONED else AssistantSyncKeyStatus.MISSING
         } catch (error: CancellationException) { throw error }
         catch (error: Exception) { AssistantSyncKeyStatus.UNAVAILABLE }
+        return SyncKeyBinding(userID, status)
+    }
+
+    private fun applySyncKeyBinding(binding: SyncKeyBinding) {
+        val changed = syncKeyAccountID != binding.userID
+        syncKeyAccountID = binding.userID
+        if (changed) {
+            syncKeyOperationPermit?.set(false)
+            syncKeyBindingRevision++
+            syncKeyInput = ""
+            syncKeyInputReset++
+        }
+        syncKey = syncKey.copy(status = binding.status, busy = syncKeyOperationActive,
+            notice = if (changed) null else syncKey.notice,
+            revealedKey = if (changed) null else syncKey.revealedKey)
     }
 
     /** Accepted key operations outlive this screen and ViewModel, like profile saves. */
     private fun syncKeyOperation(operation: suspend (ProviderSyncKeyService, ULID) -> String?) {
-        if (syncKey.busy) return
-        // Invalidate any in-flight status refresh. Key ops serialize on busy,
-        // so a completion can never be stale: it applies whenever the model is
-        // alive, even after close(), or the section would wedge busy and a
-        // never-shown generate reveal would be lost.
+        if (!syncKey.canEdit) return
+        val submittedAccount = syncKeyAccountID ?: return
+        val bindingRevision = syncKeyBindingRevision
+        syncKeyOperationActive = true
+        val permit = AtomicBoolean(true)
+        syncKeyOperationPermit = permit
+        // The admitted account stays immutable while storage work outlives navigation.
         syncKeyRevision++
         syncKeyJob?.cancel()
         syncKey = syncKey.copy(busy = true, notice = null, revealedKey = null)
-        val previousStatus = syncKey.status
         publish()
         applicationScope.launch(worker) {
-            var status = previousStatus
             var revealed: String? = null
             var notice: AssistantSyncKeyNotice? = null
             try {
-                val userID = syncAccount.userID()
-                if (userID == null) status = AssistantSyncKeyStatus.NO_ACCOUNT
-                else {
-                    revealed = operation(syncKeys.get(), userID)
-                    status = readSyncKeyStatus()
+                if (syncAccount.userID() == submittedAccount && permit.getAndSet(false)) {
+                    revealed = operation(syncKeys.get(), submittedAccount)
                 }
             } catch (error: CancellationException) { throw error }
             catch (error: ProviderSyncKeyError) {
                 notice = if (error is ProviderSyncKeyError.InvalidKey) AssistantSyncKeyNotice.INVALID_KEY
                     else AssistantSyncKeyNotice.OPERATION_FAILED
             } catch (error: Exception) { notice = AssistantSyncKeyNotice.OPERATION_FAILED }
+            val binding = readSyncKeyBinding()
             withContext(Dispatchers.Main.immediate) {
                 if (!alive) return@withContext
+                syncKeyOperationActive = false
+                syncKeyOperationPermit = null
+                // A newer account status may already have rendered while this
+                // operation was finishing. Release busy without restoring old state.
+                if (bindingRevision == syncKeyBindingRevision) applySyncKeyBinding(binding)
+                else syncKey = syncKey.copy(busy = false)
+                val current = binding.userID == submittedAccount && bindingRevision == syncKeyBindingRevision
                 syncKeyInput = ""
                 syncKeyInputReset++
-                syncKey = syncKey.copy(status = status, busy = false, notice = notice,
-                    revealedKey = revealed, inputReset = syncKeyInputReset)
+                syncKey = syncKey.copy(notice = if (current) notice else null,
+                    revealedKey = if (current) revealed else null, inputReset = syncKeyInputReset)
                 publish()
             }
         }

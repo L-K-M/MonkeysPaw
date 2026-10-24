@@ -21,3 +21,13 @@ amends the referenced section in the same PR. S = provider settings sync.
 | S10 · all | Settings edits should sync promptly without a second scheduler. | ProviderSettingsStore publishes change notifications after successful updates; composition observes them and calls the existing `localSave()` debounce. Remote applies also fire the notification; the payload-hash check makes the resulting pass a no-op, so no upload loop forms. |
 | S11 · all | Syncing settings must not leak through diagnostics or the §12 scans. | Only the envelope crosses the wire; the server stores ciphertext it cannot read. Payload plaintext, keys and decrypted bytes never enter logs, reports, WorkManager input/output, saved state or diagnostics. The sync key's account belongs to the existing provider secret scans; revealed key text is shown only in the explicit settings field. |
 | S12 · all | Sync of assistant credentials needs an owner-visible switch. | Settings → Assistant gains a "Provider settings sync" section: status, a Generate key action, an Enter key field, Reveal and Remove. The section is disabled while signed out or while a pass is resolving the account. Sync runs whenever a signed-in account exists and a key is provisioned; without a key the document can neither upload nor apply and the section reports key-required. |
+
+Provisioning state belongs to the displayed account and library binding. Opening
+Settings or the Assistant pane refreshes the sync-key status without discarding
+staged provider edits. A same-account refresh preserves the one-time reveal.
+An account or library replacement clears the reveal and native key input,
+revokes queued key actions and rejects stale presentation replies. Each action
+captures one resolved account before queuing; an already-admitted storage write
+may finish only for that account. Reopening after navigation may show its result
+only while that account is still current. Provisioning controls stay disabled
+while signed out, unavailable or resolving the binding.
