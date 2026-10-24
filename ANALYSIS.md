@@ -94,8 +94,8 @@ failures and was interrupted after stalling. One representative failure,
 `AndroidFileStoreTest.library rules are exact and state enumeration keeps sidecars`,
 also fails on unchanged main because the expected `readme.md` entry is absent alongside
 `README.md` on this case-insensitive host. The other broad-run Android failures remain
-unclassified. Focused fix suites passed; neither broader app gate is claimed green.
-Investigate the app/runner boundary and run the supported-host CI and owner checks.
+unclassified. Focused fix suites passed; neither broader local app gate is claimed green.
+Investigate the local app/runner boundary and complete the owner checks.
 
 CI also reported one failure among 704 macOS app tests on PR #322:
 `MacLibraryEditorTests.testRenderedEditorShowsBodyByDefaultAndSourceOnRequest`
@@ -103,7 +103,12 @@ could not find `library-prompt-description` after a fixed 0.1-second delay
 (`MonkeysPawTests/MacLibraryEditorTests.swift:192-195`). Both new picker
 Accessibility tests passed in that run. The failing Library test passed when
 run alone on local main, so the CI failure is not reproduced locally and its
-root cause remains unconfirmed. A single retry of the failed CI job was requested.
+root cause remains unconfirmed. The retry passed the full macOS app gate without
+changing that test. The ordinary CI matrices subsequently passed for all three
+research-fix PRs ([#322](https://github.com/L-K-M/MonkeysPaw/pull/322),
+[#323](https://github.com/L-K-M/MonkeysPaw/pull/323), and
+[#325](https://github.com/L-K-M/MonkeysPaw/pull/325)), which are now merged.
+The local broad-run limitations and physical owner checks above remain outstanding.
 
 Suggested fix: run the owner checklists on actual supported devices and installed
 artifacts, recording revision, build, environment and results. Keep NOT RUN explicit
