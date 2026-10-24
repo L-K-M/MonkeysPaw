@@ -11,6 +11,7 @@ final class PanelController: PanelWindow {
             rootGeneration &+= 1
             presentationGeneration &+= 1
             runForCurrentRoot { controller in
+                controller.stopObservingActivation()
                 guard let content = controller.hostingView else { return }
                 Self.deactivateFocus(in: content)
                 controller.panel?.makeFirstResponder(nil)
@@ -28,9 +29,12 @@ final class PanelController: PanelWindow {
     private let scheduler: MonkeysPawCore.Scheduler
     private let log: LogSink
     private let keyWindow: () -> NSWindow?
+    private let applicationIsActive: () -> Bool
+    private let activateApplication: () -> Void
     private var panel: PromptPanel?
     private weak var hostingView: NSHostingView<AnyView>?
     private var resignObserver: NSObjectProtocol?
+    private var activationObserver: NSObjectProtocol?
     private var keyMonitor: Any?
     private var presentationGeneration = 0
     private var rootGeneration: UInt64 = 0
@@ -40,14 +44,19 @@ final class PanelController: PanelWindow {
     var isActiveAndVisible: Bool { isVisible && panel?.isKeyWindow == true }
 
     init(mainThread: MainThread, scheduler: MonkeysPawCore.Scheduler, log: LogSink,
-         keyWindow: @escaping () -> NSWindow? = { NSApp.keyWindow }) {
+         keyWindow: @escaping () -> NSWindow? = { NSApp.keyWindow },
+         applicationIsActive: @escaping () -> Bool = { NSApp.isActive },
+         activateApplication: @escaping () -> Void = { NSApp.activate() }) {
         self.mainThread = mainThread
         self.scheduler = scheduler
         self.log = log
         self.keyWindow = keyWindow
+        self.applicationIsActive = applicationIsActive
+        self.activateApplication = activateApplication
     }
 
     deinit {
+        stopObservingActivation()
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
     }
@@ -105,6 +114,7 @@ final class PanelController: PanelWindow {
         let panel = self.panel ?? makePanel()
         self.panel = panel
         panel.setFrame(PanelPlacement.frame(at: cursor, in: screen.visibleFrame), display: true)
+        presentationGeneration &+= 1
 
         // Order in BEFORE activating: activation follows our ordered-in window
         // onto the current Space instead of pulling the user to another Space.
@@ -112,27 +122,43 @@ final class PanelController: PanelWindow {
         // A non-activating panel can show a caret without receiving keystrokes.
         // Activating routes them to our key window; the all-Spaces flags keep
         // the current full-screen Space in place.
-        NSApp.activate()
+        activateForPresentation(of: panel)
         panel.makeKey()
         panel.invalidateShadow()
-        presentationGeneration &+= 1
-        let generation = presentationGeneration
         pendingDismissal = .dismissal
         observeBlur(of: panel)
         observeKeys(of: panel)
         onShow?()
+    }
 
-        // Activation can restore Library's key window after makeKey. Retry on
-        // the next turn only while this presentation still owns the panel.
-        DispatchQueue.main.async { [weak self, weak panel] in
-            guard let self, let panel, self.presentationGeneration == generation,
-                  panel.isVisible, !panel.isKeyWindow else { return }
-            panel.makeKey()
+    private func activateForPresentation(of panel: PromptPanel) {
+        stopObservingActivation()
+        // Reactivating an active app can restore Library instead of the panel.
+        guard !applicationIsActive() else { return }
+        let generation = presentationGeneration
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: NSApp, queue: .main
+        ) { [weak self, weak panel] _ in
+            guard let self, self.presentationGeneration == generation else { return }
+            self.stopObservingActivation()
+            // Wait for activation's native key-window restoration to finish.
+            DispatchQueue.main.async { [weak self, weak panel] in
+                guard let self, let panel, self.presentationGeneration == generation,
+                      self.applicationIsActive(), panel.isVisible, !panel.isKeyWindow else { return }
+                panel.makeKey()
+            }
         }
+        activateApplication()
+    }
+
+    private func stopObservingActivation() {
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        activationObserver = nil
     }
 
     private func hideOnMainThread(reason: HideReason) {
         presentationGeneration &+= 1
+        stopObservingActivation()
         if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
         resignObserver = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
