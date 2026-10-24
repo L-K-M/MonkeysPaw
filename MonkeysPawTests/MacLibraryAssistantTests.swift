@@ -800,7 +800,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertTrue(generation.cancelled)
         let path = try XCTUnwrap(h.presentation.editorState.prompt?.relativePath)
         XCTAssertNotEqual(path, "one.md")
-        XCTAssertEqual(try h.files.read(at: path), candidate)
+        XCTAssertEqual(try h.files.read(at: path.string), candidate)
         XCTAssertEqual(try h.files.read(at: "one.md"), Data(source.utf8))
         generation.respond(.dismissPromptGeneration)
         XCTAssertEqual(try h.files.listFiles().count, 2, "A retired sheet cannot discard a saved prompt")
