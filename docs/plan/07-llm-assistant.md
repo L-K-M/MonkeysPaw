@@ -570,6 +570,10 @@ prompt-engineering guide. `placeholders` is checked locally, without an LLM.
   re-entry gate applies only to persisted secrets.
   Capability keys include profile ID, kind, normalized base URL and model
   ([§19 B23](19-m4-m5-decisions.md)).
+  Raw and decoded secret accounts retain the ASCII `[A-Za-z0-9_.-]` grammar
+  for each nonempty component. Swift validates UTF-8 bytes directly, matching
+  Kotlin without Foundation character-set bridging. This preserves stored names
+  and the fail-closed settings contract.
 - **What is sent.** Calls happen only on an explicit button. They send the
   template text, never remembered field values. `private: true` prompts
   disable review and improve. Write sends only the supplied brief and remains

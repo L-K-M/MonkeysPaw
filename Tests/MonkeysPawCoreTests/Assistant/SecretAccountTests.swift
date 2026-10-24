@@ -46,6 +46,43 @@ final class SecretAccountTests: XCTestCase {
         }
     }
 
+    func testRawAndDecodedAccountsValidateEveryASCIICharacter() throws {
+        for scalar in UInt8.min...0x7f {
+            let character = String(UnicodeScalar(scalar))
+            let accepted = ("a"..."z").contains(character) || ("A"..."Z").contains(character)
+                || ("0"..."9").contains(character) || ["-", "_", "."].contains(character)
+            for (namespace, name) in [(character, "account"), ("provider", character)] {
+                let encoded = try JSONEncoder().encode(namespace + ":" + name)
+                if accepted {
+                    let account = try SecretAccount(namespace: namespace, name: name)
+                    XCTAssertEqual(try JSONDecoder().decode(SecretAccount.self, from: encoded), account)
+                    continue
+                }
+
+                XCTAssertThrowsError(try SecretAccount(namespace: namespace, name: name)) {
+                    XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
+                }
+                XCTAssertThrowsError(try JSONDecoder().decode(SecretAccount.self, from: encoded)) {
+                    XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
+                }
+            }
+        }
+    }
+
+    func testUnicodeLookalikesAndInvisibleCharactersAreNotAccounts() throws {
+        for value in ["caf\u{00e9}", "cafe\u{0301}", "\u{ff41}", "\u{212a}", "id\u{feff}", "id\u{200d}", "id\u{00a0}"] {
+            for (namespace, name) in [(value, "account"), ("provider", value)] {
+                XCTAssertThrowsError(try SecretAccount(namespace: namespace, name: name)) {
+                    XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
+                }
+                let encoded = try JSONEncoder().encode(namespace + ":" + name)
+                XCTAssertThrowsError(try JSONDecoder().decode(SecretAccount.self, from: encoded)) {
+                    XCTAssertEqual($0 as? SecretStoreError, .invalidAccount)
+                }
+            }
+        }
+    }
+
     private func roundTrip(_ account: SecretAccount) throws -> SecretAccount {
         try JSONDecoder().decode(SecretAccount.self, from: JSONEncoder().encode(account))
     }

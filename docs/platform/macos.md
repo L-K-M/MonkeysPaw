@@ -817,3 +817,25 @@ passing automated tests alone does not establish owner acceptance.
       quit/reopen and confirm the saved connection resumes without a crash.
 - [ ] Confirm a failed sign-in remains an error in Account, without exposing
       credentials in logs or this record.
+
+## Assistant settings reload: 2026-10-24
+
+Owner reported **Provider settings are invalid. Settings are read-only.**
+after reopening an Xcode 27 build, version 1.0.0 (1). The supplied version-1
+file contains two valid OpenAI-compatible profiles: a selected keyless profile
+and another with its own namespaced secret reference. Both remain on disk.
+
+The exact uploaded bytes load and permit adding a profile on Linux Swift 6.4.
+An anonymized shape and exhaustive ASCII/Codable checks also pass in Release
+before the workaround. The installed-app failure is not reproduced here.
+Decoding the retained reference still uses the CharacterSet validator involved
+in the earlier sign-in failure. Its replacement checks the identical ASCII
+grammar through Swift UTF-8 bytes, as Kotlin already does. This is a targeted
+workaround; the Xcode 27 failure mechanism remains unconfirmed.
+
+- [ ] Rebuild and install from the workaround commit with Xcode 27. Keep the
+      existing provider-settings.json and Keychain entries.
+- [ ] Quit/reopen: both profiles appear and Settings is writable. Switch
+      profiles, add/save/delete a temporary profile, then quit/reopen again.
+- [ ] Test the credential-backed profile explicitly. Its saved key still works;
+      the keyless profile stays keyless. Record only outcomes, never key values.

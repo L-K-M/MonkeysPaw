@@ -658,8 +658,8 @@ jobs:
           xcode-version: '26.0'
       - name: Test Core
         run: swift test
-      - name: Test optimized secret accounts
-        run: swift test --configuration release --filter SecretAccountTests
+      - name: Test optimized secret accounts and provider settings
+        run: swift test --configuration release --filter '(SecretAccountTests|ProviderSettingsStoreTests)'
 
   macos-app:
     name: macOS app

@@ -45,6 +45,37 @@ final class ProviderSettingsStoreTests: XCTestCase {
         XCTAssertEqual(try reopened.service.secretTier(for: first.id), .secretService)
     }
 
+    func testEscapedSavedProfilesLoadWithoutRewritingAndRemainEditable() throws {
+        // Mirrors the reported file's shape without retaining the owner's metadata.
+        let original = #"""
+        {"profiles":[{"baseURL":"https:\/\/api.example.test\/api\/v1","displayName":"Keyless","id":"01234567-89ab-cdef-0123-456789abcdef","kind":"openaiCompatible","modelID":"manual-one","secretReference":null},{"baseURL":"https:\/\/api.example.test\/api\/v1","displayName":"With key","id":"fedcba98-7654-4321-fedc-ba9876543210","kind":"openaiCompatible","modelID":"manual-two","secretReference":"provider:fedcba98-7654-4321-fedc-ba9876543210"}],"selectedProfileID":"01234567-89ab-cdef-0123-456789abcdef","version":1}
+        """#
+        let files = ProviderRecordingFiles()
+        try files.memory.put(original, at: "provider-settings.json")
+        let h = ProviderHarness(files: files)
+        XCTAssertNil(h.service.snapshot.readOnlyError)
+        let settings = h.service.snapshot.settings
+        XCTAssertEqual(settings.profiles.map(\.displayName), ["Keyless", "With key"])
+        let first = try XCTUnwrap(settings.profiles.first)
+        let second = try XCTUnwrap(settings.profiles.last)
+        XCTAssertEqual(settings.selectedProfileID, first.id)
+        XCTAssertNil(first.secretReference)
+        XCTAssertEqual(second.secretReference, .provider(second.id))
+        XCTAssertEqual(second.baseURL.absoluteString, "https://api.example.test/api/v1")
+        XCTAssertEqual(try files.memory.text(at: "provider-settings.json"), original)
+        XCTAssertTrue(files.attemptedWrites.isEmpty)
+        XCTAssertTrue(h.secrets.reads.isEmpty)
+
+        let added = ProviderDraft(displayName: "New profile")
+        try h.service.save(added)
+        let reopened = h.reopen()
+        XCTAssertNil(reopened.service.snapshot.readOnlyError)
+        XCTAssertEqual(reopened.service.snapshot.settings.profiles, settings.profiles + [try ProviderProfile(
+            id: added.id, displayName: added.displayName, kind: added.kind,
+            baseURL: added.baseURL, modelID: added.modelID)])
+        XCTAssertEqual(reopened.service.snapshot.settings.selectedProfileID, first.id)
+    }
+
     func testUnknownRootAndNestedProfileKeysFollowIDsThroughEditsAndDeletion() throws {
         let harness = ProviderHarness()
         let first = ProviderDraft(displayName: "One")

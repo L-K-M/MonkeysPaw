@@ -24,6 +24,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - UUID-based secret-account factories construct their validated names directly,
   removing the forced-try crash reported during macOS sync sign-in.
+- Stored secret-account references use byte-based ASCII validation, avoiding
+  the CharacterSet path implicated in Xcode 27 provider-settings load failures.
 - macOS packaging checks the universal slices with `lipo -archs`; Xcode 27's
   `lipo` rejected the multi-arch `-verify_arch` form and failed the build.
 - Local macOS packaging recovers from missing or invalid create-dmg output
