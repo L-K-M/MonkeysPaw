@@ -269,7 +269,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateImprovementWindow() {
-        guard let improvementWindow, improvementWindow.presentation !== presentation.assistant else { return }
+        guard let improvementWindow else { return }
+        if improvementWindow.presentation === presentation.assistant,
+           improvementWindow.presentation.isImprovementRequest { return }
         improvementWindow.close()
     }
 
@@ -295,6 +297,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     func refreshWindowPresentation() {
         guard !isTornDown, let window else { return }
+        updateImprovementWindow()
         searchPresentationDepth += 1
         defer { searchPresentationDepth -= 1 }
         let state = presentation.editorState

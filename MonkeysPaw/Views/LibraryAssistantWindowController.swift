@@ -38,7 +38,7 @@ final class LibraryAssistantWindowController: NSWindowController, NSWindowDelega
     }
 
     func windowWillClose(_ notification: Notification) {
-        presentation.cancel()
+        if presentation.isImprovementRequest { presentation.cancel() }
         onClose?()
     }
 }

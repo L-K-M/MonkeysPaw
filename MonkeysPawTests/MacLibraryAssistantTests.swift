@@ -500,7 +500,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         let service = try XCTUnwrap(h.delegate.assistantService)
         h.presentation.generatePromptWithAssistant()
         XCTAssertTrue(h.presentation.isGeneratingPrompt)
-        let original = try h.assistant()
+        let original = try h.generation()
         original.brief = "Brief"
         try h.request { original.write() }
         h.presentation.selectPath("two.md")
@@ -517,7 +517,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         try otherFiles.write(Data("Other graph".utf8), at: "one.md")
         h.presentation.generatePromptWithAssistant()
         XCTAssertTrue(h.presentation.isGeneratingPrompt)
-        let secondGeneration = try h.assistant()
+        let secondGeneration = try h.generation()
         secondGeneration.brief = "Another brief"
         try h.request { secondGeneration.write() }
         XCTAssertEqual(h.delegate.switchLibrary(to: otherRoot), .switched)
@@ -818,7 +818,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.presentation.edit("Unsaved source")
         h.presentation.generatePromptWithAssistant()
         let generation = try XCTUnwrap(dialogs.last)
-        let view = try h.assistant()
+        let view = try h.generation()
         view.brief = "A new template"
         try h.request { view.write() }
         try h.respond(MacLibraryAssistantHarness.artifact())
@@ -892,6 +892,10 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertNil(controller.improvementWindow)
         XCTAssertEqual(view.state.phase, .idle)
         XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+        view.editInstruction("Try another improvement")
+        try h.request { view.improve() }
+        XCTAssertNotNil(controller.improvementWindow)
+        XCTAssertFalse(controller.improvementWindow === results)
     }
 
     func testEditorSwitchClosesImprovementAndRetiresItsReply() throws {
@@ -907,9 +911,33 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertNil(controller.improvementWindow)
         XCTAssertFalse(results.isVisible)
         XCTAssertFalse(view.canAccept)
+        let unexpected = expectation(description: "A retired improvement must not publish")
+        unexpected.isInverted = true
+        let observation = view.$state.dropFirst().sink { _ in unexpected.fulfill() }
         h.transport.finish(try h.envelope(MacLibraryAssistantHarness.artifact(body: "Obsolete")))
+        wait(for: [unexpected], timeout: 0.1)
+        observation.cancel()
+        XCTAssertFalse(view.canAccept)
+        XCTAssertNil(controller.improvementWindow)
         XCTAssertEqual(h.presentation.editorState.source, "Second")
         XCTAssertEqual(try h.files.listFiles().count, 2)
+    }
+
+    func testStartingReviewRetiresImprovementWindowWithoutCancellingReview() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        let resultWindow = try XCTUnwrap(controller.improvementWindow?.window)
+        try h.request { view.review() }
+        XCTAssertNil(controller.improvementWindow)
+        XCTAssertFalse(resultWindow.isVisible)
+        XCTAssertTrue(view.isWorking, "Retiring an improvement must leave the new review running")
+        try h.respond(["summary": "New review", "findings": []], phase: .draft)
+        XCTAssertEqual(view.state.review?.summary, "New review")
     }
 
     func testDiffWrapsParagraphsAndUnbrokenLinesAtWindowWidths() throws {
@@ -921,11 +949,12 @@ final class MacLibraryAssistantTests: XCTestCase {
         }
 
         let short = try height("Short line", width: 640)
-        for body in [String(repeating: "A long paragraph with words. ", count: 80), String(repeating: "abcdefghij", count: 160)] {
+        for (kind, body) in [("paragraph", String(repeating: "A long paragraph with words. ", count: 80)),
+                             ("unbroken token", String(repeating: "abcdefghij", count: 160))] {
             let narrow = try height(body, width: 640)
             let wide = try height(body, width: 1040)
-            XCTAssertGreaterThan(narrow, wide, "Narrower columns must wrap to more lines")
-            XCTAssertGreaterThan(narrow, short * 2, "Long content must grow vertically instead of scrolling sideways")
+            XCTAssertGreaterThan(narrow, wide, "\(kind): narrower columns must wrap to more lines")
+            XCTAssertGreaterThan(narrow, short * 2, "\(kind): long content must grow vertically")
         }
     }
 
@@ -1036,8 +1065,10 @@ private final class MacLibraryAssistantHarness {
     }
 
     func assistant() throws -> LibraryAssistantViewState {
-        try XCTUnwrap(presentation.promptGeneration ?? presentation.assistant)
+        try XCTUnwrap(presentation.assistant)
     }
+
+    func generation() throws -> LibraryAssistantViewState { try XCTUnwrap(presentation.promptGeneration) }
 
     func request(_ start: () -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
         let sent = XCTestExpectation(description: "Stub transport received an explicit request")
@@ -1050,7 +1081,7 @@ private final class MacLibraryAssistantHarness {
 
     func respond(_ output: [String: Any], phase: AssistantPhase = .ready, status: Int = 200,
                  file: StaticString = #filePath, line: UInt = #line) throws {
-        let view = try assistant()
+        let view = try XCTUnwrap(presentation.promptGeneration ?? presentation.assistant)
         let arrived = XCTestExpectation(description: "Assistant output arrived on the UI thread")
         var fulfilled = false
         let observation = view.$state.sink { state in

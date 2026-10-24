@@ -99,6 +99,9 @@ final class MacMainMenuTests: XCTestCase {
             MainMenuStrings.moveTo, MainMenuStrings.revertToSaved, "-",
             MainMenuStrings.showInFinder, "-", MainMenuStrings.deletePrompt])
         let creation = try submenu(menu, MainMenuStrings.newPrompt)
+        let parent = try row(menu, MainMenuStrings.newPrompt)
+        XCTAssertNil(parent.action)
+        XCTAssertTrue(parent.keyEquivalent.isEmpty)
         XCTAssertEqual(titles(creation), [MainMenuStrings.blankPrompt, MainMenuStrings.generatePrompt])
         try check(row(creation, MainMenuStrings.blankPrompt), action: "newDocument:", key: "n", modifiers: .command)
         try check(row(creation, MainMenuStrings.generatePrompt), action: "writeWithAssistant:", key: "", modifiers: .command)

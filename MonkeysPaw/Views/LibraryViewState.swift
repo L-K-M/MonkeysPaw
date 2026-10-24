@@ -164,7 +164,13 @@ final class LibraryViewState: ObservableObject {
                       self.editor.state.prompt?.relativePath == path else { return }
                 self.assistantSaveMessage = LibraryAssistantStrings.acceptance(outcome)
             }
-        view.onRequest = { [weak self] in self?.assistantSaveMessage = nil }
+        view.onRequest = { [weak self, weak view] in
+            guard let self else { return }
+            self.assistantSaveMessage = nil
+            // Retire an improvement window before a new Review starts, so
+            // closing the old window cannot cancel that new request.
+            if self.assistant === view { self.onEditorChange?() }
+        }
         view.onHighlight = { [weak self] range in
             guard let self, self.isActive, self.bindingRevision == revision else { return }
             self.quoteHighlight = range.flatMap { range in

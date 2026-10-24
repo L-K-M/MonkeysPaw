@@ -86,7 +86,8 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     var canRetry: Bool { requestDisabledMessage == nil && model?.canRetry == true }
     var canShowDiff: Bool { requestDisabledMessage == nil && model?.canShowDiff == true }
     var canSelectFindings: Bool { canReview && !state.isStale }
-    var canShowImprovement: Bool { requestKind == .improve && state.phase != .idle }
+    var isImprovementRequest: Bool { requestKind == .improve }
+    var canShowImprovement: Bool { isImprovementRequest && state.phase != .idle }
     var improveTitle: String {
         if state.mutationAccess == .privateCopy { return "Improve a private copy" }
         return flow == .review && !state.selectedFindings.isEmpty
