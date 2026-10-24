@@ -1216,3 +1216,23 @@ were used for typing checks; no performance result is claimed. Physical
 TalkBack, external keyboards, OEM/gesture navigation, Android 12+ dynamic
 colors, paid providers and deployed-server flows remain unverified here.
 These checks do not close the existing owner acceptance matrices.
+
+### Provider-kind layout regression (2026-10-24)
+
+An isolated API 26 x86_64 emulator reproduced the reported clipping at
+720×1560/320 dpi: the half-width provider buttons had different heights and
+split “OpenAI-compatible”. A native bounds check failed before the fix.
+Full-width radio rows passed at 360 dp with 100%/200% fonts and at 320 dp
+with 200% fonts. Screenshots confirmed complete labels and growing row heights;
+tapping either label selected only that provider. Debug and signed/R8 release
+APKs were exercised. The full Android gate passed 1,266 Core and 938 app tests,
+zero failures/errors/skips; lint reported zero errors and 30 warnings.
+The tested release APK SHA-256 was
+`c8151f5a8611eccbed3d4860b6ee1944462677ffcd090bd82fff5a0b87bad345`.
+
+Repeat through Settings → Assistant settings → Add profile, then scroll to
+Provider kind. At 320/360 dp widths and 100%/200% font sizes, check both
+selections: complete labels, no overlapping controls, growing rows when text
+wraps, and selection by tapping the label or blank row space. Native checks
+were run locally; the JVM suite does not render Compose. Physical OEM displays
+and TalkBack speech remain unverified.
