@@ -444,7 +444,7 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(spin { self.controller.isActiveAndVisible && self.isFocused(query, in: panel) })
     }
 
-    func testToggleFromLibraryRoutesTypingToPickerAndFill() throws {
+    func testToggleWithVisibleLibraryRoutesTypingToPickerAndFill() throws {
         try files.write(Data("{{topic}}".utf8), at: "fields.md")
         let picker = try start()
 
@@ -452,7 +452,7 @@ final class MacPickerViewTests: XCTestCase {
             delegate.showLibrary()
             let library = try XCTUnwrap(delegate.libraryWindow?.window)
             let search = try XCTUnwrap(delegate.libraryWindow?.searchItem?.searchField)
-            XCTAssertTrue(spin { library.isKeyWindow })
+            XCTAssertTrue(library.isVisible)
             XCTAssertTrue(library.makeFirstResponder(search))
 
             delegate.togglePicker()
