@@ -629,6 +629,21 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertNull(secrets.values[SecretAccount.providerSync(userID)])
     }
 
+    @Test fun `sync key operation completion survives page close`() = runTest(scheduler) {
+        accountUserID = userID
+        val model = model()
+        val gate = CompletableDeferred<Unit>()
+        secrets.writeGate = gate
+        model.syncKeyGenerate(); runCurrent()
+        assertTrue(model.state.value.syncKey.busy)
+        model.close()
+        gate.complete(Unit); runCurrent()
+        assertFalse(model.state.value.syncKey.busy)
+        assertEquals(AssistantSyncKeyStatus.PROVISIONED, model.state.value.syncKey.status)
+        model.open(); runCurrent()
+        assertEquals(43, model.state.value.syncKey.revealedKey!!.length)
+    }
+
     @Test fun `sync key entry validates input and publishes the normalized reveal`() = runTest(scheduler) {
         accountUserID = userID
         val model = model()

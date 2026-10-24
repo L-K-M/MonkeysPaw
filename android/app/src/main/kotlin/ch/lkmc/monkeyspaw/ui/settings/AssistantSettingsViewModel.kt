@@ -267,7 +267,11 @@ internal class AssistantSettingsViewModel @Inject constructor(
     /** Accepted key operations outlive this screen and ViewModel, like profile saves. */
     private fun syncKeyOperation(operation: suspend (ProviderSyncKeyService, ULID) -> String?) {
         if (syncKey.busy) return
-        val revision = ++syncKeyRevision
+        // Invalidate any in-flight status refresh. Key ops serialize on busy,
+        // so a completion can never be stale: it applies whenever the model is
+        // alive, even after close(), or the section would wedge busy and a
+        // never-shown generate reveal would be lost.
+        syncKeyRevision++
         syncKeyJob?.cancel()
         syncKey = syncKey.copy(busy = true, notice = null, revealedKey = null)
         val previousStatus = syncKey.status
@@ -289,7 +293,7 @@ internal class AssistantSettingsViewModel @Inject constructor(
                     else AssistantSyncKeyNotice.OPERATION_FAILED
             } catch (error: Exception) { notice = AssistantSyncKeyNotice.OPERATION_FAILED }
             withContext(Dispatchers.Main.immediate) {
-                if (!alive || revision != syncKeyRevision) return@withContext
+                if (!alive) return@withContext
                 syncKeyInput = ""
                 syncKeyInputReset++
                 syncKey = syncKey.copy(status = status, busy = false, notice = notice,
