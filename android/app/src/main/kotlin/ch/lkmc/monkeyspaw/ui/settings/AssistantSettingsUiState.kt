@@ -36,7 +36,8 @@ internal data class AssistantSyncKey(
     /** Secure input clears on commit and navigation, like keyInputReset. */
     val inputReset: Long = 0,
 ) {
-    val canEdit: Boolean get() = !busy
+    val canEdit: Boolean get() = !busy &&
+        (status == AssistantSyncKeyStatus.MISSING || status == AssistantSyncKeyStatus.PROVISIONED)
     override fun toString(): String = "<assistant sync key redacted>"
 }
 

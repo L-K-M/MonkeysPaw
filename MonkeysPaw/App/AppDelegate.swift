@@ -566,10 +566,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return AssistantSettingsModel(settings: providers, assistant: assistant,
                         work: backgroundWork, mainThread: mainThread)
                 }
-                let syncKey = self.syncComposition.map { composition in
+                let syncKey = (self.syncComposition?.accounts).map { accounts in
                     ProviderSyncKeyModel(keys: ProviderSyncKeyService(secrets: self.secrets,
                             entropy: SystemEntropy()),
-                        accountUserID: { try composition.accounts.configuredAccountUserID() },
+                        accountUserID: { try accounts.configuredAccountUserID() },
                         work: backgroundWork, mainThread: mainThread)
                 }
                 return AssistantSettingsModel(settings: providers, assistant: assistant,
@@ -788,6 +788,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncRecoveryWaiting = false
         pendingSyncLibraryChoice = nil
         installLibrary(files: files, availability: true)
+        let accounts = syncComposition?.accounts
+        settingsWindow?.presentation.assistant?.accountDidChange(accountUserID: {
+            guard let accounts else { throw FileStoreError.ioFailure }
+            return try accounts.configuredAccountUserID()
+        })
         let startup = startLibrary()
         libraryStatusModel?.libraryReplaced(available: self.pickerModel?.libraryAvailable == true)
         if case .failure(let error) = startup {
@@ -993,6 +998,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 revealLibrary: { [weak self] in self?.revealLibrary() })
         }
         updateLibraryMenuItems()
+        syncComposition?.onAccountBindingChange = { [weak self] in
+            guard isCurrent() else { return }
+            self?.settingsWindow?.presentation.assistant?.accountDidChange()
+        }
         syncComposition?.onAccountChange = { [weak self] in
             guard isCurrent() else { return }
             self?.onboardingModel?.refresh()

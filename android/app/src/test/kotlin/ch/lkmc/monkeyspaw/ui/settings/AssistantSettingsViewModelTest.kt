@@ -644,6 +644,45 @@ internal class AssistantSettingsViewModelTest : TemporaryFiles() {
         assertEquals(43, model.state.value.syncKey.revealedKey!!.length)
     }
 
+    @Test fun `sync key refresh clears previous account reveal and preserves profile draft`() = runTest(scheduler) {
+        accountUserID = userID
+        val model = model()
+        model.addProfile(); model.renameProfile("Staged profile")
+        val draftID = model.state.value.draft!!.id
+        model.syncKeyGenerate(); runCurrent()
+        assertTrue(model.state.value.syncKey.revealedKey != null)
+        model.refresh(preserveDraft = true); runCurrent()
+        assertTrue(model.state.value.syncKey.revealedKey != null, "Same-account refresh retains the one-time reveal")
+        accountUserID = ch.lkmc.monkeyspaw.core.domain.ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAZ")!!
+        model.refresh(preserveDraft = true); runCurrent()
+        assertEquals(AssistantSyncKeyStatus.MISSING, model.state.value.syncKey.status)
+        assertTrue(model.state.value.syncKey.revealedKey == null, "A previous account key must stay hidden")
+        assertEquals(draftID, model.state.value.draft!!.id)
+        assertEquals("Staged profile", model.state.value.draft!!.displayName)
+    }
+
+    @Test fun `sync key operation stays bound to its admitted account after navigation`() = runTest(scheduler) {
+        val other = ch.lkmc.monkeyspaw.core.domain.ULID.parse("01ARZ3NDEKTSV4RRFFQ69G5FAZ")!!
+        for (started in listOf(false, true)) {
+            accountUserID = userID
+            val model = model()
+            val gate = CompletableDeferred<Unit>()
+            secrets.writeGate = gate
+            model.syncKeyGenerate()
+            if (started) runCurrent()
+            model.close()
+            accountUserID = other
+            model.open(); runCurrent()
+            gate.complete(Unit); runCurrent()
+            assertEquals(AssistantSyncKeyStatus.MISSING, model.state.value.syncKey.status)
+            assertFalse(model.state.value.syncKey.busy)
+            assertTrue(model.state.value.syncKey.revealedKey == null, "Retired account operations must not reveal a key")
+            assertTrue(secrets.values[SecretAccount.providerSync(other)] == null,
+                "An action for the previous account must not provision the new account")
+            model.close()
+        }
+    }
+
     @Test fun `sync key entry validates input and publishes the normalized reveal`() = runTest(scheduler) {
         accountUserID = userID
         val model = model()

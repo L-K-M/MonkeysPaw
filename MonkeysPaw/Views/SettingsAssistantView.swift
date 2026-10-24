@@ -90,9 +90,15 @@ final class AssistantSettingsViewState: ObservableObject {
         guard state.operation == nil else { return }
         cancelTest()
         model?.refresh()
+        refreshSyncKey()
     }
 
-    var canEditSyncKey: Bool { model != nil && syncKey?.busy == false }
+    func refreshSyncKey() { model?.syncKey?.refresh() }
+    func accountDidChange(accountUserID: (() throws -> ULID?)? = nil) {
+        model?.syncKey?.accountDidChange(accountUserID: accountUserID)
+    }
+
+    var canEditSyncKey: Bool { model != nil && syncKey?.canEdit == true }
     func syncKeyGenerate() { if canEditSyncKey { model?.syncKey?.generate() } }
     func syncKeyEnter(_ text: String) { if canEditSyncKey { model?.syncKey?.enterKey(text) } }
     func syncKeyRemove() { if canEditSyncKey { model?.syncKey?.remove() } }
@@ -121,6 +127,7 @@ struct SettingsAssistantView: View {
             if presentation.syncKey != nil { syncSection }
         }
         .formStyle(.grouped)
+        .onChange(of: presentation.syncKey?.inputReset) { _ in syncKeyInput = "" }
     }
 
     private var profiles: some View {
