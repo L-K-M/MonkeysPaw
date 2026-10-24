@@ -978,12 +978,14 @@ final class MacLibraryWindowTests: XCTestCase {
         list.layoutSubtreeIfNeeded()
         let label = try XCTUnwrap(message(in: list))
         XCTAssertFalse(label.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(label.isAccessibilityElement())
         let point = label.convert(NSPoint(x: label.bounds.midX, y: label.bounds.midY), to: list)
         let hit = list.hitTest(point)
         XCTAssertTrue(hit === scroll || hit?.isDescendant(of: scroll) == true)
         type("a")
         XCTAssertEqual(controller.presentation.snapshot.rows.count, 2)
-        XCTAssertTrue(label.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(label.stringValue.isEmpty)
+        XCTAssertFalse(label.isAccessibilityElement())
     }
 
     func testSearchResultNavigationRespectsCompositionAndUnsavedEdits() throws {
