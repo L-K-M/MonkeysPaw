@@ -186,6 +186,9 @@ that result, matching double-click; a single click only selects it.
 Pending text focus retries when the panel becomes key after deferred activation;
 removing the native view or withdrawing the focus request cancels that retry.
 Printable keys on a focused native control keep its native behavior.
+Summoning over an open Library or Settings window keeps keyboard input in the
+picker and fill form. Tab and Shift+Tab scroll the focused field into view,
+including multiline and choice controls and wraparound.
 
 On both desktops, active input-method composition keeps keys in the focused
 native text control. Return confirms conversion and Escape cancels composition

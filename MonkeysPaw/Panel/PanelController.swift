@@ -116,10 +116,19 @@ final class PanelController: PanelWindow {
         panel.makeKey()
         panel.invalidateShadow()
         presentationGeneration &+= 1
+        let generation = presentationGeneration
         pendingDismissal = .dismissal
         observeBlur(of: panel)
         observeKeys(of: panel)
         onShow?()
+
+        // Activation can restore Library's key window after makeKey. Retry on
+        // the next turn only while this presentation still owns the panel.
+        DispatchQueue.main.async { [weak self, weak panel] in
+            guard let self, let panel, self.presentationGeneration == generation,
+                  panel.isVisible, !panel.isKeyWindow else { return }
+            panel.makeKey()
+        }
     }
 
     private func hideOnMainThread(reason: HideReason) {

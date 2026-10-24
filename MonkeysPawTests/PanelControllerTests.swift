@@ -32,6 +32,66 @@ final class PanelControllerTests: XCTestCase {
         XCTAssertEqual(reasons, firstDismissal)
     }
 
+    func testPresentationRecoversKeyStatusAfterActivationRestoresAnotherWindow() throws {
+        let originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
+        }
+        let controller = PanelController(mainThread: DispatchMainThread(),
+                                         scheduler: DispatchScheduler(), log: OSLogSink())
+        controller.onShow = {
+            // Model activation restoring Library after show() made the panel
+            // key. Hosted runners cannot reliably activate a regular window.
+            NSApp.windows.compactMap { $0 as? PromptPanel }.first {
+                !originalWindows.contains(ObjectIdentifier($0))
+            }?.resignKey()
+        }
+        controller.show()
+        XCTAssertTrue(controller.isVisible)
+        XCTAssertFalse(controller.isActiveAndVisible)
+        let deadline = Date().addingTimeInterval(1)
+        while !controller.isActiveAndVisible, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005))
+        }
+        XCTAssertTrue(controller.isActiveAndVisible, "Activation must not leave typing in the previous window")
+    }
+
+    func testHideRevokesDeferredPresentationFocus() throws {
+        let originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
+        }
+        let controller = PanelController(mainThread: DispatchMainThread(),
+                                         scheduler: DispatchScheduler(), log: OSLogSink())
+        controller.show()
+        let panel = try XCTUnwrap(NSApp.windows.compactMap { $0 as? PromptPanel }.first {
+            !originalWindows.contains(ObjectIdentifier($0))
+        })
+        controller.hide()
+        panel.resignKey()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertFalse(controller.isVisible)
+        XCTAssertFalse(panel.isKeyWindow)
+    }
+
+    func testRootReplacementRevokesDeferredPresentationFocus() throws {
+        let originalWindows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApp.windows where !originalWindows.contains(ObjectIdentifier(window)) { window.close() }
+        }
+        let controller = PanelController(mainThread: DispatchMainThread(),
+                                         scheduler: DispatchScheduler(), log: OSLogSink())
+        controller.show()
+        let panel = try XCTUnwrap(NSApp.windows.compactMap { $0 as? PromptPanel }.first {
+            !originalWindows.contains(ObjectIdentifier($0))
+        })
+        controller.rootView = nil
+        panel.resignKey()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertTrue(controller.isVisible)
+        XCTAssertFalse(panel.isKeyWindow)
+    }
+
     func testEscapeMayRestoreWhilePanelIsKeyButOwnedWindowDismissalMayNot() {
         let panel = PromptPanel(content: NSView())
         let setup = NSWindow()

@@ -6,15 +6,23 @@ struct PickerFillView: View {
     let model: FillModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(model.fields.indices, id: \.self) { position in
-                    PickerFillFieldView(field: model.fields[position], position: position,
-                         model: model, wantsFocus: model.state == .editing && model.focusIndex == position,
-                        focusRevision: presentation.focusRevision, resetRevision: presentation.inputResetRevision)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(model.fields.indices, id: \.self) { position in
+                        PickerFillFieldView(field: model.fields[position], position: position,
+                             model: model, wantsFocus: model.state == .editing && model.focusIndex == position,
+                            focusRevision: presentation.focusRevision, resetRevision: presentation.inputResetRevision)
+                            .id(position)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .onChange(of: model.focusIndex) { _, position in
+                guard let position else { return }
+                // Native focus alone does not reveal controls in SwiftUI's scroller.
+                proxy.scrollTo(position, anchor: .top)
+            }
         }
         .accessibilityLabel(Strings.fillForm)
     }
