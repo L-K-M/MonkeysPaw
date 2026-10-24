@@ -45,6 +45,37 @@ final class ProviderSettingsStoreTests: XCTestCase {
         XCTAssertEqual(try reopened.service.secretTier(for: first.id), .secretService)
     }
 
+    func testEscapedSavedProfilesLoadWithoutRewritingAndRemainEditable() throws {
+        // Mirrors the reported file's shape without retaining the owner's metadata.
+        let original = #"""
+        {"profiles":[{"baseURL":"https:\/\/api.example.test\/api\/v1","displayName":"Keyless","id":"01234567-89ab-cdef-0123-456789abcdef","kind":"openaiCompatible","modelID":"manual-one","secretReference":null},{"baseURL":"https:\/\/api.example.test\/api\/v1","displayName":"With key","id":"fedcba98-7654-4321-fedc-ba9876543210","kind":"openaiCompatible","modelID":"manual-two","secretReference":"provider:fedcba98-7654-4321-fedc-ba9876543210"}],"selectedProfileID":"01234567-89ab-cdef-0123-456789abcdef","version":1}
+        """#
+        let files = ProviderRecordingFiles()
+        try files.memory.put(original, at: "provider-settings.json")
+        let h = ProviderHarness(files: files)
+        XCTAssertNil(h.service.snapshot.readOnlyError)
+        let settings = h.service.snapshot.settings
+        XCTAssertEqual(settings.profiles.map(\.displayName), ["Keyless", "With key"])
+        let first = try XCTUnwrap(settings.profiles.first)
+        let second = try XCTUnwrap(settings.profiles.last)
+        XCTAssertEqual(settings.selectedProfileID, first.id)
+        XCTAssertNil(first.secretReference)
+        XCTAssertEqual(second.secretReference, .provider(second.id))
+        XCTAssertEqual(second.baseURL.absoluteString, "https://api.example.test/api/v1")
+        XCTAssertEqual(try files.memory.text(at: "provider-settings.json"), original)
+        XCTAssertTrue(files.attemptedWrites.isEmpty)
+        XCTAssertTrue(h.secrets.reads.isEmpty)
+
+        let added = ProviderDraft(displayName: "New profile")
+        try h.service.save(added)
+        let reopened = h.reopen()
+        XCTAssertNil(reopened.service.snapshot.readOnlyError)
+        XCTAssertEqual(reopened.service.snapshot.settings.profiles, settings.profiles + [try ProviderProfile(
+            id: added.id, displayName: added.displayName, kind: added.kind,
+            baseURL: added.baseURL, modelID: added.modelID)])
+        XCTAssertEqual(reopened.service.snapshot.settings.selectedProfileID, first.id)
+    }
+
     func testUnknownRootAndNestedProfileKeysFollowIDsThroughEditsAndDeletion() throws {
         let harness = ProviderHarness()
         let first = ProviderDraft(displayName: "One")
@@ -135,6 +166,39 @@ final class ProviderSettingsStoreTests: XCTestCase {
         let reopened = harness.reopen()
         XCTAssertFalse(reopened.service.snapshot.isReadOnly)
         try reopened.service.save(ProviderDraft())
+    }
+
+    func testInvalidProfileDiagnosticsIdentifyTheStageWithoutMetadata() throws {
+        let source = ProviderHarness()
+        try source.service.save(ProviderDraft())
+        let original = try source.json()
+        let profiles = try XCTUnwrap(original["profiles"] as? [[String: Any]])
+        let profile = try XCTUnwrap(profiles.first)
+        let sentinel = UUID().uuidString
+        let cases: [(String, Any, String)] = [
+            ("secretReference", "provider:\(sentinel) invalid", "Provider settings contain an invalid secret reference."),
+            ("baseURL", "http://\(sentinel).example", "Provider settings fail profile validation."),
+            ("modelID", false, "Provider settings do not match the expected JSON structure.")
+        ]
+        for (field, value, diagnostic) in cases {
+            var invalid = profile
+            invalid["displayName"] = sentinel
+            invalid[field] = value
+            var object = original
+            object["profiles"] = [invalid]
+            let bytes = try JSONSerialization.data(withJSONObject: object)
+            let files = ProviderRecordingFiles()
+            try files.memory.write(bytes, at: "provider-settings.json")
+            let h = ProviderHarness(files: files)
+
+            XCTAssertEqual(h.service.snapshot.readOnlyError, .corruptFile)
+            XCTAssertEqual(h.log.lines, ["warning: " + diagnostic,
+                "warning: Provider settings read failed; settings are read-only."])
+            XCTAssertFalse(h.log.lines.joined().contains(sentinel))
+            XCTAssertEqual(try files.read(at: "provider-settings.json"), bytes)
+            XCTAssertTrue(files.attemptedWrites.isEmpty)
+            XCTAssertTrue(h.secrets.reads.isEmpty)
+        }
     }
 
     func testExternalFutureOrCorruptReplacementBlocksReadsAndSecretEdits() throws {

@@ -10,15 +10,17 @@ public enum SecretTier: String, Equatable, Sendable {
 
 /// Namespaces also leave room for device tokens without sharing provider accounts.
 public struct SecretAccount: Hashable, Codable, Sendable {
+    private static let accountCharacters = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.".utf8)
+
     public let namespace: String
     public let name: String
     public var rawValue: String { "\(namespace):\(name)" }
 
     public init(namespace: String, name: String) throws {
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+        // Keep the ASCII grammar byte-based, matching Kotlin without Foundation bridging.
         guard !namespace.isEmpty, !name.isEmpty,
-              namespace.unicodeScalars.allSatisfy(allowed.contains),
-              name.unicodeScalars.allSatisfy(allowed.contains) else {
+              namespace.utf8.allSatisfy({ Self.accountCharacters.contains($0) }),
+              name.utf8.allSatisfy({ Self.accountCharacters.contains($0) }) else {
             throw SecretStoreError.invalidAccount
         }
         self.init(validatedNamespace: namespace, validatedName: name)

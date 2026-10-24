@@ -191,7 +191,18 @@ public final class ProviderSettingsStore: @unchecked Sendable {
 
         do {
             return Loaded(settings: try settings(from: object), object: object, needsRewrite: false)
-        } catch { throw ProviderSettingsError.corruptFile }
+        } catch {
+            // Distinguish load stages without exposing metadata or decoder diagnostics.
+            switch error {
+            case is SecretStoreError:
+                log?.write(.warning, "Provider settings contain an invalid secret reference.")
+            case is ProviderSettingsError:
+                log?.write(.warning, "Provider settings fail profile validation.")
+            default:
+                log?.write(.warning, "Provider settings do not match the expected JSON structure.")
+            }
+            throw ProviderSettingsError.corruptFile
+        }
     }
 
     /// The same strict decode the file path applies, over any parsed object.
