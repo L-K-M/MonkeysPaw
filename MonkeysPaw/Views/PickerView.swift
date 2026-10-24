@@ -142,13 +142,16 @@ private struct PickerResultsView: View {
         return PickerResultView(row: result.row, isSelected: selected)
             .id(result.position)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                presentation.model.selectResult(at: result.position)
-                presentation.model.usePreferred()
-            }
+            .onTapGesture(count: 2) { activate(result) }
             .onTapGesture { presentation.model.selectResult(at: result.position) }
             .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityAction { presentation.model.selectResult(at: result.position) }
+            .accessibilityAction { activate(result) }
+            .accessibilityIdentifier("picker-result-\(result.position)")
+    }
+
+    private func activate(_ result: IndexedResult) {
+        presentation.model.selectResult(at: result.position)
+        presentation.model.usePreferred()
     }
 
     private var indexedResults: [IndexedResult] {
