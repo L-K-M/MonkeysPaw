@@ -4,6 +4,8 @@ import SwiftUI
 
 /// Byte-preserving rows shared by Assistant and sync conflict comparisons.
 struct LibraryDiffView: View {
+    private enum Side { case original, candidate }
+
     let diff: ArtifactDiff
     var title = "Merged diff"
     var originalTitle = "Current"
@@ -18,12 +20,13 @@ struct LibraryDiffView: View {
                 Text(LibraryAssistantStrings.placeholder(item.element)).foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            ScrollView(.horizontal) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack { Text(originalTitle).frame(minWidth: 240); Text(candidateTitle).frame(minWidth: 240) }
-                    section("Front matter", lines: diff.frontMatter)
-                    section("Body", lines: diff.body)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(originalTitle).frame(maxWidth: .infinity)
+                    Text(candidateTitle).frame(maxWidth: .infinity)
                 }
+                section("Front matter", lines: diff.frontMatter)
+                section("Body", lines: diff.body)
             }
         }
         .accessibilityIdentifier(accessibilityID)
@@ -34,15 +37,16 @@ struct LibraryDiffView: View {
             Text(title).font(.subheadline).padding(.vertical, 4)
             ForEach(Array(lines.enumerated()), id: \.offset) { item in
                 HStack(alignment: .top, spacing: 0) {
-                    line(item.element, candidate: false)
+                    line(item.element, side: .original)
                     Divider()
-                    line(item.element, candidate: true)
+                    line(item.element, side: .candidate)
                 }
             }
         }
     }
 
-    private func line(_ line: LineDiffLine, candidate: Bool) -> some View {
+    private func line(_ line: LineDiffLine, side: Side) -> some View {
+        let candidate = side == .candidate
         let visible = candidate ? line.kind != .removed : line.kind != .added
         let color: Color
         switch line.kind {
@@ -54,12 +58,12 @@ struct LibraryDiffView: View {
             Text(visible ? String((candidate ? line.mergedLine : line.originalLine) ?? 0) : "")
                 .foregroundStyle(.secondary).frame(width: 30, alignment: .trailing)
             Text(verbatim: visible ? displayLine(line.bytes) : " ").textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: false)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             if visible, !line.placeholderWarnings.isEmpty { Text("Warning").foregroundStyle(.orange) }
-            Spacer(minLength: 8)
         }
         .font(.system(.caption, design: .monospaced))
-        .padding(4).frame(minWidth: 240, maxWidth: .infinity, alignment: .leading).background(color)
+        .padding(4).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).background(color)
     }
 
     private func displayLine(_ bytes: Data) -> String {

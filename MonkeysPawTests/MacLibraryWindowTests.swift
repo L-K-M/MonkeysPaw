@@ -484,6 +484,11 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(controller.toolbarDefaultItemIdentifiers(toolbar), [.toggleSidebar, .sidebarTrackingSeparator,
             .flexibleSpace, .libraryNewPrompt, .libraryListSeparator, .libraryEditorMode, .flexibleSpace, .libraryFavorite,
             .libraryAssistant, .librarySearch, .inspectorTrackingSeparator, .toggleInspector])
+        let newPrompt = try XCTUnwrap(controller.toolbar(toolbar, itemForItemIdentifier: .libraryNewPrompt,
+            willBeInsertedIntoToolbar: false) as? NSMenuToolbarItem)
+        XCTAssertEqual(newPrompt.menu.items.map(\.title), [MainMenuStrings.blankPrompt, MainMenuStrings.generatePrompt])
+        XCTAssertEqual(newPrompt.menu.items.map(\.action), [#selector(LibraryWindowController.newDocument(_:)),
+            #selector(LibraryWindowController.writeWithAssistant(_:))])
         for id in [NSToolbarItem.Identifier.libraryReveal, .libraryImport, .libraryDelete, .space] {
             XCTAssertTrue(controller.toolbarAllowedItemIdentifiers(toolbar).contains(id))
         }
@@ -939,6 +944,50 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(presentation.snapshot.filter, "a")
     }
 
+    func testSearchKeepsOneFieldEditorAcrossEmptyResults() throws {
+        try put("---\ntitle: Alpha\n---\nFirst", at: "a.md")
+        try put("---\ntitle: Beta\n---\nSecond", at: "b.md")
+        try start()
+        delegate.showLibrary()
+        let controller = try controller()
+        let input = try LibrarySearchTestSupport.begin(controller)
+        let list = try XCTUnwrap(controller.promptList?.view)
+        let scroll = try XCTUnwrap(list.subviews.first { $0 is NSScrollView })
+        var endings = 0
+        let observer = NotificationCenter.default.addObserver(forName: NSControl.textDidEndEditingNotification,
+            object: input.field, queue: nil) { _ in endings += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        func type(_ query: String) {
+            input.editor.insertText(query, replacementRange: NSRange(location: 0, length: input.editor.string.utf16.count))
+            XCTAssertTrue(input.field.currentEditor() === input.editor)
+            XCTAssertTrue(controller.window?.firstResponder === input.editor)
+            XCTAssertEqual(input.editor.string, query)
+            XCTAssertEqual(controller.presentation.snapshot.filter, query)
+            XCTAssertEqual(endings, 0)
+        }
+
+        func message(in view: NSView) -> NSTextField? {
+            if let label = view as? NSTextField, label.stringValue == LibraryStrings.noResults("zzzz-no-match") { return label }
+            return view.subviews.lazy.compactMap { message(in: $0) }.first
+        }
+
+        type("a")
+        type("zzzz-no-match")
+        XCTAssertTrue(controller.presentation.snapshot.rows.isEmpty)
+        list.layoutSubtreeIfNeeded()
+        let label = try XCTUnwrap(message(in: list))
+        XCTAssertFalse(label.isHiddenOrHasHiddenAncestor)
+        XCTAssertTrue(label.isAccessibilityElement())
+        let point = label.convert(NSPoint(x: label.bounds.midX, y: label.bounds.midY), to: list)
+        let hit = list.hitTest(point)
+        XCTAssertTrue(hit === scroll || hit?.isDescendant(of: scroll) == true)
+        type("a")
+        XCTAssertEqual(controller.presentation.snapshot.rows.count, 2)
+        XCTAssertTrue(label.stringValue.isEmpty)
+        XCTAssertFalse(label.isAccessibilityElement())
+    }
+
     func testSearchResultNavigationRespectsCompositionAndUnsavedEdits() throws {
         try put("---\ntitle: Alpha\n---\nFirst", at: "a.md")
         try put("---\ntitle: Beta\n---\nSecond", at: "b.md")
@@ -956,8 +1005,8 @@ final class MacLibraryWindowTests: XCTestCase {
             XCTAssertFalse(controller.control(input.field, textView: input.editor, doCommandBy: selector))
         }
         input.editor.unmarkText()
-        _ = try LibrarySearchTestSupport.type("a", in: controller)
-        XCTAssertTrue(controller.control(input.field, textView: input.editor,
+        let resumed = try LibrarySearchTestSupport.type("a", in: controller)
+        XCTAssertTrue(controller.control(resumed.field, textView: resumed.editor,
             doCommandBy: #selector(NSResponder.moveDown(_:))))
         XCTAssertEqual(presentation.editorState.pendingDecision?.action,
             .open(try XCTUnwrap(presentation.snapshot.rows.first { $0.relativePath == "b.md" }).selection))

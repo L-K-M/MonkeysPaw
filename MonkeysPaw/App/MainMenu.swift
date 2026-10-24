@@ -82,7 +82,7 @@ enum MainMenu {
 
     private static func fileMenu() -> NSMenu {
         let menu = NSMenu(title: MainMenuStrings.file)
-        add(menu, MainMenuStrings.newPrompt, #selector(LibraryWindowController.newDocument(_:)), "n")
+        menu.addItem(topLevel(MainMenuStrings.newPrompt, menu: newPromptMenu()))
         add(menu, MainMenuStrings.importPrompts,
             #selector(LibraryWindowController.importFromMenu), "i", [.command, .shift])
         menu.addItem(.separator())
@@ -97,6 +97,14 @@ enum MainMenu {
         add(menu, MainMenuStrings.showInFinder, #selector(LibraryWindowController.showInFinder(_:)))
         menu.addItem(.separator())
         add(menu, MainMenuStrings.deletePrompt, #selector(LibraryWindowController.deleteLibraryPrompt(_:)))
+        return menu
+    }
+
+    /// File and the list toolbar expose the same creation choices.
+    static func newPromptMenu() -> NSMenu {
+        let menu = NSMenu(title: MainMenuStrings.newPrompt)
+        add(menu, MainMenuStrings.blankPrompt, #selector(LibraryWindowController.newDocument(_:)), "n")
+        add(menu, MainMenuStrings.generatePrompt, #selector(LibraryWindowController.writeWithAssistant(_:)))
         return menu
     }
 
@@ -189,8 +197,6 @@ enum MainMenu {
             #selector(LibraryWindowController.reviewWithAssistant(_:)), "r")
         add(menu, MainMenuStrings.improveWithAssistant,
             #selector(LibraryWindowController.improveWithAssistant(_:)), "i")
-        add(menu, MainMenuStrings.writeWithAssistant,
-            #selector(LibraryWindowController.writeWithAssistant(_:)))
         return menu
     }
 

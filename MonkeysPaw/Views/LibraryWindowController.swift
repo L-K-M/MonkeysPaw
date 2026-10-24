@@ -18,6 +18,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     private var dialogRevision: UInt64 = 0
     private var closeRequested = false
     private var dismissedConflict: EditorConflict?
+    private(set) var improvementWindow: LibraryAssistantWindowController?
     private(set) var splitController: NSSplitViewController?
     private(set) var promptList: LibraryPromptListController?
     private(set) var inspectorItem: NSSplitViewItem?
@@ -65,7 +66,11 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             revealPrompt: revealPrompt, createPrompt: createPrompt, revealLibrary: revealLibrary)
         super.init(window: nil)
         connectImportChooser()
-        presentation.onEditorChange = { [weak self] in self?.updateDialog() }
+        presentation.onEditorChange = { [weak self] in
+            self?.updateDialog()
+            self?.updateImprovementWindow()
+        }
+        presentation.onShowImprovement = { [weak self] assistant in self?.showImprovement(assistant) }
         presentation.onConflictRequested = { [weak self] in
             self?.dismissedConflict = nil
             self?.updateDialog()
@@ -91,6 +96,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                 conflictProvider: LibraryViewState.ConflictProvider? = nil, syncStatus: SyncStatusViewState? = nil) {
         guard !isTornDown else { return }
         endDialog()
+        improvementWindow?.close()
         dismissedConflict = nil
         closeRequested = false
         presentation.rebind(to: model, editor: editor, libraryPath: libraryPath, available: available,
@@ -130,6 +136,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         guard !isTornDown else { return }
         isTornDown = true
         endDialog()
+        improvementWindow?.close()
         presentation.deactivate()
         (window as? LibraryWindow)?.closeAfterApproval()
     }
@@ -140,6 +147,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        improvementWindow?.close()
         presentation.didHide()
         presentation.retireAssistant()
         presentation.imports?.cancelChoosing()
@@ -164,6 +172,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         closeRequested = true
         // Release only the assistant's guard so the close can reach its own decision.
         presentation.assistant?.cancelPendingAcceptance()
+        presentation.promptGeneration?.cancelPendingAcceptance()
         presentation.requestClose { [weak self] result in
             guard let self, !self.isTornDown else { return }
             self.closeRequested = false
@@ -195,12 +204,16 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             }
             else if let request = self.presentation.fileCommandRequest { desired = .fileCommand(request) }
             else if let request = self.presentation.newPromptRequest { desired = .newPrompt(request) }
+            else if let assistant = self.presentation.promptGeneration {
+                desired = .promptGeneration(assistant)
+            }
             else { desired = nil }
             guard desired != self.activeDialog else { return }
             self.endDialog()
             guard let desired else { return }
             self.presentation.imports?.cancelChoosing()
             self.activeDialog = desired
+            if self.improvementWindow?.window?.isKeyWindow == true { self.activation.show(window) }
             let revision = self.dialogRevision
             let cancel = self.presentDialog(window, desired) { [weak self] response in
                 self?.mainThread.run { [weak self] in
@@ -223,6 +236,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
                         self.presentation.resolveFileCommand(response, id: request.id)
                     case (.newPrompt(let request), _):
                         self.presentation.resolveNewPrompt(response, id: request.id)
+                    case (.promptGeneration, .dismissPromptGeneration):
+                        self.presentation.dismissPromptGeneration()
                     default: break
                     }
                 }
@@ -237,6 +252,27 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         let cancel = cancelDialog
         cancelDialog = nil
         cancel?()
+    }
+
+    private func showImprovement(_ assistant: LibraryAssistantViewState) {
+        guard !isTornDown, window?.isVisible == true, presentation.assistant === assistant else { return }
+        updateImprovementWindow()
+        if improvementWindow == nil {
+            let controller = LibraryAssistantWindowController(presentation: assistant, activation: activation)
+            controller.onClose = { [weak self, weak controller] in
+                guard let self, self.improvementWindow === controller else { return }
+                self.improvementWindow = nil
+            }
+            improvementWindow = controller
+        }
+        improvementWindow?.show()
+    }
+
+    private func updateImprovementWindow() {
+        guard let improvementWindow else { return }
+        if improvementWindow.presentation === presentation.assistant,
+           improvementWindow.presentation.isImprovementRequest { return }
+        improvementWindow.close()
     }
 
     // objectWillChange fires before @Published assigns. One run-loop callback
@@ -261,6 +297,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     func refreshWindowPresentation() {
         guard !isTornDown, let window else { return }
+        updateImprovementWindow()
         searchPresentationDepth += 1
         defer { searchPresentationDepth -= 1 }
         let state = presentation.editorState
@@ -410,7 +447,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             switch response {
             case .decision(.save), .rename, .move, .createPrompt:
                 button.keyEquivalent = "\r"
-            case .decision(.cancel), .dismissConflict, .cancelFileCommand:
+            case .decision(.cancel), .dismissConflict, .cancelFileCommand, .dismissPromptGeneration:
                 button.keyEquivalent = "\u{1b}"
             case .decision(.discard):
                 button.keyEquivalent = isRevert ? "" : "d"
@@ -438,6 +475,9 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
 
     static func presentEditorDialog(in window: NSWindow, dialog: LibraryEditorDialog,
                                     done: @escaping (LibraryEditorResponse) -> Void) -> (() -> Void) {
+        if case .promptGeneration(let assistant) = dialog {
+            return presentPromptGeneration(in: window, assistant: assistant, done: done)
+        }
         let alert = makeEditorAlert(for: dialog)
         let responses = dialog.responses
         alert.beginSheetModal(for: window) { response in
@@ -451,6 +491,7 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
             case .decision: done(.decision(.cancel))
             case .conflict: done(.dismissConflict)
             case .fileCommand, .newPrompt: done(.cancelFileCommand)
+            case .promptGeneration: done(.dismissPromptGeneration)
             }
         }
         if case .newPrompt = dialog {

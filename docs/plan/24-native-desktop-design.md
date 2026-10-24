@@ -94,8 +94,31 @@ The example shows Source; Edit opens the properties form and body editor.
   editor with Keep Server, Keep Mine, Keep Both and an expandable
   comparison.
 - **Inspector.** Fields (the parsed fields and prompt details), History
-  (revisions, preview, Restore) and Assistant (write, review, improve),
-  chosen with a segmented control at its top.
+  (revisions, preview, Restore) and Assistant, chosen with a segmented
+  control at its top. On macOS, Assistant has two current-prompt tabs:
+  **Review & Improve** and **Improve Directly**. Review returns selectable
+  findings followed by optional instructions and **Improve selected findings**.
+  Direct improvement needs only an instruction; its action is **Generate
+  improvements**. Switching tabs preserves instructions, selected findings and
+  the candidate. Either improvement action opens a separate, resizable desktop
+  window immediately, showing progress, validation, the diff and Accept/Reject.
+  **Open improvement…** in the inspector returns to that window. Diff columns
+  share the available width and wrap long lines, including long tokens;
+  wrapping preserves the source bytes, line numbers and newline markers.
+  Closing the window cancels its request/draft; editor-session or library
+  retirement closes it. An acceptance must finish or be cancelled through its
+  editor guard before the window closes.
+- **Assistant creation (macOS).** File and the toolbar's **New Prompt** menu
+  offer **Blank Prompt…** (⌘N) and **Generate with Assistant…**. Generation
+  opens a separate sheet with a brief, candidate and diff; it sends no current
+  prompt text. Its own Assistant session preserves the current prompt's review,
+  instructions and candidate when generation opens or closes. It uses §7.3's
+  existing creation destination and acceptance contract. Unsaved-edit and
+  conflict sheets temporarily replace the generation sheet without losing its
+  draft. A changed guard snapshot requires a fresh diff before acceptance.
+  Closing cancels it; switching editor
+  sessions or libraries retires it. Linux and Android retain their existing
+  Assistant navigation; request, prompt and acceptance semantics are unchanged.
 - **Empty and error states.** Centered placeholder text in the list and
   editor; library unavailability, import progress and import reports use
   bars and sheets rather than permanent rows.
@@ -105,7 +128,8 @@ The example shows Source; Edit opens the properties form and body editor.
   clearing the query. Return edits the selected result, or the first result
   when none is selected. A queued save/open retains that focus request until
   the prompt loads; further search or navigation cancels it. Input-method
-  composition keeps these keys until conversion finishes.
+  composition keeps these keys until conversion finishes. Empty-result
+  transitions preserve the active search editor and composition ownership.
 - **Dock reopening.** With a regular window visible, reopening raises that
   window. With only minimized windows, it restores Library or Settings. The
   picker opens only when there is no regular window to resume.
@@ -122,7 +146,7 @@ The example shows Source; Edit opens the properties form and body editor.
 | Menu | Items |
 |---|---|
 | Monkey's Paw | About, Check for Updates…, Settings… ⌘,, Services, Hide ⌘H, Hide Others ⌥⌘H, Show All, Quit ⌘Q |
-| File | New Prompt… ⌘N, Import… ⇧⌘I, Close ⌘W, Save ⌘S, Duplicate ⇧⌘S, Rename…, Move To ▸, Revert to Saved, Show in Finder, Delete… |
+| File | New Prompt ▸ (Blank Prompt… ⌘N, Generate with Assistant…), Import… ⇧⌘I, Close ⌘W, Save ⌘S, Duplicate ⇧⌘S, Rename…, Move To ▸, Revert to Saved, Show in Finder, Delete… |
 | Edit | Undo/Redo (named by the text system), Cut, Copy, Paste, Paste and Match Style, Delete, Select All, Find ▸ (Find… ⌘F, Find Next ⌘G, Find Previous ⇧⌘G, Use Selection for Find ⌘E, Search Library ⌥⌘F), Spelling and Grammar ▸ |
 | View | Edit ⌘1, Preview ⌘2, Source ⌘3, Show/Hide Prompt Details, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌥⌘I, Fields, History, Assistant ⇧⌘A, Show/Hide Toolbar, Customize Toolbar…, Enter Full Screen |
 | Prompt | Add to/Remove from Favourites ⌘D, Review with Assistant ⌘R, Improve with Assistant ⌘I |

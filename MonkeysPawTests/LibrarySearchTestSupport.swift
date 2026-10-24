@@ -16,11 +16,14 @@ enum LibrarySearchTestSupport {
     }
 
     @discardableResult
-    static func type(_ query: String, in controller: LibraryWindowController) throws -> (field: NSSearchField, editor: NSTextView) {
+    static func type(_ query: String, in controller: LibraryWindowController,
+                     file: StaticString = #filePath, line: UInt = #line) throws -> (field: NSSearchField, editor: NSTextView) {
         let input = try begin(controller)
         input.editor.insertText(query, replacementRange: NSRange(location: 0, length: (input.editor.string as NSString).length))
-        XCTAssertEqual(input.editor.string, query)
-        XCTAssertEqual(controller.presentation.snapshot.filter, query, "Native typing must reach Core")
-        return input
+        let editor = try XCTUnwrap(input.field.currentEditor() as? NSTextView, file: file, line: line)
+        XCTAssertTrue(controller.window?.firstResponder === editor, file: file, line: line)
+        XCTAssertEqual(editor.string, query, file: file, line: line)
+        XCTAssertEqual(controller.presentation.snapshot.filter, query, "Native typing must reach Core", file: file, line: line)
+        return (input.field, editor)
     }
 }

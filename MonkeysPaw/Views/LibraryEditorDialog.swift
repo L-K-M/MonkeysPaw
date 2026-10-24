@@ -9,6 +9,7 @@ enum LibraryEditorDialog: Equatable {
     case conflict(EditorConflict, status: EditorStatus, title: String = LibraryStrings.title)
     case fileCommand(LibraryFileCommandRequest)
     case newPrompt(LibraryNewPromptRequest)
+    case promptGeneration(LibraryAssistantViewState)
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
@@ -21,6 +22,7 @@ enum LibraryEditorDialog: Equatable {
             // Reopened forms must replace their native sheet and callback token.
             return left.id == right.id && left == right
         case (.newPrompt(let left), .newPrompt(let right)): return left == right
+        case (.promptGeneration(let left), .promptGeneration(let right)): return left === right
         default: return false
         }
     }
@@ -33,6 +35,7 @@ enum LibraryEditorDialog: Equatable {
             return LibraryDialogStrings.conflictTitle(title, kind: conflict.kind)
         case .fileCommand(let request): return request.title
         case .newPrompt: return LibraryCommandStrings.newPromptTitle
+        case .promptGeneration: return LibraryAssistantStrings.generationTitle
         }
     }
 
@@ -48,6 +51,7 @@ enum LibraryEditorDialog: Equatable {
             return text + failureMessage(status)
         case .fileCommand(let request): return request.message
         case .newPrompt(let request): return LibraryCommandStrings.newPromptHint(request.folder)
+        case .promptGeneration: return LibraryAssistantStrings.writeHint
         }
     }
 
@@ -60,6 +64,7 @@ enum LibraryEditorDialog: Equatable {
             return conflict.choices.map(LibraryEditorResponse.conflict) + [.dismissConflict]
         case .fileCommand(let request): return request.responses
         case .newPrompt: return [.createPrompt(LibraryStrings.newPromptDefaultTitle), .cancelFileCommand]
+        case .promptGeneration: return [.dismissPromptGeneration]
         }
     }
 
@@ -86,6 +91,7 @@ enum LibraryEditorResponse: Equatable {
     case dismissConflict
     case rename(String), move(String), delete, cancelFileCommand
     case createPrompt(String)
+    case dismissPromptGeneration
 
     var title: String {
         switch self {
@@ -101,6 +107,7 @@ enum LibraryEditorResponse: Equatable {
         case .delete: return LibraryCommandStrings.deleteButton
         case .cancelFileCommand: return LibraryCommandStrings.cancel
         case .createPrompt: return LibraryCommandStrings.create
+        case .dismissPromptGeneration: return MainMenuStrings.close
         }
     }
 }

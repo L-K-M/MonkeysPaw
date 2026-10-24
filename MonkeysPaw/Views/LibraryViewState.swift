@@ -46,6 +46,7 @@ final class LibraryViewState: ObservableObject {
     @Published var fieldSettingsDraft: LibraryFieldSettingsDraft?
     @Published private(set) var commandMessage: String?
     @Published private(set) var assistant: LibraryAssistantViewState?
+    @Published private(set) var promptGeneration: LibraryAssistantViewState?
     @Published private(set) var assistantSaveMessage: String?
     @Published private(set) var quoteHighlight: LibrarySourceHighlight?
     @Published private(set) var conflict: LibraryConflictViewState?
@@ -54,6 +55,7 @@ final class LibraryViewState: ObservableObject {
     @Published private(set) var isScopeDropPending = false
     var onEditorChange: (() -> Void)?
     var onConflictRequested: (() -> Void)?
+    var onShowImprovement: ((LibraryAssistantViewState) -> Void)?
     private(set) var model: LibraryBrowserModel
     private(set) var editor: EditorModel
     private let mainThread: MainThread
@@ -109,39 +111,78 @@ final class LibraryViewState: ObservableObject {
         refresh()
     }
 
-    deinit { assistant?.retire(); conflict?.retire(); syncStatus?.retire(); detachObservers() }
+    deinit { assistant?.retire(); promptGeneration?.retire(); conflict?.retire(); syncStatus?.retire(); detachObservers() }
 
     var isResolvingConflict: Bool { conflict?.isResolving == true }
     var canEditSource: Bool { isActive && libraryAvailable && !isResolvingConflict && editorState.canEdit }
     var canShowAssistant: Bool { isActive && libraryAvailable && !isResolvingConflict && makeAssistant != nil && scheduler != nil }
+    var isGeneratingPrompt: Bool { promptGeneration != nil }
+    var canGeneratePrompt: Bool {
+        canShowAssistant && !isGeneratingPrompt && assistant?.isWorking != true && assistant?.state.isAccepting != true
+            && editorState.status != .loading && editorState.status != .saving && editorState.status != .commandRunning
+            && editorState.pendingDecision == nil && editorState.queuedActions.isEmpty && editorState.conflict == nil
+    }
 
     func showAssistant() {
-        guard canShowAssistant, let makeAssistant, let scheduler else { return }
-        if assistant == nil {
-            let revision = bindingRevision
-            let session = editor.assistantSnapshot?.session
-            let path = editor.state.prompt?.relativePath
-            let view = LibraryAssistantViewState(model: makeAssistant(), editor: editor,
-                available: libraryAvailable, main: mainThread, scheduler: scheduler) { [weak self] outcome in
-                    guard let self, self.isActive, self.bindingRevision == revision,
-                          self.editor.assistantSnapshot?.session == session,
-                          self.editor.state.prompt?.relativePath == path else { return }
-                    self.assistantSaveMessage = LibraryAssistantStrings.acceptance(outcome)
-                }
-            view.onRequest = { [weak self] in self?.assistantSaveMessage = nil }
-            view.onHighlight = { [weak self] range in
-                guard let self, self.isActive, self.bindingRevision == revision else { return }
-                self.quoteHighlight = range.flatMap { range in
-                    self.editor.state.source.map { LibrarySourceHighlight(byteRange: range, sourceBytes: Data($0.utf8)) }
-                }
-                if range != nil { self.editorMode = .source }
-            }
-            assistantSession = session
-            assistantPrompt = editor.state.prompt
-            assistant = view
-        }
+        guard canShowAssistant else { return }
+        bindAssistant()
         if inspectorPane != .assistant { inspectorPane = .assistant }
         if !isInspectorVisible { isInspectorVisible = true }
+    }
+
+    func generatePromptWithAssistant() {
+        guard canGeneratePrompt else { return }
+        bindAssistant()
+        promptGeneration = makeAssistantView()
+        onEditorChange?()
+    }
+
+    func dismissPromptGeneration() {
+        guard isGeneratingPrompt else { return }
+        let generation = promptGeneration
+        promptGeneration = nil
+        generation?.retire()
+        onEditorChange?()
+    }
+
+    private func bindAssistant() {
+        guard assistant == nil else { return }
+        assistantSession = editor.assistantSnapshot?.session
+        assistantPrompt = editor.state.prompt
+        assistant = makeAssistantView()
+    }
+
+    private func makeAssistantView() -> LibraryAssistantViewState? {
+        guard let makeAssistant, let scheduler else { return nil }
+        let revision = bindingRevision
+        let session = editor.assistantSnapshot?.session
+        let path = editor.state.prompt?.relativePath
+        let view = LibraryAssistantViewState(model: makeAssistant(), editor: editor,
+            available: libraryAvailable, main: mainThread, scheduler: scheduler) { [weak self] outcome in
+                guard let self, self.isActive, self.bindingRevision == revision,
+                      self.editor.assistantSnapshot?.session == session,
+                      self.editor.state.prompt?.relativePath == path else { return }
+                self.assistantSaveMessage = LibraryAssistantStrings.acceptance(outcome)
+            }
+        view.onRequest = { [weak self, weak view] in
+            guard let self else { return }
+            self.assistantSaveMessage = nil
+            // Retire an improvement window before a new Review starts, so
+            // closing the old window cannot cancel that new request.
+            if self.assistant === view { self.onEditorChange?() }
+        }
+        view.onHighlight = { [weak self] range in
+            guard let self, self.isActive, self.bindingRevision == revision else { return }
+            self.quoteHighlight = range.flatMap { range in
+                self.editor.state.source.map { LibrarySourceHighlight(byteRange: range, sourceBytes: Data($0.utf8)) }
+            }
+            if range != nil { self.editorMode = .source }
+        }
+        view.onShowImprovement = { [weak self, weak view] in
+            guard let self, let view, self.isActive, self.assistant === view else { return }
+            self.onShowImprovement?(view)
+        }
+        return view
     }
 
     var isAssistantVisible: Bool { isInspectorVisible && inspectorPane == .assistant }
@@ -166,14 +207,14 @@ final class LibraryViewState: ObservableObject {
         }
         isInspectorVisible = visible
         if visible, inspectorPane == .history { loadHistory() }
-        if !visible { assistant?.close(); quoteHighlight = nil }
+        if !visible { closeInspectorSession() }
     }
 
     func showInspector(_ pane: InspectorPane) {
         guard isActive else { return }
         if pane == .assistant { showAssistant(); return }
         let load = pane == .history && (!isInspectorVisible || inspectorPane != .history)
-        if isAssistantVisible { assistant?.close(); quoteHighlight = nil }
+        if isAssistantVisible { closeInspectorSession() }
         if inspectorPane != pane { inspectorPane = pane }
         if !isInspectorVisible { isInspectorVisible = true }
         if load { loadHistory() }
@@ -224,8 +265,14 @@ final class LibraryViewState: ObservableObject {
 
     func closeAssistant() {
         if isAssistantVisible { isInspectorVisible = false }
-        assistant?.close()
+        closeInspectorSession()
+    }
+
+    private func closeInspectorSession() {
         quoteHighlight = nil
+        // A detached improvement window owns its request until it closes.
+        guard assistant?.canShowImprovement != true else { return }
+        assistant?.close()
     }
 
     func retireAssistant() {
@@ -234,6 +281,9 @@ final class LibraryViewState: ObservableObject {
     }
 
     private func retireAssistantBinding() {
+        let generation = promptGeneration
+        promptGeneration = nil
+        generation?.retire()
         let old = assistant
         assistant = nil
         old?.retire()
@@ -246,6 +296,7 @@ final class LibraryViewState: ObservableObject {
     func assistantProfileChanged() {
         assistantSaveMessage = nil
         assistant?.profileChanged()
+        promptGeneration?.profileChanged()
     }
 
     private func updateAssistantSession() {
@@ -260,6 +311,7 @@ final class LibraryViewState: ObservableObject {
             return
         }
         assistant.editorChanged(available: libraryAvailable && !isResolvingConflict)
+        promptGeneration?.editorChanged(available: libraryAvailable && !isResolvingConflict)
     }
 
     var canSave: Bool {
@@ -377,6 +429,7 @@ final class LibraryViewState: ObservableObject {
         commandMessage = nil
         onEditorChange = nil
         onConflictRequested = nil
+        onShowImprovement = nil
     }
 
     func setLibraryAvailable(_ available: Bool) {
@@ -386,6 +439,7 @@ final class LibraryViewState: ObservableObject {
         libraryAvailable = available
         imports?.setLibraryAvailable(available)
         assistant?.editorChanged(available: available && !isResolvingConflict)
+        promptGeneration?.editorChanged(available: available && !isResolvingConflict)
         updateConflict()
         updateFieldSheet()
         if !available { fileCommandRequest = nil; newPromptRequest = nil; retireScopeDrags() }
@@ -927,6 +981,7 @@ final class LibraryViewState: ObservableObject {
                 self.objectWillChange.send()
                 self.updateFieldSheet()
                 self.assistant?.editorChanged(available: self.libraryAvailable && !view.isResolving)
+                self.promptGeneration?.editorChanged(available: self.libraryAvailable && !view.isResolving)
             }
             conflict = view
         }

@@ -141,8 +141,11 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
             }
         }
         synchronizeSelection(state.selection)
-        emptyLabel.stringValue = state.filter.isEmpty ? LibraryStrings.noPrompts : LibraryStrings.noResults(state.filter)
-        emptyLabel.isHidden = !rows.isEmpty
+        let message = state.filter.isEmpty ? LibraryStrings.noPrompts : LibraryStrings.noResults(state.filter)
+        // Hide/unhide can terminate the window's shared field editor, including
+        // through a container. Empty text and AX exclusion avoid that transition.
+        emptyLabel.stringValue = rows.isEmpty ? message : ""
+        emptyLabel.setAccessibilityElement(rows.isEmpty)
     }
 
     func synchronizeSelection() { synchronizeSelection(presentation.snapshot.selection) }
