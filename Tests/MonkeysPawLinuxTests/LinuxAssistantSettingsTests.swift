@@ -570,6 +570,7 @@ final class LinuxAssistantSettingsTests: XCTestCase {
         XCTAssertTrue(settled { self.model?.syncKey?.state.status == .noAccount })
         XCTAssertFalse(try sensitive("sync-generate"))
         try click("add")
+        XCTAssertTrue(settled { self.model?.state.isNewProfile == true })
         try input("name", "Staged profile")
         XCTAssertTrue(settled { self.model?.state.draft?.displayName == "Staged profile" })
         let draftID = model?.state.draft?.id
