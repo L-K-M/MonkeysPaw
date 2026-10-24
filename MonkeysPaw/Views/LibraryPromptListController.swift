@@ -38,8 +38,9 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
     private var showsLastUse = false
     private var subscriptions: [AnyCancellable] = []
     private var synchronizing = false
-    private let emptyLabel = LibraryEmptyStateLabel(labelWithString: LibraryStrings.noPrompts)
-    private let dropBorder = LibraryDropHighlightView()
+    private let emptyLabel = NSTextField(labelWithString: LibraryStrings.noPrompts)
+    private let emptyState = LibraryPassthroughView()
+    private let dropBorder = LibraryPassthroughView()
     private var contextPath: RelativePath?
     var validateCommand: ((NSMenuItem) -> Bool)?
     private lazy var selectionDeferral = LibrarySelectionDeferral(
@@ -100,13 +101,15 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         container.addSubview(scroll)
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.alignment = .center
-        container.addSubview(emptyLabel)
+        emptyState.setAccessibilityElement(false)
+        emptyState.addSubview(emptyLabel)
+        container.addSubview(emptyState)
         dropBorder.wantsLayer = true
         dropBorder.layer?.borderColor = NSColor.controlAccentColor.cgColor
         dropBorder.layer?.borderWidth = 2
         dropBorder.isHidden = true
         container.addSubview(dropBorder)
-        for child in [scroll, dropBorder] {
+        for child in [scroll, emptyState, dropBorder] {
             child.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 child.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -117,9 +120,9 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         }
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            emptyLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            emptyLabel.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -24)
+            emptyLabel.centerXAnchor.constraint(equalTo: emptyState.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: emptyState.centerYAnchor),
+            emptyLabel.widthAnchor.constraint(lessThanOrEqualTo: emptyState.widthAnchor, constant: -24)
         ])
         view = container
     }
@@ -142,7 +145,9 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         }
         synchronizeSelection(state.selection)
         emptyLabel.stringValue = state.filter.isEmpty ? LibraryStrings.noPrompts : LibraryStrings.noResults(state.filter)
-        emptyLabel.isHidden = !rows.isEmpty
+        // Hiding an NSTextField can end the window's shared search editor.
+        // Hide its non-control container so filtering keeps editing alive.
+        emptyState.isHidden = !rows.isEmpty
     }
 
     func synchronizeSelection() { synchronizeSelection(presentation.snapshot.selection) }
@@ -372,10 +377,6 @@ final class LibraryPromptCell: NSTableCellView {
     }
 }
 
-private final class LibraryDropHighlightView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
-private final class LibraryEmptyStateLabel: NSTextField {
+private final class LibraryPassthroughView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

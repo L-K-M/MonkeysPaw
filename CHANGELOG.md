@@ -26,6 +26,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed
 
+- macOS search keeps keyboard focus when matches return after an empty result.
 - UUID-based secret-account factories construct their validated names directly,
   removing the forced-try crash reported during macOS sync sign-in.
 - Stored secret-account references use byte-based ASCII validation, avoiding
