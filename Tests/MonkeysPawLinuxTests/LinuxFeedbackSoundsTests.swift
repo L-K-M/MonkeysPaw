@@ -17,7 +17,9 @@ final class LinuxFeedbackSoundsTests: XCTestCase {
             XCTAssertEqual(data[22], 1) // Mono
             XCTAssertEqual(Array(data[24..<28]), [0x44, 0xAC, 0, 0]) // 44,100 Hz
             XCTAssertEqual(data[34], 16)
-            let samples = LinuxFeedbackSounds.pcmSamples(for: sound)
+            let samples = stride(from: 44, to: data.count, by: 2).map {
+                Int16(bitPattern: UInt16(data[$0]) | (UInt16(data[$0 + 1]) << 8))
+            }
             XCTAssertEqual(data.count, 44 + 2 * samples.count)
             XCTAssertEqual(Double(samples.count) / 44_100, duration, accuracy: 0.0001)
             let peak = samples.map { abs(Int($0)) }.max() ?? 0
