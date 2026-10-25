@@ -962,6 +962,15 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.waitUntil { controller.improvementWindow == nil }
         XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")
         XCTAssertEqual(try h.files.read(at: "one.md"), bytes)
+
+        // A saved improvement has nothing left to show; the inspector offers its actions again.
+        XCTAssertEqual(view.state.phase, .saved)
+        XCTAssertFalse(view.canShowImprovement)
+        view.showImprovement()
+        XCTAssertNil(controller.improvementWindow, "No blank window for a saved improvement")
+        h.presentation.edit("Changed after saving")
+        XCTAssertEqual(view.improvementStage, .ended)
+        XCTAssertFalse(view.canShowImprovement)
     }
 
     func testOutdatedImprovementStaysOpenUntilFreshDiff() throws {
