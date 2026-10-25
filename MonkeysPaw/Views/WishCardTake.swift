@@ -132,31 +132,68 @@ final class WishCardTakeDrawing: NSView {
         transform.concat()
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: CGFloat(frame.cardOpacity),
                    respectFlipped: true, hints: nil)
-        for scratch in PawTake.scratches {
-            let start = NSPoint(x: grip.x + CGFloat(scratch.from.x), y: grip.y + CGFloat(scratch.from.y))
-            let end = NSPoint(x: start.x + CGFloat((scratch.to.x - scratch.from.x) * frame.scratch),
-                              y: start.y + CGFloat((scratch.to.y - scratch.from.y) * frame.scratch))
-            let tear = NSBezierPath()
-            tear.move(to: NSPoint(x: start.x + 1, y: start.y))
-            tear.line(to: NSPoint(x: end.x + 1, y: end.y))
-            tear.lineWidth = 2
-            WishCardStyle.nsColor(0xFFFEFA).withAlphaComponent(CGFloat(frame.cardOpacity)).setStroke()
-            tear.stroke()
-            let claw = NSBezierPath()
-            claw.move(to: start)
-            claw.line(to: end)
-            claw.lineWidth = 1
-            WishCardStyle.nsColor(0x51351F).withAlphaComponent(CGFloat(frame.cardOpacity)).setStroke()
-            claw.stroke()
-        }
+        drawGouge(PawTake.gouge(upTo: frame.scratch), from: grip, opacity: CGFloat(frame.cardOpacity))
         NSGraphicsContext.restoreGraphicsState()
 
         // Art may arrive after the code. Missing frames leave the paper motion.
-        if let paw = Bundle.main.image(forResource: NSImage.Name(PawTake.imageName(frame.image))) {
+        if let paw = WishPawArt.image(frame.image) {
             let pawRect = NSRect(x: grip.x + CGFloat(frame.paw.x - PawTake.anchor.x),
                 y: grip.y + CGFloat(frame.paw.y - PawTake.anchor.y),
                 width: CGFloat(PawTake.imageSize.x), height: CGFloat(PawTake.imageSize.y))
             paw.draw(in: pawRect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         }
+    }
+
+    /// A claw gouge in the paper: a pale torn lip under a dark furrow, with a
+    /// faint bruise so it reads as cut into the card rather than drawn on it.
+    private func drawGouge(_ points: [PawTake.Point], from grip: NSPoint, opacity: CGFloat) {
+        guard points.count > 1 else { return }
+
+        func path(offset: CGFloat) -> NSBezierPath {
+            let path = NSBezierPath()
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            path.move(to: NSPoint(x: grip.x + CGFloat(points[0].x) + offset, y: grip.y + CGFloat(points[0].y) + offset))
+            for point in points.dropFirst() {
+                path.line(to: NSPoint(x: grip.x + CGFloat(point.x) + offset, y: grip.y + CGFloat(point.y) + offset))
+            }
+            return path
+        }
+
+        let bruise = path(offset: 0)
+        bruise.lineWidth = 4
+        WishCardStyle.nsColor(0x51351F).withAlphaComponent(0.10 * opacity).setStroke()
+        bruise.stroke()
+        let lip = path(offset: 0.9)
+        lip.lineWidth = 1.2
+        WishCardStyle.nsColor(0xFFFEFA).withAlphaComponent(0.9 * opacity).setStroke()
+        lip.stroke()
+        let furrow = path(offset: 0)
+        furrow.lineWidth = 1.4
+        WishCardStyle.nsColor(0x4A2E1B).withAlphaComponent(0.8 * opacity).setStroke()
+        furrow.stroke()
+    }
+}
+
+/// The nine rendered paw exposures, loaded once. A synchronized group may
+/// flatten `WishPaw/` into the bundle's resources or keep the folder, so both
+/// are tried; a missing frame leaves the paper motion.
+enum WishPawArt {
+    private static let images: [NSImage?] = (0..<PawTake.imageCount).map(load)
+
+    static func image(_ index: Int) -> NSImage? {
+        images.indices.contains(index) ? images[index] : nil
+    }
+
+    private static func load(_ index: Int) -> NSImage? {
+        let name = PawTake.imageName(index)
+        if let image = Bundle.main.image(forResource: NSImage.Name(name)) { return image }
+
+        let file = name + "@2x"
+        guard let url = Bundle.main.url(forResource: file, withExtension: "png", subdirectory: "WishPaw")
+                ?? Bundle.main.url(forResource: file, withExtension: "png"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.size = NSSize(width: CGFloat(PawTake.imageSize.x), height: CGFloat(PawTake.imageSize.y))
+        return image
     }
 }

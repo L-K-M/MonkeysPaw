@@ -253,10 +253,15 @@ size is unchanged.
   is selectable monospace and changes no expanded whitespace or text.
 - **macOS take.** A ready Return or Deliver freezes the paper using
   `bitmapImageRepForCachingDisplay` and `cacheDisplay`, including its AppKit
-  controls. Core's `PawTake` supplies nine discrete 83 ms exposures, geometry,
-  scratches and cue timing. A creepy paw reaches in, curls a finger over four
-  dry cracks, holds a beat, then lifts and turns the paper. Each @2x PNG is
-  loaded by `PawTake.imageName`; missing art leaves the paper motion intact.
+  controls. Core's `PawTake` supplies nine discrete 83 ms exposures (12 fps,
+  stop-motion on twos), geometry, the claw's gouge and cue timing. A withered
+  monkey's paw lurches in, curls its index finger into a hook over four dry
+  knuckle cracks while the claw gouges the paper, holds a beat, then carries
+  the card off. The frames are rendered puppet photographs, not vector
+  drawings: `media-sources/paw/render-paw.c` raymarches a hairy, clawed paw
+  underlit by the card and re-seeds its fur per exposure so it boils like a
+  handled puppet. Each @2x PNG in `MonkeysPaw/Resources/WishPaw/` is loaded
+  by `PawTake.imageName`; missing art leaves the paper motion intact.
   No interpolation or implicit animation runs between exposures. After the
   ninth exposure has shown for a full interval, the existing delivery path
   runs with the mode chosen by Return, ⌘Return, ⌥Return or the footer.

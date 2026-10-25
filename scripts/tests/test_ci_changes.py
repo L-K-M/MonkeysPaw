@@ -89,6 +89,7 @@ class SelectionTests(unittest.TestCase):
             "update.sh": SERVER | {"deb"},
             "media-sources/icon.png": LINUX | MACOS,
             "media-sources/paw-symbol.svg": MACOS | {"android", "android-sync"},
+            "media-sources/paw/render-paw.c": frozenset(),
             "android/app/src/main/AndroidManifest.xml": frozenset({"android", "android-sync"}),
             "android/core/build.gradle.kts": frozenset({"android", "android-sync"}),
             "android/app/build.gradle.kts": frozenset({"android", "android-sync", "core-linux", "deb"}),

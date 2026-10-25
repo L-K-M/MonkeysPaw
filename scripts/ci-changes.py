@@ -104,6 +104,8 @@ PREFIXES = (
     ("android/", frozenset({"android", "android-sync"})),
     ("flatpak/", frozenset({"deb", "flatpak"})),
     ("docs/", frozenset()),
+    # The paw frame generator; its rendered output lives under MonkeysPaw/.
+    ("media-sources/paw/", frozenset()),
 )
 
 

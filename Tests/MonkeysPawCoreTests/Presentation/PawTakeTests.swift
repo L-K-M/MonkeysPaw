@@ -3,30 +3,25 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PawTakeTests: XCTestCase {
-    /// The provisional 9-frame table from §24.7: front ends read geometry and
-    /// timing only from here, so the test pins every value.
-    func testTimelineMatchesTheProvisionalTable() {
-        let frames = PawTake.frames
-        XCTAssertEqual(frames, [
-            PawTake.Frame(image: 0, paw: .init(x: 18, y: -92), cardLift: 0, cardTurn: 0,
-                          cardOpacity: 1, scratch: 0, cue: nil),
-            PawTake.Frame(image: 1, paw: .init(x: 4, y: -10), cardLift: 0, cardTurn: 0,
-                          cardOpacity: 1, scratch: 0, cue: nil),
-            PawTake.Frame(image: 2, paw: .init(x: 0, y: -2), cardLift: 0, cardTurn: 0,
-                          cardOpacity: 1, scratch: 0.2, cue: .crack),
-            PawTake.Frame(image: 3, paw: .init(x: 0, y: -1), cardLift: 0, cardTurn: 0,
-                          cardOpacity: 1, scratch: 0.5, cue: .crack),
-            PawTake.Frame(image: 4, paw: .init(x: 0, y: 0), cardLift: 0, cardTurn: 0,
-                          cardOpacity: 1, scratch: 0.8, cue: .crack),
-            PawTake.Frame(image: 5, paw: .init(x: 0, y: 0), cardLift: 0, cardTurn: 0,
-                          cardOpacity: 1, scratch: 1, cue: .crack),
-            PawTake.Frame(image: 6, paw: .init(x: 0, y: 0), cardLift: 0, cardTurn: 0,
-                          cardOpacity: 1, scratch: 1, cue: nil),
-            PawTake.Frame(image: 7, paw: .init(x: 6, y: -58), cardLift: -58, cardTurn: -2.5,
-                          cardOpacity: 1, scratch: 1, cue: .lift),
-            PawTake.Frame(image: 8, paw: .init(x: 14, y: -190), cardLift: -190, cardTurn: -6,
-                          cardOpacity: 0.6, scratch: 1, cue: nil),
-        ])
+    /// Frames 1 to 6 hold the paw at the grip, where the art's hooked claw
+    /// meets the gouge; only the lurch and the carry move it.
+    func testPawRestsAtTheGripWhileTheFingerCurls() {
+        for frame in PawTake.frames[1...6] {
+            XCTAssertLessThanOrEqual(abs(frame.paw.x), 1)
+            XCTAssertLessThanOrEqual(abs(frame.paw.y), 1)
+            XCTAssertEqual(frame.cardLift, 0)
+            XCTAssertEqual(frame.cardOpacity, 1)
+        }
+        XCTAssertLessThan(PawTake.frames[0].paw.y, -20, "the paw lurches in from above")
+        XCTAssertEqual(PawTake.frames.map(\.cue), [nil, nil, .crack, .crack, .crack, .crack, nil, .lift, nil])
+    }
+
+    /// The carried card leaves with the paw, so their lifts match.
+    func testCarryMovesPawAndCardTogether() {
+        for frame in PawTake.frames[7...] {
+            XCTAssertLessThan(frame.cardLift, 0)
+            XCTAssertEqual(frame.paw.y, frame.cardLift, accuracy: 6)
+        }
     }
 
     func testFrameCountIntervalDurationAndImageRange() {
@@ -54,14 +49,37 @@ final class PawTakeTests: XCTestCase {
                        (0..<9).map { String(format: "wish-paw-%02ld", $0) })
         XCTAssertEqual(PawTake.imageName(0), "wish-paw-00")
         XCTAssertEqual(PawTake.imageName(8), "wish-paw-08")
-        XCTAssertEqual(PawTake.imageSize, .init(x: 220, y: 300))
-        XCTAssertEqual(PawTake.anchor, .init(x: 96, y: 262))
-        XCTAssertEqual(PawTake.gripFraction, 0.68)
-        XCTAssertEqual(PawTake.gripDepth, 30)
-        XCTAssertEqual(PawTake.scratches.count, 2)
-        XCTAssertEqual(PawTake.scratches[0].from, .init(x: -4, y: 34))
-        XCTAssertEqual(PawTake.scratches[0].to, .init(x: -4, y: 4))
-        XCTAssertEqual(PawTake.scratches[1].from, .init(x: 4, y: 30))
-        XCTAssertEqual(PawTake.scratches[1].to, .init(x: 4, y: 8))
+        XCTAssertTrue((0...PawTake.imageSize.x).contains(PawTake.anchor.x))
+        XCTAssertTrue((0...PawTake.imageSize.y).contains(PawTake.anchor.y))
+        XCTAssertTrue((0...1).contains(PawTake.gripFraction))
+        XCTAssertGreaterThan(PawTake.gripDepth, 0)
+    }
+
+    /// The gouge ends under the hooked claw, at the grip point.
+    func testGougeEndsAtTheGrip() {
+        XCTAssertEqual(PawTake.gougePath.last, .init(x: 0, y: 0))
+        XCTAssertEqual(PawTake.gouge(upTo: 1), PawTake.gougePath)
+        XCTAssertEqual(PawTake.gouge(upTo: 2), PawTake.gougePath)
+    }
+
+    func testGougeIsEmptyBeforeTheClawMoves() {
+        XCTAssertEqual(PawTake.gouge(upTo: 0), [])
+        XCTAssertEqual(PawTake.gouge(upTo: -1), [])
+    }
+
+    /// A partial gouge follows the path and stops part-way along a segment.
+    func testPartialGougeFollowsThePathByLength() {
+        let path = PawTake.gougePath
+        let segments = zip(path, path.dropFirst()).map { a, b in
+            ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)).squareRoot()
+        }
+        let total = segments.reduce(0, +)
+        let half = PawTake.gouge(upTo: 0.5)
+        XCTAssertEqual(Array(half.dropLast()), Array(path.prefix(half.count - 1)))
+
+        let drawn = zip(half, half.dropFirst()).map { a, b in
+            ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)).squareRoot()
+        }.reduce(0, +)
+        XCTAssertEqual(drawn, total / 2, accuracy: 0.01)
     }
 }

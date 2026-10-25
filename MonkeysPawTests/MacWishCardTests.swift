@@ -787,7 +787,7 @@ final class MacWishCardTests: XCTestCase {
         var missing: [String] = []
         for index in 0..<PawTake.imageCount {
             let name = PawTake.imageName(index)
-            if Bundle.main.image(forResource: NSImage.Name(name)) == nil { missing.append(name) }
+            if WishPawArt.image(index) == nil { missing.append(name) }
         }
         XCTAssertTrue(missing.isEmpty, "Missing paw art in the app bundle: \(missing.joined(separator: ", "))")
     }
