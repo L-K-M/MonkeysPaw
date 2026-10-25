@@ -15,6 +15,8 @@ enum WishCardStyle {
     static let errorInk = color(0xA13A0B), stamp = color(0xA23B57), slipPaper = color(0xFFFEFA)
     static let resultsWidth: CGFloat = 232, paperInset: CGFloat = 22
     static let minimumSlotWidth: CGFloat = 48, slotPadding: CGFloat = 10
+    /// Bezel-less text fields extend 2 pt past their alignment rect on each side.
+    static let fieldOverhang: CGFloat = 2
     static let roll = 0.140, bump = 0.120, dry = 0.5, ink = 0.220, stagger = 0.045, sheen = 0.560, nudge = 0.300
     static let serif = NSFont(name: "Palatino", size: 15) ?? NSFont.systemFont(ofSize: 15)
     static let mono = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)

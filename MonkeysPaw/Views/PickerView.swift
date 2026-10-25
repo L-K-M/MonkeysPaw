@@ -57,6 +57,7 @@ struct PickerView: View {
                                 .frame(maxWidth: .infinity, alignment: .topLeading).padding(22)
                         }
                         .background(WishCardStyle.paperTop).clipShape(RoundedRectangle(cornerRadius: 10))
+                        .environment(\.colorScheme, .light) // Light scroller on paper, as on the card.
                         .accessibilityIdentifier("wish-proof").accessibilityLabel("Proof")
                     }
                 }

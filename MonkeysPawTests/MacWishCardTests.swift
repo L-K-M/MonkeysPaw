@@ -273,7 +273,8 @@ final class MacWishCardTests: XCTestCase {
         let last = try XCTUnwrap(find("fill-field-last") as? WishCardTumbler)
         let panel = try currentPanel()
         XCTAssertTrue(spin { self.isFocused(first, in: panel) && last.bounds.height > 0 })
-        XCTAssertTrue(last.visibleRect.isEmpty, "The last blank begins below the fold: " + last.placementDescription())
+        // visibleRect is the clip in view coordinates, not cut to the bounds.
+        XCTAssertFalse(last.visibleRect.intersects(last.bounds), "The last blank begins below the fold: " + last.placementDescription())
 
         let steps: [(NSEvent.ModifierFlags, Int)] = [([], 1), (.shift, 0), (.shift, 1), ([], 0)]
         for (flags, position) in steps {
@@ -398,12 +399,11 @@ final class MacWishCardTests: XCTestCase {
         XCTAssertTrue(take.isPlaying)
 
         // SwiftUI never updates the stage representable, so each exposure
-        // must mark the stage dirty itself.
+        // must reach a live display pass on its own.
         for frame in 1...3 {
-            stage.needsDisplay = false
             XCTAssertTrue(stepper.advance())
             XCTAssertEqual(take.frameIndex, frame)
-            XCTAssertTrue(stage.needsDisplay, "Exposure \(frame) must redraw the stage")
+            XCTAssertTrue(spin { stage.drawnExposure == frame }, "Exposure \(frame) must redraw the stage")
         }
 
         let rep = try XCTUnwrap(stage.bitmapImageRepForCachingDisplay(in: stage.bounds))

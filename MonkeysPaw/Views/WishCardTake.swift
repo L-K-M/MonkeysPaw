@@ -92,6 +92,9 @@ struct WishCardSurface: NSViewRepresentable {
     func makeNSView(context: Context) -> NSHostingView<WishCardView> {
         let view = NSHostingView(rootView: WishCardView(presentation: presentation))
         view.sizingOptions = []
+        // Paper is always light; a dark appearance would draw black scroller
+        // tracks and light default ink on it.
+        view.appearance = NSAppearance(named: .aqua)
         view.identifier = NSUserInterfaceItemIdentifier("wish-card")
         presentation.take.surface = view
         return view
@@ -125,11 +128,14 @@ struct WishCardTakeStage: NSViewRepresentable {
 
 final class WishCardTakeDrawing: NSView {
     weak var take: WishCardTake?
+    /// The exposure last drawn by a display pass, so tests can see redraws.
+    private(set) var drawnExposure: Int?
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let take, let image = take.snapshot, let index = take.frameIndex else { return }
+        guard let take, let image = take.snapshot, let index = take.frameIndex else { drawnExposure = nil; return }
+        drawnExposure = index
         let frame = PawTake.frames[index]
         let rect = take.cardRect
         let grip = NSPoint(x: rect.minX + rect.width * CGFloat(PawTake.gripFraction),

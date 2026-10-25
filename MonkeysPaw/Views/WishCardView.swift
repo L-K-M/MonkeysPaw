@@ -28,6 +28,8 @@ struct WishCardView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .topLeading)
+                        // Keeps a field at a line's edge, and its caret, inside the clip.
+                        .padding(.horizontal, WishCardStyle.fieldOverhang)
                         .padding(.bottom, 18)
                     }
                     .onChange(of: fill?.focusIndex) { _, index in reveal(index, with: proxy) }
