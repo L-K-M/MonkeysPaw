@@ -83,6 +83,11 @@ final class PickerTextField: NSTextField {
     }
 }
 
+enum PickerControlStyle {
+    case standard, night
+    case paper(FieldProvenance, WishInkPhase)
+}
+
 struct PickerTextInput: NSViewRepresentable {
     let value: String
     let label: String
@@ -95,6 +100,8 @@ struct PickerTextInput: NSViewRepresentable {
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
     var isBezeled = true
     var resetRevision: UInt64 = 0
+    var style: PickerControlStyle = .standard
+    var fieldHelp: String? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange) }
 
@@ -127,6 +134,41 @@ struct PickerTextInput: NSViewRepresentable {
         field.placeholderString = label
         field.identifier = NSUserInterfaceItemIdentifier(identifier)
         field.setAccessibilityLabel(label)
+        field.setAccessibilityHelp(fieldHelp)
+        field.toolTip = fieldHelp
+        if case .paper(let provenance, let phase) = style {
+            field.font = WishCardStyle.fieldFont(provenance)
+            field.textColor = WishCardStyle.ink(provenance, phase: phase)
+            field.placeholderAttributedString = NSAttributedString(string: label,
+                attributes: [.font: WishCardStyle.fieldFont(.defaultValue),
+                             .foregroundColor: WishCardStyle.nsColor(0x857A97)])
+            field.isBordered = false
+            field.isBezeled = false
+            field.drawsBackground = false
+            field.focusRingType = .none
+            if let editor = field.currentEditor() as? NSTextView {
+                editor.font = field.font
+                editor.textColor = field.textColor
+                editor.insertionPointColor = WishCardStyle.nsColor(0xE58A22)
+                editor.selectedTextAttributes = [.backgroundColor: WishCardStyle.nsColor(0xFFB547).withAlphaComponent(0.38)]
+            }
+        }
+        if case .standard = style {
+            field.textColor = .labelColor
+            if let editor = field.currentEditor() as? NSTextView {
+                editor.textColor = .labelColor
+                editor.insertionPointColor = .labelColor
+            }
+        }
+        if case .night = style {
+            field.textColor = WishCardStyle.nsColor(0xECE7F6)
+            field.placeholderAttributedString = NSAttributedString(string: label,
+                attributes: [.foregroundColor: WishCardStyle.nsColor(0x7E7699)])
+            if let editor = field.currentEditor() as? NSTextView {
+                editor.textColor = field.textColor
+                editor.insertionPointColor = WishCardStyle.nsColor(0xFFB547)
+            }
+        }
         field.pickerFocus.update(view: field, wantsFocus: wantsFocus, revision: focusRevision)
     }
 
@@ -198,6 +240,8 @@ struct PickerMultilineInput: NSViewRepresentable {
     let onChange: (String) -> Void
     let onFocus: () -> Void
     var resetRevision: UInt64 = 0
+    var style: PickerControlStyle = .standard
+    var fieldHelp: String? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange) }
 
@@ -230,6 +274,19 @@ struct PickerMultilineInput: NSViewRepresentable {
         text.onFocus = onFocus
         text.identifier = NSUserInterfaceItemIdentifier(identifier)
         text.setAccessibilityLabel(label)
+        text.setAccessibilityHelp(fieldHelp)
+        text.toolTip = fieldHelp
+        if case .paper(let provenance, let phase) = style {
+            scroll.borderType = .noBorder
+            scroll.drawsBackground = false
+            text.drawsBackground = false
+            text.focusRingType = .none
+            text.font = WishCardStyle.fieldFont(provenance, kind: .multiline)
+            text.textColor = WishCardStyle.ink(provenance, phase: phase)
+            text.insertionPointColor = WishCardStyle.nsColor(0xE58A22)
+            text.selectedTextAttributes = [.backgroundColor: WishCardStyle.nsColor(0xFFB547).withAlphaComponent(0.38)]
+            text.textContainerInset = NSSize(width: 7, height: 7)
+        }
         text.pickerFocus.update(view: text, wantsFocus: wantsFocus, revision: focusRevision)
     }
 
@@ -264,7 +321,7 @@ struct PickerMultilineInput: NSViewRepresentable {
     }
 }
 
-final class PickerChoiceButton: NSPopUpButton {
+class PickerChoiceButton: NSPopUpButton {
     let pickerFocus = PickerFocusRequest()
     var onFocus: (() -> Void)?
 
@@ -284,96 +341,5 @@ final class PickerChoiceButton: NSPopUpButton {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         super.mouseDown(with: event)
-    }
-}
-
-struct PickerChoiceInput: NSViewRepresentable {
-    let value: String
-    let options: [FieldOption]
-    let label: String
-    let identifier: String
-    let wantsFocus: Bool
-    let focusRevision: UInt64
-    let onChange: (String) -> Void
-    let onFocus: () -> Void
-
-    func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange) }
-
-    func makeNSView(context: Context) -> PickerChoiceButton {
-        let button = PickerChoiceButton(frame: .zero, pullsDown: false)
-        button.target = context.coordinator
-        button.action = #selector(Coordinator.changed(_:))
-        button.focusRingType = .exterior
-        button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return button
-    }
-
-    func updateNSView(_ button: PickerChoiceButton, context: Context) {
-        context.coordinator.onChange = onChange
-        // Labels and values can differ. Preserve an obsolete remembered value
-        // in Core; an unselected menu never silently supplies its first option.
-        if context.coordinator.options != options {
-            context.coordinator.options = options
-            button.removeAllItems()
-            let empty = NSMenuItem(title: Strings.chooseValue, action: nil, keyEquivalent: "")
-            empty.representedObject = ""
-            button.menu?.addItem(empty)
-            for entry in options {
-                let item = NSMenuItem(title: entry.label, action: nil, keyEquivalent: "")
-                item.representedObject = entry.value
-                button.menu?.addItem(item)
-            }
-        }
-        if value.isEmpty {
-            button.selectItem(at: 0)
-        } else if let position = options.firstIndex(where: { $0.value == value }) {
-            button.selectItem(at: position + 1)
-        } else {
-            button.select(nil)
-        }
-        button.onFocus = onFocus
-        button.isEnabled = context.environment.isEnabled
-        button.identifier = NSUserInterfaceItemIdentifier(identifier)
-        button.setAccessibilityLabel(label)
-        button.pickerFocus.update(view: button, wantsFocus: wantsFocus, revision: focusRevision)
-    }
-
-    final class Coordinator: NSObject {
-        var onChange: (String) -> Void
-        var options: [FieldOption]?
-        init(onChange: @escaping (String) -> Void) { self.onChange = onChange }
-
-        @objc func changed(_ sender: NSPopUpButton) {
-            guard let value = sender.selectedItem?.representedObject as? String else { return }
-            onChange(value)
-        }
-    }
-}
-
-/// Native labels also expose descriptions to VoiceOver below each control.
-struct PickerFieldDescription: NSViewRepresentable {
-    let text: String
-    let name: String
-
-    func makeNSView(context: Context) -> NSTextField {
-        let label = NSTextField(wrappingLabelWithString: text)
-        label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-        label.textColor = .secondaryLabelColor
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return label
-    }
-
-    func updateNSView(_ label: NSTextField, context: Context) {
-        label.stringValue = text
-        label.identifier = NSUserInterfaceItemIdentifier("fill-description-" + name)
-        label.setAccessibilityLabel(text)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView label: NSTextField, context: Context) -> CGSize? {
-        guard let width = proposal.width, width.isFinite, width > 0, let cell = label.cell else { return nil }
-
-        // Measure at SwiftUI's width; intrinsic sizing only reserves one line.
-        let bounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
-        return CGSize(width: width, height: ceil(cell.cellSize(forBounds: bounds).height))
     }
 }

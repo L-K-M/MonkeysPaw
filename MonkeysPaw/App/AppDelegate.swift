@@ -907,8 +907,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.libraryWindow?.presentation.openPrompt(LibraryPromptSelection(identity: entry.identity, relativePath: path))
             })
         }
+        let sounds = WishCardSounds()
         let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
-            syncStatus: makeSyncStatus(.picker),
+            syncStatus: makeSyncStatus(.picker), playCue: { sounds.play($0) },
             openSetup: { [weak self] in self?.showSetup() },
             openSettings: { [weak self] in self?.showSettings() },
             requestedIntent: { [weak self] intent in
@@ -926,10 +927,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard isCurrent() else { return }
             model?.dismiss()
         }
-        panel.onEscape = { [weak model] in
+        panel.onEscape = { [weak presentation] in
             guard isCurrent() else { return }
-            model?.escape()
+            presentation?.escape()
         }
+        panel.onRootChange = { [weak presentation] in presentation?.cancelTake() }
+        panel.onLoseKey = { [weak presentation] in presentation?.didLoseKey() }
+        panel.onInterceptKey = { [weak presentation] event in presentation?.interceptTakeKey(event) ?? false }
         panel.onShow = { [weak presentation] in
             guard isCurrent() else { return }
             presentation?.didShow()
