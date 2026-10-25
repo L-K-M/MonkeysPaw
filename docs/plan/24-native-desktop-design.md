@@ -182,7 +182,8 @@ use the full-color paw app icon for contrast on light and dark menus.
   title, short explanation, status rows with symbols, a default button.
 - **Visual rules.** System fonts and semantic colours only; SF Symbols for
   state (never colour alone); standard spacing; light, dark and increased
-  contrast checked; Reduce Motion disables animated transitions.
+  contrast checked; Reduce Motion disables animated transitions. The Linux
+  picker panel's Wish Card (§24.7) is the deliberate visual exception.
 
 ### 24.6 Linux
 
@@ -204,3 +205,42 @@ libadwaita dependency):
   panes; each pane is a clamped column of `boxed-list` rows.
 - **Picker.** An undecorated rounded window with a search entry, result
   rows with icons, the preview and a footer of key hints; no button row.
+
+### 24.7 Wish Card (Linux prototype)
+
+The Linux picker treats the prompt as a wish written on paper. A serif card
+on a night-indigo panel opens each placeholder into a blank in the sentence,
+so you fill the wish where its words belong. This is an art-directed panel
+prototype; Library, macOS, Android, the grammar and delivery contract stay as
+specified elsewhere.
+
+- **Pick.** The selected card is a read-only thumbnail with field labels,
+  date/time stamps and a placeholder clipboard slip. Selection reads neither
+  remembered values nor the clipboard. Invalid entries show their issues.
+- **Fill.** Search and results slide away. Text blanks grow with their
+  contents; multiline blanks are paper wells; choice tumblers roll with
+  Up/Down, jump by initial letter and open their option list with Space or
+  a click. Repeated names echo the first blank and focus it when clicked.
+  Descriptions, accessible labels, composition, field order, held drafts and
+  the existing Return variants retain their behaviour (§2, §5.3).
+- **Ink and warmth.** Suggestions look like pencil, remembered values and
+  drafts like dry ink, and fresh typing dries from bright amber. A wick and
+  the card's glow track filled required blanks. Ready cards receive one
+  sheen with sparks. A blocked delivery nudges and focuses the missing or
+  invalid blank without delivering.
+- **Builtins.** Date and time are stamps. The clipboard is a torn-paper
+  slip showing at most six lines, with a local line-count/type summary and
+  explicit pending/empty states. It resolves once when the form opens;
+  typing never reads it again. The exact expanded text remains available
+  through **Ctrl+P Proof** in picker and fill, including blocking reasons.
+- **Take.** A ready Return or Deliver lets the paw descend, grip the card
+  and lift it out over 200 ms, then invokes the existing delivery path.
+  Repeated input is ignored during the take. Hiding, dismissing, rebinding
+  or destroying the panel cancels it. Fieldless prompts take the thumbnail
+  directly. Clipboard write, hide, focus restoration and paste retain §6's
+  order and §2's keystroke budget.
+- **Preferences.** HighContrast themes retain native panel colours while
+  the card remains paper. Disabling GTK animations skips all custom motion
+  and delivers immediately. Quiet synthesized tick, ready, take and nudge
+  sounds respect GTK feedback/event preferences; tests and
+  `MONKEYSPAW_SOUNDS=0` silence them. Missing media support stays silent.

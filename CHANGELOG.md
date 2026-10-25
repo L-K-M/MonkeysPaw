@@ -9,6 +9,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Linux picker Wish Card prototype: fill blanks inside the prompt, with
+  choice tumblers, clipboard slips, ink provenance, a warming wick and a
+  paw take before delivery. Ctrl+P switches to the exact-text proof.
 - `scripts/build.sh --install` installs what the run built: the macOS app,
   the deb or (when the deb is not targeted) the Flatpak bundle, and the APK on
   the connected device.
