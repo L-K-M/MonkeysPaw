@@ -453,10 +453,15 @@ final class MacLibraryAssistantTests: XCTestCase {
         try h.request { view.improve() }
         try h.respond(MacLibraryAssistantHarness.artifact())
         XCTAssertTrue(view.canAccept)
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        let resultWindow = try XCTUnwrap(controller.improvementWindow?.window)
+        XCTAssertTrue(resultWindow.isVisible)
         settings.setKeyInput("replacement-stub-key")
         settings.save()
         XCTAssertEqual(view.state.phase, .idle, "Revoke the preview before committing a credential change")
         h.work.drain()
+        h.waitUntil { controller.improvementWindow == nil }
+        XCTAssertFalse(resultWindow.isVisible)
         XCTAssertEqual(providers.snapshot.settings.profiles.first, profile, "Non-secret metadata is unchanged")
         XCTAssertFalse(view.canAccept)
         XCTAssertTrue(h.delegate.assistantService === service)
@@ -859,6 +864,153 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(try h.files.listFiles().count, 2)
     }
 
+    func testImprovementWindowShowsOneWorkingStatusAndRequestContext() throws {
+        let h = try MacLibraryAssistantHarness(source: "---\ntitle: Summarize meeting notes\n---\nOriginal")
+        defer { h.close() }
+        let view = try h.assistant()
+        try h.request { view.review() }
+        try h.respond(["summary": "Two findings", "findings": [
+            ["criterion": "clarity", "severity": "high", "quote": "Original",
+             "problem": "Unclear", "suggestion": "Clarify"],
+            ["criterion": "examples", "severity": "medium", "quote": "Original",
+             "problem": "Missing example", "suggestion": "Add an example"]
+        ]], phase: .draft)
+        let findings = try XCTUnwrap(view.state.review?.findings)
+        view.toggleFinding(1)
+        view.toggleFinding(0)
+        view.editInstruction(" \nMake it shorter and add an example.\n ")
+        try h.request { view.improve() }
+        XCTAssertEqual(view.improvementStage, .working)
+        XCTAssertEqual(view.resultMessage, "")
+        let request = try XCTUnwrap(view.improvementRequest)
+        XCTAssertEqual(request.instruction, "Make it shorter and add an example.")
+        XCTAssertEqual(request.findings, findings)
+        XCTAssertEqual(LibraryAssistantStrings.findingsSummary(request.findings), "Clarity (High), Examples (Medium)")
+        XCTAssertNil(view.state.review)
+        XCTAssertTrue(view.state.selectedFindings.isEmpty)
+        XCTAssertTrue(h.delegate.libraryWindow?.improvementWindow?.window?.isVisible == true)
+        let title = h.presentation.displayTitle
+        XCTAssertEqual(title, "Summarize meeting notes")
+        for size in [NSSize(width: 640, height: 360), NSSize(width: 960, height: 640)] {
+            let host = NSHostingView(rootView: LibraryAssistantImprovementView(presentation: view, promptTitle: title))
+            host.frame = NSRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+        }
+    }
+
+    func testPreparingStageCoversMergeAfterReply() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        h.transport.finish(try h.envelope(MacLibraryAssistantHarness.artifact()))
+        h.waitUntil { view.state.phase == .draft }
+        XCTAssertEqual(view.improvementStage, .preparing)
+        XCTAssertNil(view.state.diff)
+        h.work.drain()
+        XCTAssertEqual(view.improvementStage, .ready)
+    }
+
+    func testCancelAndRejectEndImprovementAndCloseWindow() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        let before = try h.files.read(at: "one.md")
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        view.cancel()
+        h.waitUntil { controller.improvementWindow == nil }
+        XCTAssertEqual(view.improvementStage, .ended)
+        XCTAssertEqual(view.state.phase, .idle)
+        XCTAssertEqual(try h.files.read(at: "one.md"), before)
+        // The stub transport does not observe task cancellation.
+        h.transport.cancelPending()
+        view.editInstruction("Try again")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        view.reject()
+        h.waitUntil { controller.improvementWindow == nil }
+        XCTAssertEqual(view.state.phase, .idle)
+        XCTAssertEqual(try h.files.read(at: "one.md"), before)
+        XCTAssertFalse(view.canShowImprovement)
+    }
+
+    func testCommittedAcceptanceClosesWindowAndKeepsSaveMessage() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact(body: "Improved"))
+        XCTAssertEqual(view.improvementStage, .ready)
+        XCTAssertFalse(view.showsRefresh)
+        let bytes = try XCTUnwrap(view.state.candidate?.content.canonicalBytes)
+        let diff = view.state.diff
+        view.accept()
+        XCTAssertEqual(view.improvementStage, .saving)
+        XCTAssertEqual(view.state.diff, diff)
+        h.work.drain()
+        h.waitUntil { controller.improvementWindow == nil }
+        XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")
+        XCTAssertEqual(try h.files.read(at: "one.md"), bytes)
+    }
+
+    func testOutdatedImprovementStaysOpenUntilFreshDiff() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        h.presentation.edit("Changed buffer")
+        XCTAssertEqual(view.improvementStage, .outdated)
+        XCTAssertTrue(view.showsRefresh)
+        XCTAssertFalse(view.canAccept)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        XCTAssertTrue(controller.improvementWindow?.window?.isVisible == true)
+        view.showDiff()
+        h.work.drain()
+        XCTAssertEqual(view.improvementStage, .ready)
+        XCTAssertFalse(view.showsRefresh)
+        XCTAssertTrue(view.canAccept)
+    }
+
+    func testFailedImprovementStaysOpenForRetry() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        let request = try XCTUnwrap(view.improvementRequest)
+        try h.respond([:], phase: .failed, status: 401)
+        XCTAssertEqual(view.improvementStage, .failed)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        XCTAssertTrue(controller.improvementWindow?.window?.isVisible == true)
+        XCTAssertTrue(view.canRetry)
+        view.feedback = "Try a shorter improvement"
+        try h.request { view.retry() }
+        try h.respond(MacLibraryAssistantHarness.artifact())
+        XCTAssertEqual(view.improvementStage, .ready)
+        XCTAssertEqual(view.improvementRequest, request)
+    }
+
+    func testInvalidImprovementDisablesAcceptance() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact(body: "{{clipboard}}", field: "clipboard"), phase: .draft)
+        XCTAssertEqual(view.improvementStage, .invalid)
+        XCTAssertFalse(view.canAccept)
+        XCTAssertTrue(h.delegate.libraryWindow?.improvementWindow?.window?.isVisible == true)
+    }
+
     func testImproveOpensResizableWindowAndInspectorCanHideWithoutCancelling() throws {
         let h = try MacLibraryAssistantHarness()
         defer { h.close() }
@@ -911,6 +1063,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertNil(controller.improvementWindow)
         XCTAssertFalse(results.isVisible)
         XCTAssertFalse(view.canAccept)
+        XCTAssertNil(view.improvementRequest)
         let unexpected = expectation(description: "A retired improvement must not publish")
         unexpected.isInverted = true
         let observation = view.$state.dropFirst().sink { _ in unexpected.fulfill() }
@@ -1069,6 +1222,15 @@ private final class MacLibraryAssistantHarness {
     }
 
     func generation() throws -> LibraryAssistantViewState { try XCTUnwrap(presentation.promptGeneration) }
+
+    func waitUntil(_ predicate: () -> Bool, timeout: TimeInterval = 2,
+                   file: StaticString = #filePath, line: UInt = #line) {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while !predicate(), Date() < deadline {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+        }
+        XCTAssertTrue(predicate(), file: file, line: line)
+    }
 
     func request(_ start: () -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
         let sent = XCTestExpectation(description: "Stub transport received an explicit request")

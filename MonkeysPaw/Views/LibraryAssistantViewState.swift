@@ -5,9 +5,15 @@ import SwiftUI
 /// A native binding for one editor session. Core owns requests, merging and saves.
 final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     enum Flow: Hashable { case review, improve }
+    enum ImprovementStage: Equatable { case working, preparing, saving, failed, invalid, outdated, ready, ended }
+    struct ImprovementRequest: Equatable {
+        let instruction: String
+        let findings: [LlmReview.Finding]
+    }
     private enum RequestKind { case write, review, improve }
 
     @Published private(set) var state: AssistantState
+    @Published private(set) var improvementRequest: ImprovementRequest?
     @Published private(set) var editorState: EditorState
     @Published private(set) var libraryAvailable: Bool
     @Published var flow = Flow.review
@@ -85,9 +91,26 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     private var requestDisabledMessage: String? { requestKind == .write ? writeDisabledMessage : sourceDisabledMessage }
     var canRetry: Bool { requestDisabledMessage == nil && model?.canRetry == true }
     var canShowDiff: Bool { requestDisabledMessage == nil && model?.canShowDiff == true }
+    var showsRefresh: Bool { state.diff == nil && canShowDiff }
     var canSelectFindings: Bool { canReview && !state.isStale }
     var isImprovementRequest: Bool { requestKind == .improve }
     var canShowImprovement: Bool { isImprovementRequest && state.phase != .idle }
+    var improvementStage: ImprovementStage {
+        guard isImprovementRequest else { return .ended }
+        if state.isAccepting { return .saving }
+        if state.phase == .idle { return .ended }
+        if state.acceptanceOutcome?.committed != nil || state.phase == .saved { return .ended }
+        switch state.phase {
+        case .working: return .working
+        case .ready: return .ready
+        case .failed: return .failed
+        case .draft:
+            if state.isStale { return .outdated }
+            if state.issues.contains(where: { $0.severity == .error }) { return .invalid }
+            return .preparing
+        case .idle, .saved: return .ended
+        }
+    }
     var improveTitle: String {
         if state.mutationAccess == .privateCopy { return "Improve a private copy" }
         return flow == .review && !state.selectedFindings.isEmpty
@@ -106,6 +129,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
 
     var resultMessage: String {
         if state.isAccepting { return "Saving the accepted candidate…" }
+        if state.phase == .working { return "" }
         if let failure = state.failure { return LibraryAssistantStrings.failure(failure) }
         if let outcome = state.acceptanceOutcome, case .conflict = outcome, editorState.conflict != nil {
             return LibraryAssistantStrings.acceptance(outcome)
@@ -127,6 +151,9 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     func improve() {
         guard canImprove else { return }
         requestKind = .improve
+        improvementRequest = ImprovementRequest(
+            instruction: state.instruction.trimmingCharacters(in: .whitespacesAndNewlines),
+            findings: state.isStale ? [] : state.selectedFindings.sorted().compactMap { state.review?.findings[$0] })
         onRequest?()
         onHighlight?(nil)
         model?.improve()
@@ -176,6 +203,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         onHighlight?(nil)
         model?.deactivate()
         model = nil
+        improvementRequest = nil
         brief = ""
         feedback = ""
         onHighlight = nil
