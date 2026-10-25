@@ -416,6 +416,40 @@ enum GTK {
                                   trampoline, box, release)
     }
 
+    private final class PaintBox {
+        let call: () -> Void
+        var clock: OpaquePointer?
+        var handler: gulong = 0
+        init(_ call: @escaping () -> Void) { self.call = call }
+    }
+
+    /// Runs `work` once, after the widget's next paint, when every allocation
+    /// in the window is current. Snapshotting a widget whose layout is still
+    /// queued is a GTK warning (fatal in tests).
+    static func afterNextPaint(_ widget: Widget, _ work: @escaping () -> Void) {
+        guard let clock = gtk_widget_get_frame_clock(widget) else { return }
+        let box = PaintBox(work)
+        let trampoline: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void = { _, data in
+            guard let data else { return }
+            let box = Unmanaged<PaintBox>.fromOpaque(data).takeUnretainedValue()
+            guard box.handler != 0, let clock = box.clock else { return }
+            let handler = box.handler
+            box.handler = 0
+            box.call()
+            // Disconnecting runs the destroy notify, which releases the box.
+            g_signal_handler_disconnect(UnsafeMutableRawPointer(clock), handler)
+        }
+        let release: GClosureNotify = { data, _ in
+            guard let data else { return }
+            Unmanaged<PaintBox>.fromOpaque(data).release()
+        }
+        box.clock = clock
+        box.handler = mp_connect(UnsafeMutableRawPointer(clock), "after-paint",
+                                 unsafeBitCast(trampoline, to: GCallback.self),
+                                 Unmanaged.passRetained(box).toOpaque(), release)
+        gtk_widget_queue_draw(widget)
+    }
+
     /// Keep borrowed widget pointers valid when the window manager closes the panel.
     static func hideOnClose(_ window: Widget) {
         gtk_window_set_hide_on_close(mp_window(window), 1)

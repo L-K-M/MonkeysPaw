@@ -23,6 +23,9 @@ final class LinuxPanel: PanelWindow {
     private let take = LinuxPawTake()
     private var takeRevision = 0
     private var isTaking = false
+    /// The take finished and delivery is under way: the live card stays
+    /// hidden until the panel hides, so it never flashes back in between.
+    private var takeHeld = false
     private var cardView: LinuxWishCard?
     private var renderedCard: PromptCard?
     private var renderedFallback: String?
@@ -405,6 +408,7 @@ final class LinuxPanel: PanelWindow {
         guard picker.state != .closed else { cancelTake(); return }
         if case .done = picker.state { return } // Delivery owns the hide.
         guard !isRendering else { return }
+        releaseHeldTake()
         let wasTaking = isTaking
         isRendering = true
         defer {
@@ -706,6 +710,9 @@ final class LinuxPanel: PanelWindow {
         guard !isDestroyed, !isTaking, let picker else { return }
         if picker.state == .fill, let fill = picker.fillModel {
             guard fill.state == .editing else { return }
+            // A pending clipboard read resolves within moments; it is not a
+            // blank to point at.
+            guard fill.builtinsResolved else { return }
             guard fill.deliverEnabled else { cardView?.nudge(); return }
             startTake { [weak fill] in fill?.deliver(mode: mode) }
         } else if picker.state == .picker {
@@ -749,7 +756,8 @@ final class LinuxPanel: PanelWindow {
             }
             self.isTaking = false
             deliver()
-            self.cancelTake()
+            self.takeHeld = true
+            self.releaseHeldTake()
             self.render()
             self.restoreEditingFocus()
         }
@@ -773,6 +781,22 @@ final class LinuxPanel: PanelWindow {
     private func cancelTake() {
         takeRevision += 1
         isTaking = false
+        takeHeld = false
+        take.cancel()
+    }
+
+    /// Brings a held card back only when no delivery is under way, e.g. a
+    /// render that turned out blocked leaves the form editing again.
+    private func releaseHeldTake() {
+        guard takeHeld, let picker else { return }
+        let idle: Bool
+        switch picker.state {
+        case .picker: idle = !picker.isResolvingBuiltins
+        case .fill: idle = picker.fillModel?.state == .editing
+        default: idle = false
+        }
+        guard idle else { return }
+        takeHeld = false
         take.cancel()
     }
 

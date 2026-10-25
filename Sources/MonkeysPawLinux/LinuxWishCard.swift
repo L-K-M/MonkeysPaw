@@ -40,6 +40,8 @@ final class LinuxWishCard {
     private var stamps: [(BuiltinName, GTK.Widget)] = []
     private var slips: [LinuxClipboardSlip] = []
     private var fullWidth: [GTK.Widget] = []
+    /// Where each anchored widget sits in the text, for scrolling to it.
+    private var anchors: [GTK.Widget: UnsafeMutablePointer<GtkTextChildAnchor>] = [:]
     private var bodyWidth: Int32 = 0
     private var isUpdating = false
     private var retired = false
@@ -75,6 +77,8 @@ final class LinuxWishCard {
         folderLabel = GTK.label(folder.uppercased())
         gtk_widget_add_css_class(folderLabel, "mp-card-folder")
         gtk_label_set_wrap(mp_label(folderLabel), 0)
+        gtk_label_set_max_width_chars(mp_label(folderLabel), Int32(WishCardStyle.folderChars))
+        Self.fitFolder(folderLabel, folder)
         gtk_box_append(mp_box(header), folderLabel)
         gtk_box_append(mp_box(paper), header)
 
@@ -161,6 +165,15 @@ final class LinuxWishCard {
         guard !retired else { return }
         gtk_label_set_text(mp_label(titleLabel), title.uppercased())
         gtk_label_set_text(mp_label(folderLabel), folder.uppercased())
+        Self.fitFolder(folderLabel, folder)
+    }
+
+    /// Short folders show whole: an ellipsizing label shrinks to its minimum,
+    /// and character-based widths ignore the CSS letter-spacing. Only a long
+    /// name ellipsizes, so it cannot widen the panel.
+    private static func fitFolder(_ label: GTK.Widget, _ folder: String) {
+        let long = folder.count > WishCardStyle.folderChars
+        gtk_label_set_ellipsize(mp_label(label), long ? PANGO_ELLIPSIZE_END : PANGO_ELLIPSIZE_NONE)
     }
 
     func update() {
@@ -231,6 +244,14 @@ final class LinuxWishCard {
 
     /// "INTENDED BEHAVIOR — Describe what the change should accomplish."
     private func updateGloss(_ fill: FillModel) {
+        gtk_widget_remove_css_class(gloss, "mp-gloss-blocked")
+        if fill.builtinsResolved, fill.missingRequiredFieldIndex == nil, invalidChoiceIndex(fill) == nil,
+           case .blocked(let error, _) = fill.preview {
+            gtk_label_set_text(mp_label(gloss), error.description)
+            gtk_widget_add_css_class(gloss, "mp-gloss-blocked")
+            gtk_widget_set_visible(gloss, 1)
+            return
+        }
         guard let index = fill.focusIndex, fill.fields.indices.contains(index) else {
             gtk_widget_set_visible(gloss, 0)
             return
@@ -244,23 +265,30 @@ final class LinuxWishCard {
     }
 
     /// GtkTextView does not scroll to a focused anchored child, so Tab could
-    /// land on a blank below the fold. Keep the focused blank in view with a
-    /// margin of paper around it, after layout has placed it.
+    /// land on a blank outside the visible paper. Keep the focused blank in
+    /// view with a margin of paper around it, after layout has placed it.
+    /// Positions come from the anchor's line in buffer coordinates, the same
+    /// space as the scroll adjustment; a child's own bounds go stale once it
+    /// scrolls out of view.
     func reveal(index: Int) {
-        guard !retired, let slot = slots.first(where: { $0.index == index }) else { return }
+        guard !retired, let slot = slots.first(where: { $0.index == index }),
+              let anchor = anchors[slot.root] else { return }
         GTK.onMainLoop { [weak self, weak slot] in
-            guard let self, !self.retired, let slot else { return }
-            var bounds = graphene_rect_t()
-            guard gtk_widget_compute_bounds(slot.root, self.body, &bounds) != 0,
+            guard let self, !self.retired, let slot,
                   let adjustment = gtk_scrolled_window_get_vadjustment(mp_scrolled_window(self.scroll)) else { return }
+            let buffer = gtk_text_view_get_buffer(mp_text_view(self.body))!
+            var iter = GtkTextIter()
+            gtk_text_buffer_get_iter_at_child_anchor(buffer, &iter, anchor)
+            var line = GdkRectangle()
+            gtk_text_view_get_iter_location(mp_text_view(self.body), &iter, &line)
             let margin = Double(WishCardStyle.revealMargin)
-            let page = Double(gtk_widget_get_height(self.scroll))
-            let top = Double(bounds.origin.y) - margin
-            let bottom = Double(bounds.origin.y + bounds.size.height) + margin
+            let height = Double(max(line.height, gtk_widget_get_height(slot.root)))
+            let top = Double(line.y) - margin
+            let bottom = Double(line.y) + height + margin
             let value = gtk_adjustment_get_value(adjustment)
-            // Bounds are in the visible text area's coordinates: negative is above it.
-            if top < 0 { gtk_adjustment_set_value(adjustment, value + top) }
-            else if bottom > page { gtk_adjustment_set_value(adjustment, value + min(top, bottom - page)) }
+            let page = gtk_adjustment_get_page_size(adjustment)
+            if top < value { gtk_adjustment_set_value(adjustment, max(0, top)) }
+            else if bottom > value + page { gtk_adjustment_set_value(adjustment, min(top, bottom - page)) }
         }
     }
 
@@ -281,12 +309,18 @@ final class LinuxWishCard {
         return slot.tumbler?.handleKey(key, modifiers: modifiers) ?? false
     }
 
-    func nudge() {
-        guard let fill, !retired else { return }
-        let invalid = fill.fields.firstIndex { field in
+    /// A remembered choice that is no longer one of the options.
+    private func invalidChoiceIndex(_ fill: FillModel) -> Int? {
+        fill.fields.firstIndex { field in
             field.kind == .choice && !field.value.isEmpty && !field.options.contains { $0.value == field.value }
         }
-        guard let index = fill.missingRequiredFieldIndex ?? invalid ?? fill.focusIndex,
+    }
+
+    /// Points at the blank that blocks delivery. A block no blank can fix
+    /// (an oversized result, a read-only prompt) is named by the gloss.
+    func nudge() {
+        guard let fill, !retired else { return }
+        guard let index = fill.missingRequiredFieldIndex ?? invalidChoiceIndex(fill),
               let widget = fieldWidget(at: index) else { sounds.play(.nudge); return }
         fill.focusField(at: index)
         gtk_widget_grab_focus(widget)
@@ -472,6 +506,7 @@ final class LinuxWishCard {
         gtk_text_buffer_get_end_iter(buffer, &end)
         let anchor = gtk_text_buffer_create_child_anchor(buffer, &end)!
         gtk_text_view_add_child_at_anchor(mp_text_view(body), child, anchor)
+        anchors[child] = anchor
         if alignBaseline {
             // GtkTextView aligns an anchored widget's bottom to the line.
             // Lower it by its descent so the native editor's text shares the

@@ -367,6 +367,7 @@ final class LinuxPawTake {
     private var widgetAlive = true
     private var card: GTK.Widget?
     private var image: OpaquePointer?
+    private var captureRevision = 0
     private var completion: (() -> Void)?
     private var began: Int64?
     private var progress = 0.0
@@ -407,21 +408,18 @@ final class LinuxPawTake {
 
         self.completion = completion
         self.card = card
-        var bounds = graphene_rect_t()
-        if gtk_widget_compute_bounds(card, widget, &bounds) != 0 {
-            frame = (Double(bounds.origin.x), Double(bounds.origin.y),
-                     Double(bounds.size.width), Double(bounds.size.height))
-        } else {
-            frame = (0, 0, Double(gtk_widget_get_width(widget)), Double(gtk_widget_get_height(widget)))
-        }
-        image = mp_widget_capture(card)
-
         let observed = card
         GTK.onSignal(UnsafeMutableRawPointer(card), "destroy") { [weak self] in
             if self?.card == observed { self?.card = nil }
         }
-        // Opacity alone hides the live card; the image does all the moving.
-        if image != nil { gtk_widget_add_css_class(card, "mp-taken") }
+        // Freeze the card once its layout is current (the key press that got
+        // here may have queued one); until then the live card stays put.
+        captureRevision += 1
+        let revision = captureRevision
+        GTK.afterNextPaint(widget) { [weak self] in
+            guard let self, self.captureRevision == revision, self.showing, let card = self.card else { return }
+            self.capture(card)
+        }
         progress = 0
         began = nil
         showing = true
@@ -430,6 +428,18 @@ final class LinuxPawTake {
             self?.timerID = nil
             self?.finish()
         }
+        if widgetAlive { gtk_widget_queue_draw(widget) }
+    }
+
+    private func capture(_ card: GTK.Widget) {
+        var bounds = graphene_rect_t()
+        guard gtk_widget_compute_bounds(card, widget, &bounds) != 0,
+              let image = mp_widget_capture(card) else { return }
+        frame = (Double(bounds.origin.x), Double(bounds.origin.y),
+                 Double(bounds.size.width), Double(bounds.size.height))
+        self.image = image
+        // Opacity alone hides the live card; the image does all the moving.
+        gtk_widget_add_css_class(card, "mp-taken")
         if widgetAlive { gtk_widget_queue_draw(widget) }
     }
 
@@ -443,6 +453,7 @@ final class LinuxPawTake {
         if let tickID, widgetAlive { GTK.removeTick(widget, tickID) }
         tickID = nil
         began = nil
+        captureRevision += 1
         if let card { gtk_widget_remove_css_class(card, "mp-taken") }
         card = nil
         if let image { cairo_surface_destroy(image) }
@@ -493,7 +504,7 @@ final class LinuxPawTake {
     }
 
     private func draw(_ cr: OpaquePointer, w: Double, h: Double) {
-        guard showing, w > 0, h > 0 else { return }
+        guard showing, image != nil, w > 0, h > 0 else { return }
         typealias M = PawTakeMetric
         let pose = pose(progress)
         let center = (x: frame.x + frame.width / 2, y: frame.y + frame.height / 2)

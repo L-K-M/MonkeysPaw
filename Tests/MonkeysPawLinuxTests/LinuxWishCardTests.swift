@@ -251,12 +251,12 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.isResolvingBuiltins })
         XCTAssertTrue(GTKTestSupport.spin { clipboard.reads == 1 })
-        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
+        // The taken card stays away while delivery waits for the clipboard.
+        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 1)
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
-        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
         try waitPastTake()
         XCTAssertEqual(clipboard.reads, 1)
-        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
+        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 1)
         clipboard.resolve("Resolved wish")
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
         XCTAssertEqual(clipboard.writes, ["Resolved wish"])
@@ -397,21 +397,62 @@ final class LinuxWishCardTests: XCTestCase {
         let fill = try openFill("---\nfields:\n  first: {default: A}\n  last: {default: B}\n---\n{{first}}\n\(lines)\n{{last}}")
         let last = try widget("fill-field-last")
         let scroll = try widget("card-scroll")
+        func visible(_ widget: GTK.Widget) -> Bool {
+            var bounds = graphene_rect_t()
+            guard gtk_widget_compute_bounds(widget, scroll, &bounds) != 0 else { return false }
+            return bounds.origin.y >= 0 && bounds.origin.y + bounds.size.height <= Float(gtk_widget_get_height(scroll))
+        }
         XCTAssertTrue(key(GDK_KEY_Tab))
         XCTAssertTrue(GTKTestSupport.spin { fill.focusIndex == 1 && self.focused(last) })
-        XCTAssertTrue(GTKTestSupport.spin {
-            var bounds = graphene_rect_t()
-            guard gtk_widget_compute_bounds(last, scroll, &bounds) != 0 else { return false }
-            return bounds.origin.y >= 0 && bounds.origin.y + bounds.size.height <= Float(gtk_widget_get_height(scroll))
-        })
+        XCTAssertTrue(GTKTestSupport.spin { visible(last) })
+        // Back up from a scrolled position: the card scrolls to its top again.
+        let adjustment = try XCTUnwrap(gtk_scrolled_window_get_vadjustment(mp_scrolled_window(scroll)))
+        XCTAssertGreaterThan(gtk_adjustment_get_value(adjustment), 0)
+        let first = try widget("fill-field-first")
+        XCTAssertTrue(key(GDK_KEY_ISO_Left_Tab, modifiers: GDK_SHIFT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { fill.focusIndex == 0 && self.focused(first) })
+        XCTAssertTrue(GTKTestSupport.spin { gtk_adjustment_get_value(adjustment) == 0 })
     }
 
     func testTakeHidesTheLiveCardWhileThePawCarriesItsImage() throws {
         let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
-        XCTAssertNotEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
+        let card = try widget("wish-card")
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_has_css_class(card, "mp-taken") != 0 })
         XCTAssertEqual(fill.state, .editing)
         XCTAssertTrue(GTKTestSupport.spin { fill.state != .editing })
+    }
+
+    func testReturnWhileTheClipboardResolvesDoesNotNudge() throws {
+        let clipboard = WishDeferredClipboard()
+        environment.shutdown()
+        environment = LinuxEnvironment(application: application, environment: tools.environment, clipboard: clipboard)
+        try files.write(Data("---\nfields:\n  word: {default: Wish}\n---\n{{word}} {{clipboard}}".utf8), at: "wish.md")
+        try open()
+        XCTAssertTrue(key(GDK_KEY_Return))
+        let fill = try XCTUnwrap(environment.pickerModel.fillModel)
+        let word = try widget("fill-field-word")
+        XCTAssertFalse(fill.builtinsResolved)
+        XCTAssertTrue(key(GDK_KEY_Return))
+        XCTAssertEqual(gtk_widget_has_css_class(word, "mp-nudge"), 0)
+        clipboard.resolve("Copied text")
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+    }
+
+    func testLongFolderNamesEllipsizeInsteadOfWideningTheCard() throws {
+        let folder = String(repeating: "deeply-nested-collection-", count: 4)
+        try files.write(Data("---\nfields:\n  word: {default: Wish}\n---\n{{word}}".utf8), at: folder + "/wish.md")
+        try open()
+        let window = environment.panel.clipboardOwner
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_width(window) > 0 })
+        let pickerWidth = gtk_widget_get_width(window)
+        XCTAssertTrue(key(GDK_KEY_Return))
+        let card = try widget("wish-card")
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_width(card) > 0 })
+        var minimum: Int32 = 0
+        gtk_widget_measure(card, GTK_ORIENTATION_HORIZONTAL, -1, &minimum, nil, nil, nil)
+        XCTAssertLessThanOrEqual(minimum, gtk_widget_get_width(card))
+        XCTAssertEqual(gtk_widget_get_width(window), pickerWidth)
     }
 
     private func openFill(_ source: String) throws -> FillModel {

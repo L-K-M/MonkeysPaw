@@ -45,7 +45,7 @@ enum WishCardStyle {
     static let minimumSlotWidth = 48, slotPadding = 10, slotBaseline = 2
     static let wellMinimum = 26, wellMaximum = 170, wellFallbackWidth = 240
     static let bodyLineSpace = 3, panelGap = 12, cardGap = 10
-    static let paperInset = 22, medallion = 12, resultsWidth = 232, fullWidthInset = 16, revealMargin = 18
+    static let paperInset = 22, medallion = 12, resultsWidth = 232, fullWidthInset = 16, revealMargin = 18, folderChars = 18
 
     static func source(_ cr: OpaquePointer, _ hex: String, alpha: Double = 1) {
         let color = components(hex)
@@ -158,6 +158,7 @@ enum WishCardStyle {
         box-shadow: inset 0 1px 3px rgba(60,40,10,.20), 0 0 0 2px rgba(229,138,34,.35);
     }
     .mp-card .mp-well textview, .mp-card .mp-well textview:focus { outline: none; }
+    .mp-card .mp-gloss.mp-gloss-blocked { color: \(errorInk); font-style: normal; }
     .mp-card .mp-gloss {
         font-family: \(serif); font-style: italic; font-size: 12px; color: \(folderInk);
         border-top: 1px dotted rgba(120,90,40,.30); padding-top: 6px;
