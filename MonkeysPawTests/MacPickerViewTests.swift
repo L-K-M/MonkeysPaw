@@ -590,6 +590,50 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.fillModel?.values, fill.values)
     }
 
+    func testLongDescriptionsWrapToFormWidthAndRemainScrollable() throws {
+        let description = String(repeating: "Explain this field with enough detail to guide the answer. ", count: 8)
+        let source = """
+        ---
+        fields:
+          topic:
+            description: \(description)
+          detail:
+            type: multiline
+            description: |
+              \(description)
+              This final line must also remain visible.
+          language:
+            type: choice
+            options: [One, Two]
+            description: \(description)
+        ---
+        {{topic}} {{detail}} {{language}}
+        """
+        try files.write(Data(source.utf8), at: "descriptions.md")
+        let picker = try open()
+        picker.use(mode: .copyOnly)
+        XCTAssertTrue(spin { self.find("fill-description-language") != nil })
+        let field = try XCTUnwrap(find("fill-field-topic"))
+
+        for name in ["topic", "detail", "language"] {
+            let label = try XCTUnwrap(find("fill-description-" + name) as? NSTextField)
+            XCTAssertTrue(spin { label.bounds.width > 0 })
+            let cell = try XCTUnwrap(label.cell)
+            let requiredHeight = cell.cellSize(forBounds: NSRect(x: 0, y: 0,
+                width: label.bounds.width, height: .greatestFiniteMagnitude)).height
+            XCTAssertGreaterThan(requiredHeight, try XCTUnwrap(label.font).pointSize * 2)
+            XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(requiredHeight), name + " help is clipped")
+            XCTAssertLessThanOrEqual(label.bounds.width, field.bounds.width + 1)
+
+            // Both ends must be reachable when the help is taller than the viewport.
+            for edge in [label.bounds.minY, label.bounds.maxY - 1] {
+                let end = NSRect(x: label.bounds.midX, y: edge, width: 1, height: 1)
+                label.scrollToVisible(end)
+                XCTAssertTrue(spin { label.visibleRect.contains(end) }, name + " help cannot be scrolled")
+            }
+        }
+    }
+
     func testLocalKeyMonitorRoutesFieldEditorAndCommandWClosesFill() throws {
         try files.write(Data("{{topic}} {{detail}}".utf8), at: "fields.md")
         let picker = try open()
