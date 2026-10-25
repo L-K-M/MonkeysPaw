@@ -750,6 +750,25 @@ final class MacWishCardTests: XCTestCase {
         XCTAssertEqual(picker.state, .fill, "Escape dismisses Proof before leaving the card")
     }
 
+    func testWordBoundaryFeedbackUsesTheCurrentModelValue() throws {
+        try files.write(Data("{{word}}".utf8), at: "feedback.md")
+        let picker = try open()
+        picker.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(picker.fillModel)
+        XCTAssertTrue(spin { fill.builtinsResolved })
+        var cues: [WishCardCue] = []
+        let feedback = PickerViewState(model: picker, mainThread: DispatchMainThread(),
+            reduceMotion: { true }, playCue: { cues.append($0) }, requestedIntent: { _ in }, createPrompt: { _ in })
+        let priorRender = fill.fields[0]
+        // Model updates synchronously; a native editor may still retain the
+        // same field snapshot for several edits in one SwiftUI update cycle.
+        feedback.setValue("One", field: priorRender)
+        feedback.setValue("One more", field: priorRender)
+        feedback.setValue("One more!", field: priorRender)
+        XCTAssertEqual(cues.filter { $0 == .tick }.count, 2)
+        XCTAssertEqual(fill.values["word"], "One more!")
+    }
+
     func testSoundPreferenceGateDefaultsOnAndHonorsBothDomains() {
         XCTAssertTrue(WishCardSounds.preferenceEnabled(system: nil, global: nil))
         XCTAssertFalse(WishCardSounds.preferenceEnabled(system: NSNumber(value: false), global: nil))

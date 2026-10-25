@@ -60,6 +60,9 @@ final class PickerViewState: ObservableObject {
         self.openSettings = openSettings
         state = model.state
         if let fill = model.fillModel {
+            observedFill = fill
+            observedResolved = fill.builtinsResolved
+            wasReady = fill.deliverEnabled
             clipboardSlip = WishCardSlip.Content(mode: .fill, text: fill.builtinText(.clipboard), summary: fill.clipboardSummary)
         }
         take.onChange = { [weak self] in self?.objectWillChange.send() }
@@ -152,19 +155,22 @@ final class PickerViewState: ObservableObject {
     }
 
     func setValue(_ value: String, field: FillFieldState) {
-        guard isCurrent(), !take.holdsCard else { return }
+        guard isCurrent(), !take.holdsCard, let fill = model.fillModel, fill.state == .editing,
+              let previous = fill.fields.first(where: { $0.name == field.name }) else { return }
         nudgeIndex = nil
         editedFill = true
-        if field.kind == .text, value.count > field.value.count,
-           value.split(whereSeparator: \.isWhitespace).count > field.value.split(whereSeparator: \.isWhitespace).count {
+        // Native edits can arrive before SwiftUI republishes the control's
+        // captured field. Compare with Core's current value for sound feedback.
+        if field.kind == .text, value.count > previous.value.count,
+           value.split(whereSeparator: \.isWhitespace).count > previous.value.split(whereSeparator: \.isWhitespace).count {
             playCue(.tick)
         }
-        if field.kind == .choice, value != field.value { playCue(.tick) }
+        if field.kind == .choice, value != previous.value { playCue(.tick) }
         let generation = inkGeneration
         let revision = (inkRevisions[field.name] ?? 0) &+ 1
         inkRevisions[field.name] = revision
         if !reduceMotion() { wetFields.insert(field.name); drying[field.name] = 0 }
-        model.fillModel?.setValue(value, name: field.name)
+        fill.setValue(value, name: field.name)
         guard !reduceMotion() else { return }
         for step in 1...10 {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * WishCardStyle.dry / 10) { [weak self] in
