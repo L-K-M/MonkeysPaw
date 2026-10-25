@@ -28,6 +28,9 @@ final class LinuxPanel: PanelWindow {
     private var takeHeld = false
     private var cardView: LinuxWishCard?
     private var renderedCard: PromptCard?
+    /// The shown card is bound to a form. `boundFill` is weak and clears once
+    /// a delivered model is released, so it cannot say what is on screen.
+    private var cardIsLive = false
     private var renderedFallback: String?
     private var proofShown = false
     private var queryRevealer: GTK.Widget!
@@ -152,6 +155,7 @@ final class LinuxPanel: PanelWindow {
         cardView?.retire()
         cardView = nil
         renderedCard = nil
+        cardIsLive = false
         renderedFallback = nil
         proofShown = false
         syncStatusView?.retire()
@@ -479,7 +483,7 @@ final class LinuxPanel: PanelWindow {
             case .body(let text): fallback = text
             }
             let row = picker.selectionIndex.flatMap { picker.results.indices.contains($0) ? picker.results[$0] : nil }
-            if wasFill || renderedCard != picker.selectedCard || (picker.selectedCard == nil && renderedFallback != fallback) || cardView == nil {
+            if wasFill || cardIsLive || renderedCard != picker.selectedCard || (picker.selectedCard == nil && renderedFallback != fallback) || cardView == nil {
                 cancelTake()
                 replaceCard(card: picker.selectedCard, title: row?.title ?? "", folder: row?.folder ?? "", fallback: fallback)
             } else { cardView?.updateHeader(title: row?.title ?? "", folder: row?.folder ?? "") }
@@ -604,6 +608,7 @@ final class LinuxPanel: PanelWindow {
         while let child = gtk_widget_get_first_child(cardHost) { gtk_box_remove(mp_box(cardHost), child) }
         let view = LinuxWishCard(card: card, title: title, folder: folder, fill: fill, fallback: fallback, sounds: sounds)
         cardView = view
+        cardIsLive = fill != nil
         renderedCard = card
         renderedFallback = fallback
         gtk_box_append(mp_box(cardHost), view.widget)

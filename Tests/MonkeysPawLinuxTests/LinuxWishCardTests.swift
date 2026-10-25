@@ -455,6 +455,31 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(gtk_widget_get_width(window), pickerWidth)
     }
 
+    func testReopeningAfterDeliveryShowsTheThumbnailNotTheDeliveredCard() throws {
+        // Hold no reference: in the app nothing keeps a delivered FillModel.
+        _ = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertFalse(environment.panel.isVisible)
+        try open()
+        // The selection reads no remembered values: its card has no live blanks.
+        XCTAssertTrue(GTKTestSupport.spin { self.named("fill-field-word") == nil })
+        XCTAssertNotNil(named("card-body"))
+    }
+
+    private func named(_ name: String) -> GTK.Widget? {
+        func find(_ widget: GTK.Widget) -> GTK.Widget? {
+            if String(cString: gtk_widget_get_name(widget)) == name { return widget }
+            var child = gtk_widget_get_first_child(widget)
+            while let current = child {
+                if let found = find(current) { return found }
+                child = gtk_widget_get_next_sibling(current)
+            }
+            return nil
+        }
+        return find(environment.panel.clipboardOwner)
+    }
+
     private func openFill(_ source: String) throws -> FillModel {
         try files.write(Data(source.utf8), at: "wish.md")
         try open()
