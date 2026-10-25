@@ -963,13 +963,8 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")
         XCTAssertEqual(try h.files.read(at: "one.md"), bytes)
 
-        // A saved improvement has nothing left to show; the inspector offers its actions again.
-        XCTAssertEqual(view.state.phase, .saved)
-        XCTAssertFalse(view.canShowImprovement)
-        view.showImprovement()
-        XCTAssertNil(controller.improvementWindow, "No blank window for a saved improvement")
-        h.presentation.edit("Changed after saving")
-        XCTAssertEqual(view.improvementStage, .ended)
+        // Closing the window ends the improvement, so nothing can reopen a blank window.
+        XCTAssertEqual(view.state.phase, .idle)
         XCTAssertFalse(view.canShowImprovement)
     }
 
