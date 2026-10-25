@@ -402,8 +402,12 @@ final class LinuxPanel: PanelWindow {
         guard picker.state != .closed else { cancelTake(); return }
         if case .done = picker.state { return } // Delivery owns the hide.
         guard !isRendering else { return }
+        let wasTaking = isTaking
         isRendering = true
-        defer { isRendering = false }
+        defer {
+            isRendering = false
+            if wasTaking && !isTaking { restoreEditingFocus() }
+        }
         let editing = picker.state != .delivering
         if !editing || (picker.state == .fill && boundFill !== picker.fillModel)
             || (picker.state == .picker && boundFill != nil) {
@@ -728,13 +732,30 @@ final class LinuxPanel: PanelWindow {
                   picker.fillModel === fill, selectionMatches else {
                 self.cancelTake()
                 self.render()
+                self.restoreEditingFocus()
                 return
             }
             self.isTaking = false
             deliver()
             self.cancelTake()
             self.render()
+            self.restoreEditingFocus()
         }
+    }
+
+    private func restoreEditingFocus() {
+        guard !isDestroyed, isVisible, !isTaking, let picker else { return }
+        let target: GTK.Widget
+        switch picker.state {
+        case .fill:
+            guard let fill = picker.fillModel, fill.state == .editing, let index = fill.focusIndex,
+                  let field = cardView?.fieldWidget(at: index) else { return }
+            target = field
+        case .picker: target = queryEntry
+        default: return // Delivery retains its clipboard, hide and focus order.
+        }
+        initialFocus = target
+        gtk_widget_grab_focus(target)
     }
 
     private func cancelTake() {

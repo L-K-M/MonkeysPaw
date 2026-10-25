@@ -215,6 +215,21 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(notifications.notificationCount, 0)
         XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taking"), 0)
         XCTAssertNotEqual(gtk_widget_get_sensitive(try widget("picker-use")), 0)
+        XCTAssertTrue(focused(try widget("fill-field-word")))
+        XCTAssertTrue(key(GDK_KEY_Return))
+    }
+
+    func testChangedSelectionDuringTakeRestoresQueryFocus() throws {
+        try files.write(Data("Alpha wish".utf8), at: "a.md")
+        try files.write(Data("Beta wish".utf8), at: "b.md")
+        try open()
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        environment.pickerModel.selectResult(at: 1)
+        XCTAssertTrue(focused(try widget("picker-query")))
+        try waitPastTake()
+        XCTAssertEqual(environment.pickerModel.state, .picker)
+        XCTAssertEqual(notifications.notificationCount, 0)
+        XCTAssertEqual(try usageCount(), 0)
     }
 
     func testReturnWhileFieldlessClipboardResolvesDoesNotTakeAgain() throws {
