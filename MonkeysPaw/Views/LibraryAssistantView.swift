@@ -3,7 +3,7 @@ import MonkeysPawCore
 import SwiftUI
 
 struct LibraryAssistantView: View {
-    enum Purpose { case currentPrompt, newPrompt, improvement }
+    enum Purpose { case currentPrompt, newPrompt }
 
     @ObservedObject var presentation: LibraryAssistantViewState
     var purpose = Purpose.currentPrompt
@@ -24,7 +24,7 @@ struct LibraryAssistantView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if purpose != .improvement { inputs }
+                    inputs
                     if presentation.state.mutationAccess == .privateCopy {
                         Text(LibraryAssistantStrings.viewer).font(.caption)
                     }
@@ -45,12 +45,9 @@ struct LibraryAssistantView: View {
                             actions
                         }
                     } else {
-                        if purpose == .newPrompt, let artifact = presentation.state.artifact { draft(artifact) }
-                        issues
+                        if let artifact = presentation.state.artifact { draft(artifact) }
+                        LibraryAssistantIssueList(issues: presentation.state.issues)
                         if let diff = presentation.state.diff { LibraryDiffView(diff: diff) }
-                        if purpose == .improvement, let artifact = presentation.state.artifact, !artifact.notes.isEmpty {
-                            Text(verbatim: artifact.notes).textSelection(.enabled)
-                        }
                         actions
                     }
                 }
@@ -175,17 +172,6 @@ struct LibraryAssistantView: View {
         .accessibilityIdentifier("library-assistant-draft")
     }
 
-    private var issues: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(presentation.state.issues.enumerated()), id: \.offset) { item in
-                Text(EditorStrings.issue(item.element))
-                    .foregroundStyle(item.element.severity == .error ? Color.red : Color.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .accessibilityIdentifier("library-assistant-validation")
-    }
-
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
             if presentation.isWorking || presentation.state.isAccepting {
@@ -208,5 +194,20 @@ struct LibraryAssistantView: View {
                 }
             }
         }
+    }
+}
+
+struct LibraryAssistantIssueList: View {
+    let issues: [PromptIssue]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(issues.enumerated()), id: \.offset) { item in
+                Text(EditorStrings.issue(item.element))
+                    .foregroundStyle(item.element.severity == .error ? Color.red : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityIdentifier("library-assistant-validation")
     }
 }

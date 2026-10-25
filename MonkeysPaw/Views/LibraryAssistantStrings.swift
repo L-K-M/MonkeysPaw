@@ -12,6 +12,14 @@ enum LibraryAssistantStrings {
     static let review = "Review"
     static let improveFindings = "Improve selected findings"
     static let generateImprovements = "Generate improvements"
+    static let generatingImprovements = "Generating improvements…"
+    static let closingCancels = "Closing this window cancels the request."
+    static let preparingDiff = "Preparing the diff…"
+    static let invalidImprovement = "The improved prompt has validation errors. Retry with feedback or reject it."
+    static let requestInstruction = "Instruction"
+    static let requestFindings = "Findings"
+    static let diffTitle = "Proposed changes"
+    static let improvedColumn = "Improved"
     static let working = "Working…"
     static let writeHint = "Describe a new reusable prompt. The current prompt is not sent."
     static let brief = "Prompt brief"
@@ -63,6 +71,10 @@ enum LibraryAssistantStrings {
         case .decomposition: return "Decomposition"
         case .placeholders: return "Placeholders"
         }
+    }
+
+    static func findingsSummary(_ findings: [LlmReview.Finding]) -> String {
+        findings.map { "\(criterion($0.criterion)) (\(severity($0.severity)))" }.joined(separator: ", ")
     }
 
     static func placeholder(_ change: PlaceholderChange) -> String {
