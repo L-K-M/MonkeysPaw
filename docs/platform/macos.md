@@ -148,7 +148,7 @@ For Terminal, check the text without submitting it, then clear with Control+C.
 - [ ] NOT RUN: with Library or Settings open, summon from that window and from another app; typing reaches search and fill fields without changing the underlying window. Repeat over a full-screen app without switching Spaces.
 - [ ] NOT RUN: the key panel toggles off; a visible non-key panel raises on toggle.
 - [ ] NOT RUN: the panel opens over the current full-screen Space at the cursor.
-- [ ] NOT RUN: each field kind updates live preview; descriptions appear below controls.
+- [ ] NOT RUN: each field kind updates live preview; long descriptions wrap below controls without clipping, and every line remains reachable by scrolling.
 - [ ] NOT RUN: pointer focus and Tab/Shift+Tab wrap in body first-use order.
 - [ ] NOT RUN: in a form taller than the panel, Tab/Shift+Tab reveal text, multiline and choice fields, including wraparound, without scrolling the preview.
 - [ ] NOT RUN: Return in multiline inserts a newline; Cmd+Return pastes and Option+Return copies.

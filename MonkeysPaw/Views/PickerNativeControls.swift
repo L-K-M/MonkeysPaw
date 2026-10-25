@@ -368,4 +368,12 @@ struct PickerFieldDescription: NSViewRepresentable {
         label.identifier = NSUserInterfaceItemIdentifier("fill-description-" + name)
         label.setAccessibilityLabel(text)
     }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView label: NSTextField, context: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite, width > 0, let cell = label.cell else { return nil }
+
+        // Measure at SwiftUI's width; intrinsic sizing only reserves one line.
+        let bounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
+        return CGSize(width: width, height: ceil(cell.cellSize(forBounds: bounds).height))
+    }
 }
