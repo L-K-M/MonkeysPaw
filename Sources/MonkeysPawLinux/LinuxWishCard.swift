@@ -172,7 +172,8 @@ final class LinuxWishCard {
     /// and character-based widths ignore the CSS letter-spacing. Only a long
     /// name ellipsizes, so it cannot widen the panel.
     private static func fitFolder(_ label: GTK.Widget, _ folder: String) {
-        let long = folder.count > WishCardStyle.folderChars
+        // Measure what is shown: uppercasing can lengthen a name (ß → SS).
+        let long = folder.uppercased().count > WishCardStyle.folderChars
         gtk_label_set_ellipsize(mp_label(label), long ? PANGO_ELLIPSIZE_END : PANGO_ELLIPSIZE_NONE)
     }
 
