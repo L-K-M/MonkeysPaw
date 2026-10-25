@@ -18,12 +18,23 @@ final class ClipboardSummaryTests: XCTestCase {
     }
 
     func testDiffFromPlusMinusThresholdWithMarker() {
-        // Three +/- lines plus a +++/---/@@ marker, without a header line.
+        // Three +/- lines plus a +++/--- file marker, without a header line.
         XCTAssertEqual(kind("--- a/f\n+++ b/f\n-old\n+new"), .diff)
-        XCTAssertEqual(kind("@@\n-a\n+b\n-c"), .diff)
+        // A bare "@@" is not a hunk header.
+        XCTAssertEqual(kind("@@\n-a\n+b\n-c"), .text)
         // Below the +/- count or without any marker stays text.
         XCTAssertEqual(kind("plain\n+a\n-b"), .text)
         XCTAssertEqual(kind("+a\n-b\n+c\nplain"), .text)
+    }
+
+    func testMarkdownRulesAndBulletsAreNotADiff() {
+        XCTAssertEqual(kind("Notes\n---\n- buy milk\n- call Ada\n- ship it"), .text)
+        XCTAssertEqual(kind("Plan\n@@ in prose\n- one\n- two\n- three"), .text)
+    }
+
+    func testCRLFLinesClassifyLikeLF() {
+        XCTAssertEqual(kind("func f() {\r\n    x := 1\r\n}\r\n"), .code)
+        XCTAssertEqual(ClipboardSummary("a\r\nb\r\n").lineCount, 2)
     }
 
     func testErrorMatchesListedMarkersCaseSensitively() {

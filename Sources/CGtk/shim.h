@@ -143,7 +143,8 @@ static inline gboolean mp_high_contrast(void) {
     return result;
 }
 static inline void mp_test_set_animations(gboolean enabled) {
-    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", enabled, NULL);
+    GtkSettings *settings = gtk_settings_get_default();
+    if (settings) g_object_set(settings, "gtk-enable-animations", enabled, NULL);
 }
 static inline char *mp_test_accessible_label(GtkWidget *widget, const char *expected) {
     return gtk_test_accessible_check_property(GTK_ACCESSIBLE(widget), GTK_ACCESSIBLE_PROPERTY_LABEL, expected);

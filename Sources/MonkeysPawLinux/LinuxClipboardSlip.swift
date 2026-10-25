@@ -60,7 +60,8 @@ final class LinuxClipboardSlip {
         self.summary = summary
         if let text {
             textLength = summary?.characterCount ?? text.count
-            shownLines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            // "\r\n" is one Swift Character: split on it too, like the summary.
+            shownLines = text.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }
                 .prefix(Layout.maximumLines).map(String.init)
             hasOverflow = (summary?.lineCount ?? 0) > Layout.maximumLines
         }
@@ -146,18 +147,19 @@ final class LinuxClipboardSlip {
             cairo_new_path(cr)
             for (position, line) in shownLines.enumerated() {
                 let fade = position == Layout.maximumLines - 1 && hasOverflow
-                cairo_push_group(cr)
-                drawText(line.replacingOccurrences(of: "\t", with: "    "), cr: cr, x: Layout.inset,
+                // Only the overflowing last line needs a group for its fade.
+                if fade { cairo_push_group(cr) }
+                drawText(Self.displayable(line), cr: cr, x: Layout.inset,
                          y: Double(Layout.header + position * Layout.line), width: width - 2 * Layout.inset,
                          size: Layout.font, color: WishCardStyle.slipInk)
-                cairo_pop_group_to_source(cr)
                 if fade {
+                    cairo_pop_group_to_source(cr)
                     let mask = cairo_pattern_create_linear(0, Double(Layout.header + position * Layout.line), 0, height)!
                     cairo_pattern_add_color_stop_rgba(mask, 0, 1, 1, 1, 1)
                     cairo_pattern_add_color_stop_rgba(mask, 1, 1, 1, 1, 0)
                     cairo_mask(cr, mask)
                     cairo_pattern_destroy(mask)
-                } else { cairo_paint(cr) }
+                }
             }
             if let summary {
                 let caption = "CLIPBOARD · \(summary.lineCount) LINES · \(summary.kind.rawValue.uppercased())"
@@ -213,6 +215,19 @@ final class LinuxClipboardSlip {
         WishCardStyle.source(cr, WishCardStyle.brassRim)
         cairo_set_line_width(cr, 1)
         cairo_stroke(cr)
+    }
+
+    /// One slip line as Pango should see it: tabs widen to four spaces, a
+    /// CRLF's \r and other control characters are dropped, since Pango
+    /// treats a CR as a line break and stops at a NUL.
+    static func displayable(_ line: String) -> String {
+        var shown = ""
+        for scalar in line.unicodeScalars {
+            if scalar == "\t" { shown += "    "; continue }
+            if scalar.properties.generalCategory == .control { continue }
+            shown.unicodeScalars.append(scalar)
+        }
+        return shown
     }
 }
 #endif

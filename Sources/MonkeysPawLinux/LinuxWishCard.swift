@@ -138,6 +138,9 @@ final class LinuxWishCard {
             }
         }
         GTK.onSignal(body, "destroy") { [weak self] in self?.retire() }
+        // The ready chime marks becoming ready; a card that opens ready (most
+        // remembered-value opens) keeps quiet on the hundredth use.
+        wasReady = fill?.deliverEnabled ?? false
         update()
         if fill != nil, WishCardMotion.enabled {
             for (order, slot) in slots.enumerated() {
@@ -421,7 +424,7 @@ final class LinuxWishCard {
             gtk_grid_attach(mp_grid(row), scroll, 0, 0, 1, 1)
             let overlay = gtk_overlay_new()!
             gtk_overlay_set_child(mp_overlay(overlay), row)
-            let placeholder = GTK.label(field.label + (field.optional ? " — optional" : ""))
+            let placeholder = GTK.label(field.label + (field.optional ? LinuxStrings.optionalLabelSuffix : ""))
             gtk_widget_add_css_class(placeholder, "mp-well-placeholder")
             gtk_widget_set_can_target(placeholder, 0)
             gtk_widget_set_valign(placeholder, GTK_ALIGN_START)

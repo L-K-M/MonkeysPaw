@@ -76,7 +76,10 @@ final class LinuxFeedbackSounds {
             if gtk_media_stream_get_error(mediaStream) == nil { gtk_media_stream_play(mediaStream) }
             else { release(media) }
         }
-        if gtk_media_stream_is_prepared(mediaStream) != 0 { gtk_media_stream_play(mediaStream) }
+        if gtk_media_stream_is_prepared(mediaStream) != 0 {
+            if gtk_media_stream_get_error(mediaStream) == nil { gtk_media_stream_play(mediaStream) }
+            else { release(media) }
+        }
         // A broken backend may never prepare or finish. Bound its ownership
         // without polling or blocking the UI thread.
         GTK.after(Self.playbackLifetime) { [weak self] in self?.release(media) }
@@ -254,7 +257,7 @@ final class LinuxFeedbackSounds {
         }
     }
 
-    /// RBJ biquad bandpass; the constant-skirt variant keeps peak gain near 0 dB.
+    /// RBJ biquad bandpass, constant 0 dB peak-gain form (b0 = -b2 = alpha/a0).
     private struct Bandpass {
         private let b0: Double, b2: Double, a1: Double, a2: Double
         private var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0

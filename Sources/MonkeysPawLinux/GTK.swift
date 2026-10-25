@@ -434,10 +434,12 @@ enum GTK {
             let box = Unmanaged<PaintBox>.fromOpaque(data).takeUnretainedValue()
             guard box.handler != 0, let clock = box.clock else { return }
             let handler = box.handler
+            let work = box.call
             box.handler = 0
-            box.call()
-            // Disconnecting runs the destroy notify, which releases the box.
+            // Disconnect first (its destroy notify releases the box): the work
+            // may tear down the widget and, with it, the frame clock.
             g_signal_handler_disconnect(UnsafeMutableRawPointer(clock), handler)
+            work()
         }
         let release: GClosureNotify = { data, _ in
             guard let data else { return }

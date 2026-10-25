@@ -115,6 +115,8 @@ final class LinuxCardEffects {
         wasReady = ready
 
         guard WishCardMotion.enabled else {
+            // Motion may be switched off mid-effect: disarm what is running.
+            cancel()
             displayedWarmth = target
             if wickAlive { gtk_widget_queue_draw(wick) }
             return
@@ -164,7 +166,12 @@ final class LinuxCardEffects {
         let t = min(1, Double(now - (wickBegan ?? now)) / 1_000_000 / WishCardMotion.wick)
         displayedWarmth = easeFrom + (easeTo - easeFrom) * CardEase.cubicOut(t)
         if wickAlive { gtk_widget_queue_draw(wick) }
-        if t >= 1 { wickTick = nil; return false }
+        if t >= 1 {
+            // Land exactly: float residue would re-arm an empty ease later.
+            displayedWarmth = easeTo
+            wickTick = nil
+            return false
+        }
         return true
     }
 

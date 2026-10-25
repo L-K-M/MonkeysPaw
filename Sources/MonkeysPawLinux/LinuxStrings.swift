@@ -21,6 +21,8 @@ enum LinuxStrings {
     static let preview = "Preview"
     static let optionalField = "Optional."
     static let optionalSuffix = "(Optional.)"
+    static let optionalLabelSuffix = " — optional"
+    static let proof = "Proof"
     static let source = "Source"
     static let usePrompt = "Use"
     static let deliver = "Deliver"

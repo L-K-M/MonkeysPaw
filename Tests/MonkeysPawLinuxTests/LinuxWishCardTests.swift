@@ -11,7 +11,7 @@ final class LinuxWishCardTests: XCTestCase {
     private var notifications: FakePortal!
     private var environment: LinuxEnvironment!
     private var files: RootedFileStore!
-    private var animations: gboolean = 0
+    private var animations: gboolean?
 
     override func setUpWithError() throws {
         let address = try FakePortal.requirePrivateBus()
@@ -36,7 +36,9 @@ final class LinuxWishCardTests: XCTestCase {
         application = nil
         notifications?.shutdown()
         notifications = nil
-        if gtk_settings_get_default() != nil { mp_test_set_animations(animations) }
+        // Restore only a captured baseline: a setUp that threw early must not
+        // switch animations off for the rest of the process.
+        if let animations, gtk_settings_get_default() != nil { mp_test_set_animations(animations) }
         files = nil
         tools = nil
     }
@@ -289,6 +291,13 @@ final class LinuxWishCardTests: XCTestCase {
         } else { XCTFail("Expected blocked proof") }
     }
 
+    func testSlipLinesDropControlCharactersAndWidenTabs() {
+        // Pango breaks lines at CR and stops at NUL; tabs show as four spaces.
+        XCTAssertEqual(LinuxClipboardSlip.displayable("a\tb\r"), "a    b")
+        XCTAssertEqual(LinuxClipboardSlip.displayable("x\u{0}y\u{7}z"), "xyz")
+        XCTAssertEqual(LinuxClipboardSlip.displayable("héllo 界"), "héllo 界")
+    }
+
     func testClipboardSlipAccessibleLabelUsesResolvedSummary() throws {
         try files.write(Data("{{word}}\n{{clipboard}}".utf8), at: "wish.md")
         try open()
@@ -340,16 +349,16 @@ final class LinuxWishCardTests: XCTestCase {
             let deadline = ProcessInfo.processInfo.systemUptime + 1
             XCTAssertTrue(GTKTestSupport.spin { ProcessInfo.processInfo.systemUptime >= deadline })
             let window = environment.panel.clipboardOwner
-            let paintable = gtk_widget_paintable_new(window)!
-            let snapshot = gtk_snapshot_new()!
+            let paintable = try XCTUnwrap(gtk_widget_paintable_new(window))
+            defer { g_object_unref(UnsafeMutableRawPointer(paintable)) }
+            let snapshot = try XCTUnwrap(gtk_snapshot_new())
             gdk_paintable_snapshot(paintable, snapshot, Double(gtk_widget_get_width(window)), Double(gtk_widget_get_height(window)))
             let node = try XCTUnwrap(gtk_snapshot_free_to_node(snapshot))
+            defer { gsk_render_node_unref(node) }
             let renderer = try XCTUnwrap(gtk_native_get_renderer(gtk_widget_get_native(window)))
             let texture = try XCTUnwrap(gsk_renderer_render_texture(renderer, node, nil))
+            defer { g_object_unref(UnsafeMutableRawPointer(texture)) }
             XCTAssertNotEqual(gdk_texture_save_to_png(texture, path), 0)
-            g_object_unref(UnsafeMutableRawPointer(texture))
-            gsk_render_node_unref(node)
-            g_object_unref(UnsafeMutableRawPointer(paintable))
         }
     }
 

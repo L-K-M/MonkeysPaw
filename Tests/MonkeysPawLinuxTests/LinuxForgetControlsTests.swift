@@ -102,7 +102,7 @@ final class LinuxForgetControlsTests: XCTestCase {
         mp_entry_set_text(topic, "Draft")
         gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(detail)), "Edited detail", -1)
         gtk_widget_grab_focus(language)
-        _ = mp_test_emit_key_pressed(environment.panel.clipboardOwner, UInt32(GDK_KEY_Down), GdkModifierType(rawValue: 0))
+        XCTAssertNotEqual(mp_test_emit_key_pressed(environment.panel.clipboardOwner, UInt32(GDK_KEY_Down), GdkModifierType(rawValue: 0)), 0)
         gtk_widget_grab_focus(detail)
         let focus = fill.focusIndex
         GTKClipboard(owner: environment.panel.clipboardOwner).writeText("Keep clipboard")

@@ -15,7 +15,10 @@ public struct ClipboardSummary: Equatable, Sendable {
     public let kind: Kind
 
     init(_ text: String) {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // Swift reads "\r\n" as one Character, so CRLF text (Windows
+        // sources) needs its own separator or it would stay a single line.
+        var lines = text.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }
+            .map(String.init)
         // A final newline terminates the last line; it does not add another.
         if lines.last == "" { lines.removeLast() }
         lineCount = lines.count
@@ -28,11 +31,12 @@ extension ClipboardSummary.Kind {
     static func classify(_ text: String, lines: [String]) -> Self {
         if text.allSatisfy(\.isWhitespace) { return .empty }
 
-        let startsDiff = lines.contains { $0.hasPrefix("diff --git") || $0.hasPrefix("@@ ") }
+        // A git header or a hunk header ("@@ -12,7 +12,9 @@") starts a diff.
+        // File markers carry a path ("--- a/Cart.swift"), so a markdown rule
+        // ("---") above dash bullets stays text.
+        let startsDiff = lines.contains { $0.hasPrefix("diff --git") || $0.hasPrefix("@@ -") }
         let patchLines = lines.count { $0.hasPrefix("+") || $0.hasPrefix("-") }
-        let hasMarker = lines.contains {
-            $0.hasPrefix("+++") || $0.hasPrefix("---") || $0.hasPrefix("@@")
-        }
+        let hasMarker = lines.contains { $0.hasPrefix("+++ ") || $0.hasPrefix("--- ") }
         if startsDiff || (patchLines >= 3 && hasMarker) { return .diff }
 
         if text.contains("Traceback") || text.contains("Exception") || text.contains("panic:")
