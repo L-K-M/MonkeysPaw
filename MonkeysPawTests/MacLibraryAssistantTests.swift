@@ -1015,6 +1015,25 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertTrue(h.delegate.libraryWindow?.improvementWindow?.window?.isVisible == true)
     }
 
+    func testStaleInvalidImprovementKeepsShowingItsIssues() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        let view = try h.assistant()
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        h.presentation.edit("Changed while working")
+        try h.respond(MacLibraryAssistantHarness.artifact(body: "{{clipboard}}", field: "clipboard"), phase: .draft)
+        XCTAssertTrue(view.state.isStale)
+        XCTAssertEqual(view.improvementStage, .invalid, "Errors explain why a fresh diff cannot help")
+        XCTAssertTrue(view.showsRefresh)
+        // A failed re-merge keeps Core's stale flag; the issues must stay visible.
+        view.showDiff()
+        h.work.drain()
+        XCTAssertTrue(view.state.isStale)
+        XCTAssertEqual(view.improvementStage, .invalid)
+        XCTAssertFalse(view.canAccept)
+    }
+
     func testImproveOpensResizableWindowAndInspectorCanHideWithoutCancelling() throws {
         let h = try MacLibraryAssistantHarness()
         defer { h.close() }
