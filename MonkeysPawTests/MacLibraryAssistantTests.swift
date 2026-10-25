@@ -968,6 +968,65 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertFalse(view.canShowImprovement)
     }
 
+    func testQueuedImprovementAcceptanceCanBeCancelledAndAcceptedAgain() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        h.presentation.edit("Unsaved source")
+        let view = try h.assistant()
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact(body: "Improved"))
+        let artifact = try XCTUnwrap(view.state.artifact)
+        let transcript = view.state.transcript
+        let selection = try XCTUnwrap(h.presentation.editorState.prompt)
+        let improvement = try XCTUnwrap(controller.improvementWindow)
+        let window = try XCTUnwrap(improvement.window)
+
+        // Revert holds an editor decision without changing the preview.
+        h.presentation.editor.request(.revert)
+        let earlier = try XCTUnwrap(h.presentation.editorState.pendingDecision)
+        XCTAssertEqual(earlier.action, .revert)
+        XCTAssertTrue(view.canAccept)
+        view.accept()
+        XCTAssertEqual(view.improvementStage, .saving)
+        XCTAssertEqual(h.presentation.editorState.queuedActions, [.open(selection)])
+        h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == false }
+
+        // The window's own Cancel must withdraw only the queued acceptance.
+        h.press("library-assistant-cancel", in: window)
+        h.waitUntil { view.improvementStage == .failed }
+        guard case .failed(.cancelled) = view.state.acceptanceOutcome else {
+            return XCTFail("Withdrawing the queued acceptance must report cancellation")
+        }
+        XCTAssertNil(view.state.candidate)
+        XCTAssertNil(view.state.diff)
+        XCTAssertEqual(view.state.artifact, artifact)
+        XCTAssertEqual(view.state.transcript, transcript)
+        XCTAssertEqual(view.resultMessage, "Acceptance cancelled.")
+        XCTAssertEqual(h.presentation.editorState.pendingDecision, earlier)
+        XCTAssertTrue(h.presentation.editorState.queuedActions.isEmpty)
+        XCTAssertEqual(h.presentation.editorState.source, "Unsaved source")
+        XCTAssertTrue(h.presentation.editorState.isDirty)
+        XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        XCTAssertTrue(controller.improvementWindow === improvement)
+        XCTAssertTrue(window.isVisible)
+
+        h.presentation.editor.resolveDecision(.cancel, id: earlier.id)
+        XCTAssertTrue(view.showsRefresh)
+        view.showDiff()
+        h.work.drain()
+        XCTAssertEqual(view.improvementStage, .ready)
+        XCTAssertTrue(view.canAccept)
+        let bytes = try XCTUnwrap(view.state.candidate?.content.canonicalBytes)
+        view.accept()
+        h.work.drain()
+        h.waitUntil { controller.improvementWindow == nil }
+        XCTAssertEqual(try h.files.read(at: "one.md"), bytes)
+        XCTAssertFalse(window.isVisible)
+    }
+
     func testOutdatedImprovementStaysOpenUntilFreshDiff() throws {
         let h = try MacLibraryAssistantHarness()
         defer { h.close() }
@@ -1017,6 +1076,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         try h.request { view.improve() }
         try h.respond(MacLibraryAssistantHarness.artifact(body: "{{clipboard}}", field: "clipboard"), phase: .draft)
         XCTAssertEqual(view.improvementStage, .invalid)
+        XCTAssertEqual(view.state.artifact?.body, "{{clipboard}}")
         XCTAssertFalse(view.canAccept)
         XCTAssertTrue(h.delegate.libraryWindow?.improvementWindow?.window?.isVisible == true)
     }
@@ -1259,6 +1319,43 @@ private final class MacLibraryAssistantHarness {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
         }
         XCTAssertTrue(predicate(), "Condition not met within \(timeout) s", file: file, line: line)
+    }
+
+    /// Presses a SwiftUI control through in-process accessibility, as MacUITourTests does;
+    /// AXPress runs the control's real action.
+    func press(_ identifier: String, in window: NSWindow, file: StaticString = #filePath, line: UInt = #line) {
+        var control: NSObject?
+        waitUntil({
+            control = Self.accessibilityElement(identifier, in: window)
+            return control != nil
+        }, file: file, line: line)
+        guard let control else { return }
+
+        let press = Selector(("accessibilityPerformPress"))
+        XCTAssertTrue(control.responds(to: press), file: file, line: line)
+        _ = control.perform(press)
+    }
+
+    // SwiftUI nodes expose these selectors without protocol conformance.
+    private static func accessibilityElement(_ identifier: String, in window: NSWindow) -> NSObject? {
+        // Window chrome can expose a partial tree; the content view holds the rest.
+        var roots: [NSObject] = [window]
+        if let content = window.contentView { roots.append(content) }
+        return roots.lazy.compactMap { accessibilityElement(identifier, under: $0, depth: 14) }.first
+    }
+
+    private static func accessibilityElement(_ identifier: String, under root: NSObject, depth: Int) -> NSObject? {
+        let children = #selector(NSAccessibilityProtocol.accessibilityChildren)
+        guard depth > 0, root.responds(to: children),
+              let nodes = root.perform(children)?.takeUnretainedValue() as? [Any] else { return nil }
+
+        let identifierSelector = Selector(("accessibilityIdentifier"))
+        for case let node as NSObject in nodes {
+            if node.responds(to: identifierSelector),
+               node.perform(identifierSelector)?.takeUnretainedValue() as? String == identifier { return node }
+            if let match = accessibilityElement(identifier, under: node, depth: depth - 1) { return match }
+        }
+        return nil
     }
 
     func request(_ start: () -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
