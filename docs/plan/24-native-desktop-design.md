@@ -251,4 +251,6 @@ specified elsewhere.
   the card remains paper. Disabling GTK animations skips all custom motion
   and delivers immediately. Quiet synthesized tick, ready, take and nudge
   sounds respect GTK feedback/event preferences; tests and
-  `MONKEYSPAW_SOUNDS=0` silence them. Missing media support stays silent.
+  `MONKEYSPAW_SOUNDS=0` silence them. The cues play from files in the
+  private runtime directory, since GTK's GStreamer backend aborts on
+  stream-backed media. Missing media support or runtime storage stays silent.

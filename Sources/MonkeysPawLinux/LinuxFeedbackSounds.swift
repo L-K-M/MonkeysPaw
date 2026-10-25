@@ -4,9 +4,11 @@ import Foundation
 
 /// GtkMediaFile playback for short picker and delivery cues.
 ///
-/// The four WAVs are synthesized in memory once at first play; each play wraps
-/// the bytes in a GBytes-backed GMemoryInputStream, so no audio ever touches
-/// the filesystem. Every GtkMediaFile is retained until its stream reports
+/// The four WAVs are synthesized once at first play and written to the
+/// private runtime directory. Files, not memory streams: GTK's GStreamer
+/// backend asserts (aborting the app) on stream-backed media files. Without
+/// a runtime directory, or if writing fails, the cues stay silent. Every
+/// GtkMediaFile is retained until its stream reports
 /// "ended" or "error", then released through an idle source so the object
 /// cannot finalize inside its own signal emission or call stack.
 ///
@@ -30,16 +32,20 @@ final class LinuxFeedbackSounds {
     private static let playbackLifetime = 3.0
 
     private let enabled: Bool
-    private var wavs: [Sound: Data]?
+    private let directory: URL?
+    private var files: [Sound: String]?
     private var playing = Set<UnsafeMutableRawPointer>()
 
     init(environment: [String: String]? = nil) {
         guard let environment, environment["MONKEYSPAW_SOUNDS"] != "0" else {
             enabled = false
+            directory = nil
             return
         }
         enabled = environment["XCTestConfigurationFilePath"] == nil
             && !ProcessInfo.processInfo.processName.lowercased().contains("xctest")
+        directory = LinuxPaths(environment: environment).runtimeDirectory?
+            .appendingPathComponent("sounds", isDirectory: true)
     }
 
     func play(_ sound: Sound) {
@@ -47,20 +53,7 @@ final class LinuxFeedbackSounds {
         precondition(Thread.isMainThread, "LinuxFeedbackSounds.play requires the GTK thread")
         guard mp_settings_boolean(sound.settingName) != 0 else { return }
 
-        let wav = cachedWAV(for: sound)
-        guard let bytes = wav.withUnsafeBytes({ g_bytes_new($0.baseAddress, gsize($0.count)) }) else { return }
-        guard let stream = g_memory_input_stream_new_from_bytes(bytes) else {
-            g_bytes_unref(bytes)
-            return
-        }
-        g_bytes_unref(bytes)
-
-        // The media file retains the stream through its input-stream property.
-        guard let file = gtk_media_file_new_for_input_stream(stream) else {
-            g_object_unref(UnsafeMutableRawPointer(stream))
-            return
-        }
-        g_object_unref(UnsafeMutableRawPointer(stream))
+        guard let path = cachedFile(for: sound), let file = gtk_media_file_new_for_filename(path) else { return }
 
         let media = UnsafeMutableRawPointer(file)
         let mediaStream = media.assumingMemoryBound(to: GtkMediaStream.self)
@@ -89,12 +82,28 @@ final class LinuxFeedbackSounds {
         GTK.after(Self.playbackLifetime) { [weak self] in self?.release(media) }
     }
 
-    /// First play synthesizes all four cues so later calls never resample.
-    private func cachedWAV(for sound: Sound) -> Data {
-        if wavs == nil {
-            wavs = Dictionary(uniqueKeysWithValues: Sound.allCases.map { ($0, Self.wavData(for: $0)) })
+    /// First play writes all four cues so later calls never resample.
+    private func cachedFile(for sound: Sound) -> String? {
+        if files == nil { files = directory.map(Self.writeCues) ?? [:] }
+        return files?[sound]
+    }
+
+    /// Writes every cue into `directory` (created private) and returns their
+    /// paths; any failure returns none, which keeps playback silent.
+    static func writeCues(to directory: URL) -> [Sound: String] {
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            var written: [Sound: String] = [:]
+            for sound in Sound.allCases {
+                let url = directory.appendingPathComponent("\(sound).wav")
+                try wavData(for: sound).write(to: url, options: .atomic)
+                written[sound] = url.path
+            }
+            return written
+        } catch {
+            return [:]
         }
-        return wavs?[sound] ?? Data()
     }
 
     private func release(_ media: UnsafeMutableRawPointer) {

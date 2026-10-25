@@ -24,5 +24,28 @@ final class LinuxFeedbackSoundsTests: XCTestCase {
             XCTAssertEqual(Double(peak) / 32_767, pow(10, decibels / 20), accuracy: 1 / 32_767)
         }
     }
+
+    /// GTK's GStreamer backend aborts on stream-backed media, so playback
+    /// reads cue files written once into a private directory.
+    func testCuesAreWrittenAsPrivateFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("sounds", isDirectory: true)
+        let files = LinuxFeedbackSounds.writeCues(to: directory)
+        XCTAssertEqual(Set(files.keys), Set(LinuxFeedbackSounds.Sound.allCases))
+        for (sound, path) in files {
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), LinuxFeedbackSounds.wavData(for: sound))
+        }
+        let mode = try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o700)
+    }
+
+    func testUnwritableDirectoryKeepsPlaybackSilent() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // A file where the directory should be: root-proof, unlike chmod.
+        try Data("x".utf8).write(to: root)
+        XCTAssertTrue(LinuxFeedbackSounds.writeCues(to: root.appendingPathComponent("sounds")).isEmpty)
+    }
 }
 #endif
