@@ -5,7 +5,7 @@ import MonkeysPawCore
 /// Pure routing; widget callbacks forward the resulting presentation intent.
 enum LinuxPickerKeys {
     enum Intent: Equatable {
-        case moveUp, moveDown, edit, openLibrary, openSettings, escape
+        case moveUp, moveDown, edit, openLibrary, openSettings, escape, toggleProof
         case use(DeliveryMode)
         case usePreferred
         case focusNext, focusPrevious, deliverPreferred
@@ -23,6 +23,7 @@ enum LinuxPickerKeys {
         let modifiers = modifiers & relevant // Caps/Num Lock do not change bindings.
 
         if key == UInt32(GDK_KEY_Escape), modifiers == 0 { return .escape }
+        if [UInt32(GDK_KEY_p), UInt32(GDK_KEY_P)].contains(key), modifiers == control { return .toggleProof }
         if state == .picker {
             if key == UInt32(GDK_KEY_Up), modifiers == 0 { return .moveUp }
             if key == UInt32(GDK_KEY_Down), modifiers == 0 { return .moveDown }

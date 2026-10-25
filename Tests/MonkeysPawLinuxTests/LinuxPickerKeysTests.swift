@@ -5,6 +5,14 @@ import XCTest
 @testable import MonkeysPawLinux
 
 final class LinuxPickerKeysTests: XCTestCase {
+    func testProofToggleWorksInPickerAndFillWithEitherLetterCase() {
+        for state: PickerModel.State in [.picker, .fill] {
+            for key in [GDK_KEY_p, GDK_KEY_P] {
+                XCTAssertEqual(LinuxPickerKeys.intent(for: UInt32(key), modifiers: GDK_CONTROL_MASK.rawValue,
+                                                      state: state), .toggleProof)
+            }
+        }
+    }
     private let control = GDK_CONTROL_MASK.rawValue
     private let shift = GDK_SHIFT_MASK.rawValue
     private let alt = GDK_ALT_MASK.rawValue

@@ -73,6 +73,7 @@ static inline GtkWindow    *mp_window(GtkWidget *w)    { return GTK_WINDOW(w); }
 static inline GtkWidget    *mp_window_widget(GtkWindow *w) { return GTK_WIDGET(w); }
 static inline GtkButton    *mp_button(GtkWidget *w)  { return GTK_BUTTON(w); }
 static inline GtkBox       *mp_box(GtkWidget *w)       { return GTK_BOX(w); }
+static inline GtkGrid      *mp_grid(GtkWidget *w)      { return GTK_GRID(w); }
 static inline GtkLabel     *mp_label(GtkWidget *w)     { return GTK_LABEL(w); }
 static inline GtkEntry     *mp_entry(GtkWidget *w)     { return GTK_ENTRY(w); }
 static inline GtkEditable  *mp_editable(GtkWidget *w)  { return GTK_EDITABLE(w); }
@@ -97,6 +98,7 @@ static inline GtkMenuButton *mp_menu_button(GtkWidget *w) { return GTK_MENU_BUTT
 static inline GtkPopover *mp_popover(GtkWidget *w) { return GTK_POPOVER(w); }
 static inline GtkPopoverMenu *mp_popover_menu(GtkWidget *w) { return GTK_POPOVER_MENU(w); }
 static inline GtkOverlay *mp_overlay(GtkWidget *w) { return GTK_OVERLAY(w); }
+static inline GtkDrawingArea *mp_drawing_area(GtkWidget *w) { return GTK_DRAWING_AREA(w); }
 static inline GtkWidget *mp_row_widget(GtkListBoxRow *row) { return GTK_WIDGET(row); }
 static inline GObject *mp_object(GtkWidget *w) { return G_OBJECT(w); }
 static inline GtkRevealer *mp_revealer(GtkWidget *w) { return GTK_REVEALER(w); }
@@ -124,6 +126,47 @@ static inline void mp_accessible_description(GtkWidget *w, const char *descripti
     gtk_accessible_update_property(GTK_ACCESSIBLE(w), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, description, -1);
 }
 static inline GDBusConnection *mp_dbus_connection(gpointer object) { return G_DBUS_CONNECTION(object); }
+
+/* Settings and text-tag properties need fixed-arity bridges for Swift. */
+static inline gboolean mp_settings_boolean(const char *name) {
+    GtkSettings *settings = gtk_settings_get_default();
+    gboolean enabled = FALSE;
+    if (settings) g_object_get(settings, name, &enabled, NULL);
+    return enabled;
+}
+static inline gboolean mp_high_contrast(void) {
+    GtkSettings *settings = gtk_settings_get_default();
+    char *name = NULL;
+    if (settings) g_object_get(settings, "gtk-theme-name", &name, NULL);
+    gboolean result = name && strstr(name, "HighContrast") != NULL;
+    g_free(name);
+    return result;
+}
+static inline void mp_test_set_animations(gboolean enabled) {
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", enabled, NULL);
+}
+static inline char *mp_test_accessible_label(GtkWidget *widget, const char *expected) {
+    return gtk_test_accessible_check_property(GTK_ACCESSIBLE(widget), GTK_ACCESSIBLE_PROPERTY_LABEL, expected);
+}
+static inline GtkTextTag *mp_card_tag(GtkTextBuffer *buffer, const char *family,
+                                    double size, const char *foreground) {
+    GtkTextTag *tag = gtk_text_tag_new(NULL);
+    PangoFontDescription *font = pango_font_description_new();
+    pango_font_description_set_family(font, family);
+    pango_font_description_set_absolute_size(font, size * PANGO_SCALE);
+    g_object_set(tag, "font-desc", font, "foreground", foreground, NULL);
+    pango_font_description_free(font);
+    gtk_text_tag_table_add(gtk_text_buffer_get_tag_table(buffer), tag);
+    g_object_unref(tag);
+    return tag;
+}
+static inline GtkTextTag *mp_card_anchor_baseline(GtkTextBuffer *buffer, int rise) {
+    GtkTextTag *tag = gtk_text_tag_new(NULL);
+    g_object_set(tag, "rise", rise, NULL);
+    gtk_text_tag_table_add(gtk_text_buffer_get_tag_table(buffer), tag);
+    g_object_unref(tag);
+    return tag;
+}
 
 /* ---- M1b delivery and setup --------------------------------------------- */
 

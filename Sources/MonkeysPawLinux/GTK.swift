@@ -10,6 +10,75 @@ import Foundation
 enum GTK {
     typealias Widget = UnsafeMutablePointer<GtkWidget>
 
+    private final class DrawBox {
+        let call: (OpaquePointer, Int32, Int32) -> Void
+        init(_ call: @escaping (OpaquePointer, Int32, Int32) -> Void) { self.call = call }
+    }
+
+    /// GTK owns the closure until a new draw function replaces it or the area dies.
+    static func draw(_ area: Widget, _ handler: @escaping (OpaquePointer, Int32, Int32) -> Void) {
+        let data = Unmanaged.passRetained(DrawBox(handler)).toOpaque()
+        gtk_drawing_area_set_draw_func(mp_drawing_area(area), { _, cr, width, height, data in
+            guard let cr, let data else { return }
+            Unmanaged<DrawBox>.fromOpaque(data).takeUnretainedValue().call(cr, width, height)
+        }, data, { data in
+            if let data { Unmanaged<DrawBox>.fromOpaque(data).release() }
+        })
+    }
+
+    private final class TickBox {
+        let call: (Int64) -> Bool
+        init(_ call: @escaping (Int64) -> Bool) { self.call = call }
+    }
+
+    /// Frame-clock callbacks run on GLib's UI thread. False removes the callback.
+    @discardableResult
+    static func tick(_ widget: Widget, _ handler: @escaping (Int64) -> Bool) -> guint {
+        let data = Unmanaged.passRetained(TickBox(handler)).toOpaque()
+        return gtk_widget_add_tick_callback(widget, { _, clock, data in
+            guard let clock, let data else { return 0 }
+            return Unmanaged<TickBox>.fromOpaque(data).takeUnretainedValue().call(
+                Int64(gdk_frame_clock_get_frame_time(clock))) ? 1 : 0
+        }, data, { data in
+            if let data { Unmanaged<TickBox>.fromOpaque(data).release() }
+        })
+    }
+
+    static func removeTick(_ widget: Widget, _ id: guint) {
+        gtk_widget_remove_tick_callback(widget, id)
+    }
+
+    private final class ResizeBox {
+        let call: (Int32, Int32) -> Void
+        init(_ call: @escaping (Int32, Int32) -> Void) { self.call = call }
+    }
+
+    static func onResize(_ area: Widget, _ handler: @escaping (Int32, Int32) -> Void) {
+        let data = Unmanaged.passRetained(ResizeBox(handler)).toOpaque()
+        let callback: @convention(c) (UnsafeMutableRawPointer?, gint, gint, UnsafeMutableRawPointer?) -> Void = { _, width, height, data in
+            guard let data else { return }
+            Unmanaged<ResizeBox>.fromOpaque(data).takeUnretainedValue().call(width, height)
+        }
+        let release: GClosureNotify = { data, _ in
+            if let data { Unmanaged<ResizeBox>.fromOpaque(data).release() }
+        }
+        mp_connect(area, "resize", unsafeBitCast(callback, to: GCallback.self), data, release)
+    }
+
+    static func onClick(_ widget: Widget, _ handler: @escaping () -> Void) {
+        let gesture = gtk_gesture_click_new()!
+        let data = Unmanaged.passRetained(ClickBox { _, _ in handler() }).toOpaque()
+        let pressed: @convention(c) (UnsafeMutableRawPointer?, gint, Double, Double, UnsafeMutableRawPointer?) -> Void = { _, _, x, y, data in
+            guard let data else { return }
+            Unmanaged<ClickBox>.fromOpaque(data).takeUnretainedValue().call(x, y)
+        }
+        let release: GClosureNotify = { data, _ in
+            if let data { Unmanaged<ClickBox>.fromOpaque(data).release() }
+        }
+        mp_connect(UnsafeMutableRawPointer(gesture), "released", unsafeBitCast(pressed, to: GCallback.self), data, release)
+        gtk_widget_add_controller(widget, mp_gesture_controller(gesture))
+    }
+
     private static let millisecondsPerSecond: TimeInterval = 1_000
     private static let maximumDelayMilliseconds = TimeInterval(guint.max)
 

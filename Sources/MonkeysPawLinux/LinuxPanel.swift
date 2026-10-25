@@ -9,13 +9,6 @@ final class LinuxPanel: PanelWindow {
         var isActive = false
     }
 
-    private struct FieldControl {
-        let name: String
-        let kind: FieldKind
-        let widget: GTK.Widget
-        let preedit: Preedit?
-    }
-
     private let window: GTK.Widget
     private var isDestroyed = false
     private weak var picker: PickerModel?
@@ -26,7 +19,18 @@ final class LinuxPanel: PanelWindow {
     private var isRendering = false
     private var renderedResults: [PickerResultRow] = []
     private var renderedFocus: Int?
-    private var controls: [FieldControl] = []
+    private let sounds: LinuxFeedbackSounds
+    private let take = LinuxPawTake()
+    private var takeRevision = 0
+    private var isTaking = false
+    private var cardView: LinuxWishCard?
+    private var renderedCard: PromptCard?
+    private var renderedFallback: String?
+    private var proofShown = false
+    private var queryRevealer: GTK.Widget!
+    private var resultsRevealer: GTK.Widget!
+    private var proofStack: GTK.Widget!
+    private var cardHost: GTK.Widget!
     private var transientStatus: String?
     private var queryPreedit: Preedit?
     private var openSettings: (() -> Void)?
@@ -41,7 +45,6 @@ final class LinuxPanel: PanelWindow {
     private var assistantButton: GTK.Widget!
     private var assistantHint: GTK.Widget!
     private var folderButton: GTK.Widget!
-    private var formBox: GTK.Widget!
     private var preview: GTK.Widget!
     private var hint: GTK.Widget!
     private var status: GTK.Widget!
@@ -57,10 +60,13 @@ final class LinuxPanel: PanelWindow {
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
     var isActiveAndVisible: Bool { isVisible && gtk_window_is_active(mp_window(window)) != 0 }
 
-    init(application: UnsafeMutablePointer<GtkApplication>) {
+    init(application: UnsafeMutablePointer<GtkApplication>, sounds: LinuxFeedbackSounds = LinuxFeedbackSounds()) {
+        self.sounds = sounds
         window = gtk_application_window_new(application)!
         GTK.hideOnClose(window)
         LinuxStyle.install(on: window)
+        WishCardStyle.install(on: window)
+        if mp_high_contrast() == 0 { gtk_widget_add_css_class(window, "mp-night") }
         // Transient launcher panel: no titlebar, rounded corners and a theme
         // border drawn by the mp-picker CSS (§24.5).
         gtk_window_set_decorated(mp_window(window), 0)
@@ -72,6 +78,8 @@ final class LinuxPanel: PanelWindow {
         GTK.onSignal(UnsafeMutableRawPointer(window), "destroy") { [weak self] in
             guard let self else { return }
             // GTK owns the window; its Swift wrapper and queued UI work can outlive it.
+            self.cancelTake()
+            self.cardView?.retire()
             self.isDestroyed = true
             self.syncStatusView?.retire(.destroyed)
             self.blurRevision += 1
@@ -107,11 +115,27 @@ final class LinuxPanel: PanelWindow {
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed else { return }
             if self.isVisible { self.syncStatusView?.show() }
-            else { self.syncStatusView?.suspend() }
+            else { self.cancelTake(); self.syncStatusView?.suspend() }
+        }
+        if let settings = gtk_settings_get_default() {
+            GTK.onNotify(UnsafeMutableRawPointer(settings), "gtk-theme-name") { [weak self] in
+                guard let self, !self.isDestroyed else { return }
+                if mp_high_contrast() != 0 { gtk_widget_remove_css_class(self.window, "mp-night") }
+                else { gtk_widget_add_css_class(self.window, "mp-night") }
+            }
         }
     }
 
-    deinit { syncStatusView?.retire(isDestroyed ? .destroyed : .rebind) }
+    deinit {
+        // GtkApplication may retain the native window after the environment
+        // releases this driver. Retire custom children before their Swift
+        // owners (and their weak teardown callbacks) disappear.
+        if !isDestroyed {
+            cancelTake()
+            cardView?.retire()
+        }
+        syncStatusView?.retire(isDestroyed ? .destroyed : .rebind)
+    }
 
     func rebind(picker: PickerModel, session: DesktopSession, openSetup: @escaping () -> Void,
                 openSettings: @escaping () -> Void,
@@ -120,6 +144,12 @@ final class LinuxPanel: PanelWindow {
                 requestedIntent: @escaping (PickerModel.Intent) -> Void,
                 createPrompt: @escaping (String) -> Void) {
         guard !isDestroyed else { return }
+        cancelTake()
+        cardView?.retire()
+        cardView = nil
+        renderedCard = nil
+        renderedFallback = nil
+        proofShown = false
         syncStatusView?.retire()
         self.picker?.onChange = nil
         self.picker = nil
@@ -127,7 +157,6 @@ final class LinuxPanel: PanelWindow {
         isRendering = true
         gtk_window_set_focus(mp_window(window), nil)
         boundFill = nil
-        controls = []
         initialFocus = nil
         renderedResults = []
         renderedFocus = nil
@@ -150,7 +179,12 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_add_css_class(queryEntry, "mp-picker-search")
         mp_accessible_label(queryEntry, LinuxStrings.searchPrompts)
         initialFocus = queryEntry
-        gtk_box_append(mp_box(content), queryEntry)
+        queryRevealer = gtk_revealer_new()!
+        gtk_revealer_set_transition_type(mp_revealer(queryRevealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_UP)
+        gtk_revealer_set_transition_duration(mp_revealer(queryRevealer), WishCardMotion.milliseconds(WishCardMotion.search))
+        gtk_revealer_set_reveal_child(mp_revealer(queryRevealer), 1)
+        gtk_revealer_set_child(mp_revealer(queryRevealer), queryEntry)
+        gtk_box_append(mp_box(content), queryRevealer)
         GTK.onSignal(queryEntry, "changed") { [weak self, weak picker] in
             guard let self, !self.isDestroyed, let picker, self.picker === picker,
                   !self.isRendering else { return }
@@ -179,7 +213,7 @@ final class LinuxPanel: PanelWindow {
             guard let self, !self.isDestroyed, let picker, self.picker === picker,
                   !self.isRendering, let position else { return }
             picker.selectResult(at: position)
-            picker.usePreferred()
+            self.usePreferred()
         }
 
         noMatchesBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
@@ -208,9 +242,24 @@ final class LinuxPanel: PanelWindow {
         gtk_box_append(mp_box(pickerPage), noMatchesBox)
         gtk_stack_add_named(mp_stack(stack), pickerPage, "picker")
 
-        formBox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8)!
-        gtk_stack_add_named(mp_stack(stack), scrolled(formBox), "fill")
-        gtk_box_append(mp_box(split), stack)
+        resultsRevealer = gtk_revealer_new()!
+        gtk_revealer_set_transition_type(mp_revealer(resultsRevealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT)
+        gtk_revealer_set_transition_duration(mp_revealer(resultsRevealer), WishCardMotion.milliseconds(WishCardMotion.results))
+        gtk_revealer_set_reveal_child(mp_revealer(resultsRevealer), 1)
+        gtk_revealer_set_child(mp_revealer(resultsRevealer), stack)
+        gtk_box_append(mp_box(split), resultsRevealer)
+        proofStack = gtk_stack_new()!
+        gtk_widget_set_name(proofStack, "picker-proof-stack")
+        gtk_stack_set_hhomogeneous(mp_stack(proofStack), 0)
+        gtk_stack_set_vhomogeneous(mp_stack(proofStack), 0)
+        gtk_widget_set_hexpand(proofStack, 1)
+        gtk_widget_set_vexpand(proofStack, 1)
+        cardHost = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
+        let cardScroll = scrolled(cardHost)
+        gtk_scrolled_window_set_policy(mp_scrolled_window(cardScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
+        for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
+                     gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(cardHost, Int32(WishCardStyle.cardGap)) }
+        gtk_stack_add_named(mp_stack(proofStack), cardScroll, "card")
         preview = gtk_text_view_new()!
         gtk_widget_set_name(preview, "picker-preview")
         mp_accessible_label(preview, LinuxStrings.preview)
@@ -219,7 +268,10 @@ final class LinuxPanel: PanelWindow {
         gtk_text_view_set_wrap_mode(mp_text_view(preview), GTK_WRAP_WORD_CHAR)
         let previewScroll = scrolled(preview)
         gtk_widget_set_hexpand(previewScroll, 1)
-        gtk_box_append(mp_box(split), previewScroll)
+        gtk_widget_add_css_class(previewScroll, "mp-proof")
+        gtk_stack_add_named(mp_stack(proofStack), previewScroll, "proof")
+        gtk_stack_set_visible_child_name(mp_stack(proofStack), "card")
+        gtk_box_append(mp_box(split), proofStack)
         gtk_box_append(mp_box(content), split)
 
         status = GTK.label("")
@@ -319,11 +371,18 @@ final class LinuxPanel: PanelWindow {
             gtk_widget_add_css_class(button, "flat")
             gtk_box_append(mp_box(actions), button)
         }
+        let proofButton = GTK.button("Ctrl+P Proof") { [weak self] in self?.toggleProof() }
+        gtk_widget_set_name(proofButton, "picker-proof")
+        gtk_widget_add_css_class(proofButton, "flat")
+        gtk_box_append(mp_box(actions), proofButton)
         gtk_box_append(mp_box(actions), menu)
         gtk_box_append(mp_box(bottom), actions)
         gtk_box_append(mp_box(footer), bottom)
         gtk_box_append(mp_box(content), footer)
-        gtk_window_set_child(mp_window(window), content)
+        let overlay = gtk_overlay_new()!
+        gtk_overlay_set_child(mp_overlay(overlay), content)
+        gtk_overlay_add_overlay(mp_overlay(overlay), take.widget)
+        gtk_window_set_child(mp_window(window), overlay)
         if isVisible { syncView.show() }
 
         picker.onChange = { [weak self, weak picker] in
@@ -339,7 +398,8 @@ final class LinuxPanel: PanelWindow {
     }
 
     private func render() {
-        guard !isDestroyed, let picker, picker.state != .closed else { return }
+        guard !isDestroyed, let picker else { return }
+        guard picker.state != .closed else { cancelTake(); return }
         if case .done = picker.state { return } // Delivery owns the hide.
         guard !isRendering else { return }
         isRendering = true
@@ -351,9 +411,10 @@ final class LinuxPanel: PanelWindow {
             // Disabling/hiding their page first loses that event on GTK 4.8.
             gtk_window_set_focus(mp_window(window), nil)
         }
-        gtk_widget_set_sensitive(queryEntry, picker.state == .picker ? 1 : 0)
-        gtk_widget_set_sensitive(stack, editing ? 1 : 0)
-        gtk_widget_set_sensitive(actions, editing ? 1 : 0)
+        gtk_widget_set_sensitive(queryEntry, picker.state == .picker && !isTaking ? 1 : 0)
+        gtk_widget_set_sensitive(proofStack, editing && !isTaking ? 1 : 0)
+        gtk_widget_set_sensitive(stack, editing && !isTaking ? 1 : 0)
+        gtk_widget_set_sensitive(actions, editing && !isTaking ? 1 : 0)
         let hasPrompt = picker.fillModel != nil || picker.selectionIndex.map { picker.results.indices.contains($0) } == true
         gtk_widget_set_visible(forgetButton, hasPrompt ? 1 : 0)
         gtk_widget_set_sensitive(forgetButton, editing ? 1 : 0)
@@ -362,29 +423,35 @@ final class LinuxPanel: PanelWindow {
 
         if String(cString: mp_entry_text(queryEntry)) != picker.query { mp_entry_set_text(queryEntry, picker.query) }
         if picker.state == .fill, let fill = picker.fillModel {
-            gtk_stack_set_visible_child_name(mp_stack(stack), "fill")
             let newForm = boundFill !== fill
-            if newForm { buildForm(fill) }
-            for (control, field) in zip(controls, fill.fields) { update(control, value: field.value) }
+            if newForm {
+                cancelTake()
+                boundFill = fill
+                replaceCard(card: fill.card, title: fill.title, folder: fill.folder, fill: fill)
+            }
+            revealPicker(false)
+            cardView?.update()
             switch fill.preview {
             case .rendered(let text): setPreview(text)
             case .blocked(let error, let issues):
                 let message = fill.builtinsResolved ? error.description : LinuxStrings.preparingPreview
                 setPreview(([message] + issues.map(\.message)).joined(separator: "\n"))
             }
-            gtk_widget_set_sensitive(useButton, fill.deliverEnabled ? 1 : 0)
+            // The outlined Deliver action stays reachable to explain/focus a
+            // blocked blank. The model still gates every actual delivery.
+            gtk_widget_set_sensitive(useButton, 1)
             gtk_widget_set_sensitive(copyButton, fill.canCopyOnly ? 1 : 0)
-            if let position = fill.focusIndex, controls.indices.contains(position),
+            if let position = fill.focusIndex, let field = cardView?.fieldWidget(at: position),
                newForm || renderedFocus != position {
-                initialFocus = controls[position].widget
-                gtk_widget_grab_focus(controls[position].widget)
+                initialFocus = field
+                gtk_widget_grab_focus(field)
             }
             renderedFocus = fill.focusIndex
         } else {
             let wasFill = boundFill != nil
             boundFill = nil
             renderedFocus = nil
-            gtk_stack_set_visible_child_name(mp_stack(stack), "picker")
+            revealPicker(true)
             renderResults(picker)
             switch picker.selectedPreview {
             case .body(let text): setPreview(text)
@@ -392,6 +459,18 @@ final class LinuxPanel: PanelWindow {
             case .renderFailure(let error): setPreview(error.description)
             case .none: setPreview("")
             }
+            let fallback: String
+            switch picker.selectedPreview {
+            case .issues(let issues): fallback = issues.map(\.message).joined(separator: "\n")
+            case .renderFailure(let error): fallback = error.description
+            case .none: fallback = ""
+            case .body(let text): fallback = text
+            }
+            let row = picker.selectionIndex.flatMap { picker.results.indices.contains($0) ? picker.results[$0] : nil }
+            if wasFill || renderedCard != picker.selectedCard || (picker.selectedCard == nil && renderedFallback != fallback) || cardView == nil {
+                cancelTake()
+                replaceCard(card: picker.selectedCard, title: row?.title ?? "", folder: row?.folder ?? "", fallback: fallback)
+            } else { cardView?.updateHeader(title: row?.title ?? "", folder: row?.folder ?? "") }
             initialFocus = queryEntry
             if wasFill { gtk_widget_grab_focus(queryEntry) }
             let enabled = picker.selectionIndex.map {
@@ -405,9 +484,14 @@ final class LinuxPanel: PanelWindow {
         if inFill {
             gtk_widget_remove_css_class(useButton, "flat")
             gtk_widget_add_css_class(useButton, "suggested-action")
+            gtk_widget_add_css_class(useButton, "mp-deliver")
+            if picker.fillModel?.deliverEnabled == true { gtk_widget_add_css_class(useButton, "mp-ready") }
+            else { gtk_widget_remove_css_class(useButton, "mp-ready") }
             mp_accessible_label(useButton, LinuxStrings.deliver)
         } else {
             gtk_widget_remove_css_class(useButton, "suggested-action")
+            gtk_widget_remove_css_class(useButton, "mp-deliver")
+            gtk_widget_remove_css_class(useButton, "mp-ready")
             gtk_widget_add_css_class(useButton, "flat")
             mp_accessible_label(useButton, LinuxStrings.usePrompt)
         }
@@ -417,6 +501,9 @@ final class LinuxPanel: PanelWindow {
         let deliveryHint = picker.fillModel?.deliveryHint ?? picker.deliveryHint
         gtk_label_set_text(mp_label(hint), deliveryHint + " · " + (inFill ? LinuxPickerStrings.escapeFill : LinuxPickerStrings.escapePicker))
         gtk_widget_set_tooltip_text(hint, inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint)
+        // Replacing a form/selection above can cancel an in-flight take.
+        gtk_widget_set_sensitive(queryEntry, !isTaking && !inFill ? 1 : 0)
+        for widget in [stack!, proofStack!, actions!] { gtk_widget_set_sensitive(widget, isTaking ? 0 : 1) }
     }
 
     private func renderStatus(_ picker: PickerModel) {
@@ -441,6 +528,7 @@ final class LinuxPanel: PanelWindow {
                 let row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
                 let icon = gtk_image_new_from_icon_name(
                     result.favorite ? "starred-symbolic" : "text-x-generic-symbolic")!
+                if result.favorite { gtk_widget_add_css_class(icon, "mp-favorite") }
                 gtk_widget_set_valign(icon, GTK_ALIGN_CENTER)
                 gtk_box_append(mp_box(row), icon)
                 let text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
@@ -490,87 +578,31 @@ final class LinuxPanel: PanelWindow {
         if let menuPopover { gtk_popover_popdown(mp_popover(menuPopover)) }
     }
 
-    private func buildForm(_ fill: FillModel) {
-        while let child = gtk_widget_get_first_child(formBox) { gtk_box_remove(mp_box(formBox), child) }
-        controls = []
-        boundFill = fill
-        for field in fill.fields {
-            let row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4)!
-            gtk_box_append(mp_box(row), GTK.label(field.label))
-            let widget: GTK.Widget
-            let preedit: Preedit?
-            switch field.kind {
-            case .text:
-                widget = gtk_entry_new()!
-                preedit = observePreedit(in: mp_entry_text_delegate(widget))
-                mp_entry_set_text(widget, field.value)
-                GTK.onSignal(widget, "changed") { [weak self, weak fill] in
-                    guard let self, !self.isDestroyed, let fill, self.boundFill === fill,
-                          !self.isRendering else { return }
-                    fill.setValue(String(cString: mp_entry_text(widget)), name: field.name)
-                }
-                gtk_box_append(mp_box(row), widget)
-            case .multiline:
-                widget = gtk_text_view_new()!
-                preedit = observePreedit(in: widget)
-                gtk_text_view_set_wrap_mode(mp_text_view(widget), GTK_WRAP_WORD_CHAR)
-                let buffer = gtk_text_view_get_buffer(mp_text_view(widget))!
-                gtk_text_buffer_set_text(buffer, field.value, -1)
-                GTK.onSignal(UnsafeMutableRawPointer(buffer), "changed") { [weak self, weak fill] in
-                    guard let self, !self.isDestroyed, let fill, self.boundFill === fill,
-                          !self.isRendering else { return }
-                    fill.setValue(self.text(in: widget), name: field.name)
-                }
-                gtk_box_append(mp_box(row), scrolled(widget))
-            case .choice:
-                widget = gtk_combo_box_text_new()!
-                preedit = nil
-                for option in field.options { gtk_combo_box_text_append(mp_combo_box_text(widget), option.value, option.label) }
-                gtk_combo_box_set_active_id(mp_combo_box(widget), field.value)
-                GTK.onSignal(widget, "changed") { [weak self, weak fill] in
-                    guard let self, !self.isDestroyed, let fill, self.boundFill === fill, !self.isRendering,
-                          let value = gtk_combo_box_get_active_id(mp_combo_box(widget)) else { return }
-                    fill.setValue(String(cString: value), name: field.name)
-                }
-                gtk_box_append(mp_box(row), widget)
-            }
-            gtk_widget_set_name(widget, "fill-field-" + field.name)
-            mp_accessible_label(widget, field.label)
-            gtk_widget_set_tooltip_text(widget, field.description)
-            if let description = field.description, !description.isEmpty {
-                let label = GTK.label(description)
-                gtk_widget_set_name(label, "fill-description-" + field.name)
-                gtk_widget_add_css_class(label, "dim-label")
-                gtk_box_append(mp_box(row), label)
-                mp_accessible_description(widget, description)
-            }
-            controls.append(FieldControl(name: field.name, kind: field.kind, widget: widget, preedit: preedit))
-            gtk_box_append(mp_box(formBox), row)
-        }
-        initialFocus = controls.first?.widget ?? queryEntry
+    private func replaceCard(card: PromptCard?, title: String, folder: String,
+                             fill: FillModel? = nil, fallback: String = "") {
+        cardView?.retire()
+        while let child = gtk_widget_get_first_child(cardHost) { gtk_box_remove(mp_box(cardHost), child) }
+        let view = LinuxWishCard(card: card, title: title, folder: folder, fill: fill, fallback: fallback, sounds: sounds)
+        cardView = view
+        renderedCard = card
+        renderedFallback = fallback
+        gtk_box_append(mp_box(cardHost), view.widget)
     }
 
-    private func update(_ control: FieldControl, value: String) {
-        switch control.kind {
-        case .text:
-            if String(cString: mp_entry_text(control.widget)) != value { mp_entry_set_text(control.widget, value) }
-        case .multiline:
-            if text(in: control.widget) != value { gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(control.widget)), value, -1) }
-        case .choice:
-            if gtk_combo_box_get_active_id(mp_combo_box(control.widget)).map({ String(cString: $0) }) != value {
-                gtk_combo_box_set_active_id(mp_combo_box(control.widget), value)
-            }
-        }
+    private func revealPicker(_ visible: Bool) {
+        gtk_revealer_set_transition_duration(mp_revealer(queryRevealer), WishCardMotion.enabled ? WishCardMotion.milliseconds(WishCardMotion.search) : 0)
+        gtk_revealer_set_transition_duration(mp_revealer(resultsRevealer), WishCardMotion.enabled ? WishCardMotion.milliseconds(WishCardMotion.results) : 0)
+        gtk_revealer_set_reveal_child(mp_revealer(queryRevealer), visible ? 1 : 0)
+        gtk_revealer_set_reveal_child(mp_revealer(resultsRevealer), visible ? 1 : 0)
     }
 
-    private func text(in view: GTK.Widget) -> String {
-        let buffer = gtk_text_view_get_buffer(mp_text_view(view))!
-        var start = GtkTextIter()
-        var end = GtkTextIter()
-        gtk_text_buffer_get_bounds(buffer, &start, &end)
-        guard let raw = gtk_text_buffer_get_text(buffer, &start, &end, 0) else { return "" }
-        defer { g_free(raw) }
-        return String(cString: raw)
+    private func toggleProof() {
+        guard !isDestroyed, !isTaking else { return }
+        proofShown.toggle()
+        gtk_stack_set_visible_child_name(mp_stack(proofStack), proofShown ? "proof" : "card")
+        if !proofShown, let index = boundFill?.focusIndex, let field = cardView?.fieldWidget(at: index) {
+            gtk_widget_grab_focus(field)
+        }
     }
 
     private func setPreview(_ text: String) { gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(preview)), text, -1) }
@@ -584,8 +616,8 @@ final class LinuxPanel: PanelWindow {
     }
 
     private var focusedControl: Int? {
-        guard !isDestroyed, let focus = gtk_window_get_focus(mp_window(window)) else { return nil }
-        return controls.firstIndex { $0.widget == focus || gtk_widget_is_ancestor(focus, $0.widget) != 0 }
+        guard !isDestroyed else { return nil }
+        return cardView?.focusedIndex(gtk_window_get_focus(mp_window(window)))
     }
 
     private func observePreedit(in widget: GTK.Widget?) -> Preedit? {
@@ -603,7 +635,7 @@ final class LinuxPanel: PanelWindow {
         if focus == queryEntry || gtk_widget_is_ancestor(focus, queryEntry) != 0 {
             return queryPreedit?.isActive == true
         }
-        return focusedControl.map { controls[$0].preedit?.isActive == true } ?? false
+        return cardView?.hasPreedit(focus) ?? false
     }
 
     private func fieldFocusChanged() {
@@ -615,11 +647,16 @@ final class LinuxPanel: PanelWindow {
     private func keyPressed(_ key: UInt32, modifiers: UInt32) -> Bool {
         // Capture runs before GtkText/GtkTextView's input method. Composition
         // keys must reach the focused native control without picker intents.
-        guard !isDestroyed, let picker, !focusedHasPreedit else { return false }
+        guard !isDestroyed, let picker else { return false }
+        if isTaking { return true }
+        guard !focusedHasPreedit else { return false }
         // An open overflow menu keeps native navigation: its Escape closes the
         // popover rather than the panel, and arrows select menu items.
         if let menuPopover, gtk_widget_get_visible(menuPopover) != 0 { return false }
-        let kind = focusedControl.map { controls[$0].kind }
+        if cardView?.choicePopoverOpen == true { return false }
+        let focus = gtk_window_get_focus(mp_window(window))
+        if cardView?.handleKey(key, modifiers: modifiers, focus: focus) == true { return true }
+        let kind = focusedControl.flatMap { picker.fillModel?.fields[$0].kind }
         guard let intent = LinuxPickerKeys.intent(for: key, modifiers: modifiers, state: picker.state, fieldKind: kind) else { return false }
         if intent == .usePreferred, let focus = gtk_window_get_focus(mp_window(window)), mp_is_button(focus) != 0 {
             return false // Native button activation must keep its own intent.
@@ -627,8 +664,8 @@ final class LinuxPanel: PanelWindow {
         switch intent {
         case .moveUp: picker.moveSelection(.up)
         case .moveDown: picker.moveSelection(.down)
-        case .use(let mode): picker.use(mode: mode)
-        case .usePreferred: picker.usePreferred()
+        case .use(let mode): use(mode: mode)
+        case .usePreferred: usePreferred()
         case .edit: picker.editSelected()
         case .openLibrary: picker.openLibrary()
         case .openSettings: openSettings?()
@@ -638,21 +675,72 @@ final class LinuxPanel: PanelWindow {
         case .focusNext: picker.fillModel?.focusNext()
         case .focusPrevious: picker.fillModel?.focusPrevious()
         case .deliverPreferred: usePreferred()
-        case .deliver(let mode): picker.fillModel?.deliver(mode: mode)
+        case .deliver(let mode): use(mode: mode)
+        case .toggleProof: toggleProof()
         }
         return true
     }
 
     private func usePreferred() {
         guard !isDestroyed, let picker else { return }
-        if picker.state == .fill, let fill = picker.fillModel { fill.deliver(mode: fill.preferredMode) }
-        else { picker.usePreferred() }
+        use(mode: picker.state == .fill ? picker.fillModel?.preferredMode ?? picker.preferredMode : picker.preferredMode)
     }
 
     private func use(mode: DeliveryMode) {
-        guard !isDestroyed, let picker else { return }
-        if picker.state == .fill { picker.fillModel?.deliver(mode: mode) }
-        else { picker.use(mode: mode) }
+        guard !isDestroyed, !isTaking, let picker else { return }
+        if picker.state == .fill, let fill = picker.fillModel {
+            guard fill.state == .editing else { return }
+            guard fill.deliverEnabled else { cardView?.nudge(); return }
+            startTake { [weak fill] in fill?.deliver(mode: mode) }
+        } else if picker.state == .picker {
+            guard !picker.isResolvingBuiltins else { return }
+            guard let card = picker.selectedCard, !card.hasFields else { picker.use(mode: mode); return }
+            startTake { [weak picker] in picker?.use(mode: mode) }
+        }
+    }
+
+    private func startTake(_ deliver: @escaping () -> Void) {
+        guard !isDestroyed, !isTaking, let cardView, let picker else { return }
+        sounds.play(.take)
+        guard WishCardMotion.enabled else { deliver(); return }
+        if proofShown {
+            proofShown = false
+            gtk_stack_set_visible_child_name(mp_stack(proofStack), "card")
+        }
+        isTaking = true
+        takeRevision += 1
+        let revision = takeRevision
+        let state = picker.state
+        let fill = picker.fillModel
+        let selectedIdentity = picker.selectionIndex.flatMap { picker.results.indices.contains($0) ? picker.results[$0].identity : nil }
+        // Native editors must receive focus-out while they are still enabled.
+        gtk_window_set_focus(mp_window(window), nil)
+        gtk_widget_set_sensitive(actions, 0)
+        gtk_widget_set_sensitive(queryEntry, 0)
+        gtk_widget_set_sensitive(stack, 0)
+        gtk_widget_set_sensitive(proofStack, 0)
+        take.play(card: cardView.widget) { [weak self, weak picker] in
+            guard let self, !self.isDestroyed, self.isVisible, self.takeRevision == revision else { return }
+            let selectionMatches = state != .picker || picker?.selectionIndex.flatMap { index in
+                picker?.results.indices.contains(index) == true ? picker?.results[index].identity : nil
+            } == selectedIdentity
+            guard let picker, self.picker === picker, picker.state == state,
+                  picker.fillModel === fill, selectionMatches else {
+                self.cancelTake()
+                self.render()
+                return
+            }
+            self.isTaking = false
+            deliver()
+            self.cancelTake()
+            self.render()
+        }
+    }
+
+    private func cancelTake() {
+        takeRevision += 1
+        isTaking = false
+        take.cancel()
     }
 
     func showStatus(_ message: String) {
@@ -708,6 +796,7 @@ final class LinuxPanel: PanelWindow {
     func hide(reason: StaticString) {
         trace("hide.request", reason: reason)
         guard !isDestroyed else { return }
+        cancelTake()
         blurRevision += 1
         transientStatus = nil
         gtk_widget_set_visible(window, 0)
