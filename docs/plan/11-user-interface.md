@@ -173,7 +173,9 @@ clipboard, using `~/Documents/MonkeysPaw` and the bundle identifier's Applicatio
 Support directory. AppKit text and multiline controls retake focus whenever
 the reusable panel appears; native focus changes and Tab follow model field
 order. Choice controls display labels and render their associated values; descriptions sit
-under their controls, and previews show Core validation messages. Return uses
+under their controls, wrap to the form width and grow to show every line.
+Long descriptions remain reachable in the form's scroller. Previews show
+Core validation messages. Return uses
 the picker-selected mode outside multiline input; multiline Return stays a
 newline, Cmd+Return selects standard paste and Option+Return copies. Escape
 returns from fill to picker; blur, Cmd+W and toggling a key panel off dismiss

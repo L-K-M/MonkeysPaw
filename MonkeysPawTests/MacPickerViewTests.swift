@@ -590,6 +590,56 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.fillModel?.values, fill.values)
     }
 
+    func testLongDescriptionsWrapToFormWidthAndRemainScrollable() throws {
+        let description = String(repeating: "Explain this field with enough detail to guide the answer. ", count: 24)
+        let source = """
+        ---
+        fields:
+          topic:
+            description: \(description)
+          detail:
+            type: multiline
+            description: |
+              \(description)
+              This final line must also remain visible.
+          language:
+            type: choice
+            options: [One, Two]
+            description: \(description)
+        ---
+        {{topic}} {{detail}} {{language}}
+        """
+        try files.write(Data(source.utf8), at: "descriptions.md")
+        let picker = try open()
+        picker.use(mode: .copyOnly)
+        XCTAssertTrue(spin { self.find("fill-description-language") != nil })
+
+        for name in ["topic", "detail", "language"] {
+            let label = try XCTUnwrap(find("fill-description-" + name) as? NSTextField)
+            XCTAssertTrue(spin { label.bounds.width > 0 })
+            let cell = try XCTUnwrap(label.cell)
+            let requiredHeight = cell.cellSize(forBounds: NSRect(x: 0, y: 0,
+                width: label.bounds.width, height: .greatestFiniteMagnitude)).height
+            XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(requiredHeight), name + " help is clipped")
+            let viewport = try XCTUnwrap(label.enclosingScrollView).contentView
+            XCTAssertGreaterThan(requiredHeight, viewport.bounds.height)
+            // Native text insets extend the frame beyond its layout alignment rect.
+            XCTAssertLessThanOrEqual(label.alignmentRect(forFrame: label.frame).width, viewport.bounds.width)
+
+            let text = NSAttributedString(string: label.stringValue, attributes: [.font: try XCTUnwrap(label.font)])
+            let textBounds = text.boundingRect(with: NSSize(width: cell.drawingRect(forBounds: label.bounds).width,
+                height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin)
+            XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(textBounds.height), name + " text is clipped")
+
+            // Both ends must be reachable when the help is taller than the viewport.
+            for edge in [label.bounds.minY, label.bounds.maxY - 1] {
+                let end = NSRect(x: label.bounds.midX, y: edge, width: 1, height: 1)
+                label.scrollToVisible(end)
+                XCTAssertTrue(spin { label.visibleRect.contains(end) }, name + " help cannot be scrolled")
+            }
+        }
+    }
+
     func testLocalKeyMonitorRoutesFieldEditorAndCommandWClosesFill() throws {
         try files.write(Data("{{topic}} {{detail}}".utf8), at: "fields.md")
         let picker = try open()
