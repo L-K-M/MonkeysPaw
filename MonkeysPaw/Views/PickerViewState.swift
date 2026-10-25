@@ -125,12 +125,15 @@ final class PickerViewState: ObservableObject {
     func didLoseKey() { cancelTake() }
 
     func cancelTake() {
+        let held = take.holdsCard
         take.cancel()
         takingFill = nil
         takingCard = nil
         takingSelection = nil
         takingValues = nil
-        focusRevision &+= 1
+        // Only a cancelled take hands focus back. Blur and hide also land here,
+        // and a spare revision would re-arm focus for the next key window.
+        if held { focusRevision &+= 1 }
     }
 
     func escape() {
@@ -297,7 +300,8 @@ final class PickerViewState: ObservableObject {
     }
 
     func forgetSelectedValues() {
-        guard isCurrent(), canForgetValues else { return }
+        // Delivery still reaches Core so its refusal reaches the status line.
+        guard isCurrent(), showsForgetValues, !take.holdsCard else { return }
         transientStatus = nil
         model.forgetSelectedValues()
         // A reset can return to the last rendered value before SwiftUI echoes

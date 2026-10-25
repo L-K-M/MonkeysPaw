@@ -711,7 +711,7 @@ final class MacPickerViewTests: XCTestCase {
                 let control = (field as? PickerMultilineTextView)?.enclosingScrollView ?? field
                 XCTAssertTrue(spin {
                     control.visibleRect.contains(control.bounds.insetBy(dx: 1, dy: 1))
-                }, "Focused field is clipped: " + names[position])
+                }, "Focused field is clipped: " + names[position] + " " + control.placementDescription())
             }
         }
     }

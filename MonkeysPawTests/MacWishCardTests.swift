@@ -22,6 +22,17 @@ final class WishCardStepper: MonkeysPawCore.Scheduler {
     }
 }
 
+extension NSView {
+    /// Window frame, visible part and scroll clip, for visibility failures
+    /// that only CI's Mac can reproduce.
+    func placementDescription() -> String {
+        let clip = enclosingScrollView.map { NSStringFromRect($0.documentVisibleRect) } ?? "none"
+        let responder = window?.firstResponder.map { String(describing: type(of: $0)) } ?? "none"
+        return "frame=" + NSStringFromRect(convert(bounds, to: nil)) + " visible=" + NSStringFromRect(visibleRect)
+            + " clip=" + clip + " responder=" + responder
+    }
+}
+
 /// Hosted Wish Card coverage on the real panel, mirroring MacPickerViewTests'
 /// isolated roots. MacPickerViewTests retains the broader mixed-control
 /// traversal, marked-text and undo coverage.
@@ -112,7 +123,7 @@ final class MacWishCardTests: XCTestCase {
         // The thumbnail renders the template; remembered text is never read.
         XCTAssertEqual(presentation.preview, "Wish for {{word}} with {{clipboard}}.")
         XCTAssertNotNil(axElement(identifier: "wish-slip", in: panel))
-        XCTAssertNotNil(axElement(label: "Word", in: panel), "The thumbnail must label the blank")
+        XCTAssertNotNil(axElement(text: "Word", in: panel), "The thumbnail must label the blank")
         XCTAssertFalse(axElements(under: panel).contains { axText($0).contains("remembered-unicorn-7") },
                        "The thumbnail must not surface remembered values")
 
@@ -262,7 +273,7 @@ final class MacWishCardTests: XCTestCase {
         let last = try XCTUnwrap(find("fill-field-last") as? WishCardTumbler)
         let panel = try currentPanel()
         XCTAssertTrue(spin { self.isFocused(first, in: panel) && last.bounds.height > 0 })
-        XCTAssertTrue(last.visibleRect.isEmpty, "The last blank begins below the fold")
+        XCTAssertTrue(last.visibleRect.isEmpty, "The last blank begins below the fold: " + last.placementDescription())
 
         let steps: [(NSEvent.ModifierFlags, Int)] = [([], 1), (.shift, 0), (.shift, 1), ([], 0)]
         for (flags, position) in steps {
@@ -272,7 +283,7 @@ final class MacWishCardTests: XCTestCase {
             XCTAssertTrue(spin {
                 let focused = position == 0 ? self.isFocused(first, in: panel) : panel.firstResponder === last
                 return focused && control.visibleRect.contains(control.bounds.insetBy(dx: 1, dy: 1))
-            }, "Tab traversal must reveal the focused blank")
+            }, "Tab traversal must reveal the focused blank: " + control.placementDescription())
         }
         XCTAssertTrue(clipboard.writes.isEmpty)
     }
@@ -299,9 +310,13 @@ final class MacWishCardTests: XCTestCase {
         XCTAssertEqual(presentation.nudgeIndex, 0)
         XCTAssertEqual(fill.focusIndex, 0, "The nudge must focus the missing blank")
         XCTAssertEqual(presentation.gloss, "Fill every required field before rendering.")
-        let gloss = try XCTUnwrap(axElement(identifier: "wish-gloss", in: panel))
-        XCTAssertEqual(ax(gloss, Selector(("accessibilityLabel"))),
-                       "Fill every required field before rendering.")
+        XCTAssertTrue(spin {
+            panel.contentView?.layoutSubtreeIfNeeded()
+            return self.axElements(under: panel).contains {
+                self.ax($0, Selector(("accessibilityIdentifier"))) == "wish-gloss"
+                    && self.axText($0).contains("Fill every required field before rendering.")
+            }
+        }, "VoiceOver must read the nudge gloss")
         let first = try XCTUnwrap(find("fill-field-first") as? PickerTextField)
         XCTAssertTrue(spin { self.isFocused(first, in: panel) })
         XCTAssertFalse(presentation.take.holdsCard)
@@ -330,12 +345,13 @@ final class MacWishCardTests: XCTestCase {
         clipboard.hold = true
         let picker = try open(clipboard: clipboard)
         let presentation = try XCTUnwrap(delegate.pickerPresentation)
-        let stepper = WishCardStepper()
-        presentation.take.scheduler = stepper
         presentation.use(mode: .copyOnly)
         let fill = try XCTUnwrap(picker.fillModel)
         let panel = try currentPanel()
+        XCTAssertTrue(spin { self.find("fill-field-word") is PickerTextField })
         let word = try XCTUnwrap(find("fill-field-word") as? PickerTextField)
+        let stepper = WishCardStepper()
+        _ = try attach(stepper)
         XCTAssertTrue(spin { self.isFocused(word, in: panel) })
         XCTAssertFalse(fill.builtinsResolved)
 
@@ -360,6 +376,82 @@ final class MacWishCardTests: XCTestCase {
     }
 
     // MARK: - The take
+
+    func testStageRedrawsFrozenCardAndPawForEachExposure() throws {
+        try files.write(Data("""
+        ---
+        fields:
+          word: {label: Word, default: Granted}
+        ---
+        Wish granted: {{word}}.
+        """.utf8), at: "granted.md")
+        let clipboard = MacRepeatClipboard()
+        let picker = try open(clipboard: clipboard)
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        presentation.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(picker.fillModel)
+        XCTAssertTrue(spin { fill.deliverEnabled && self.find("fill-field-word") != nil })
+        let stepper = WishCardStepper()
+        let take = try attach(stepper)
+        let stage = try XCTUnwrap(take.stage as? WishCardTakeDrawing)
+        presentation.use(mode: .copyOnly)
+        XCTAssertTrue(take.isPlaying)
+
+        // SwiftUI never updates the stage representable, so each exposure
+        // must mark the stage dirty itself.
+        for frame in 1...3 {
+            stage.needsDisplay = false
+            XCTAssertTrue(stepper.advance())
+            XCTAssertEqual(take.frameIndex, frame)
+            XCTAssertTrue(stage.needsDisplay, "Exposure \(frame) must redraw the stage")
+        }
+
+        let rep = try XCTUnwrap(stage.bitmapImageRepForCachingDisplay(in: stage.bounds))
+        stage.cacheDisplay(in: stage.bounds, to: rep)
+        let scale: CGFloat = CGFloat(rep.pixelsWide) / stage.bounds.width
+        func rendered(_ point: NSPoint) -> NSColor? {
+            rep.colorAt(x: Int(point.x * scale), y: Int(point.y * scale))?.usingColorSpace(.sRGB)
+        }
+
+        // The frozen card stays opaque left of the paw.
+        let card = take.cardRect
+        for point in [NSPoint(x: card.minX + 30, y: card.midY), NSPoint(x: card.minX + 30, y: card.minY + 40)] {
+            let alpha: CGFloat = rendered(point)?.alphaComponent ?? 0
+            XCTAssertGreaterThan(alpha, 0.9, "The frozen card must not be blank at \(point); card=\(card)")
+        }
+
+        // Opaque paw pixels land where PawTake places the anchor on the grip.
+        let exposure = PawTake.frames[3]
+        let paw = try XCTUnwrap(WishPawArt.image(exposure.image))
+        let cgPaw = try XCTUnwrap(paw.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        let art = NSBitmapImageRep(cgImage: cgPaw)
+        let artScale: CGFloat = CGFloat(art.pixelsWide) / CGFloat(PawTake.imageSize.x)
+        let gripX: CGFloat = card.minX + card.width * CGFloat(PawTake.gripFraction)
+        let gripY: CGFloat = card.minY + CGFloat(PawTake.gripDepth)
+        let originX: CGFloat = gripX + CGFloat(exposure.paw.x - PawTake.anchor.x)
+        let originY: CGFloat = gripY + CGFloat(exposure.paw.y - PawTake.anchor.y)
+        var samples = 0
+        var matches = 0
+        for y in stride(from: 0, to: art.pixelsHigh, by: 12) {
+            for x in stride(from: 0, to: art.pixelsWide, by: 12) {
+                guard let expected = art.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
+                      expected.alphaComponent > 0.99 else { continue }
+                let point = NSPoint(x: originX + CGFloat(x) / artScale, y: originY + CGFloat(y) / artScale)
+                guard stage.bounds.insetBy(dx: 2, dy: 2).contains(point), let actual = rendered(point) else { continue }
+                samples += 1
+                let red: CGFloat = abs(actual.redComponent - expected.redComponent)
+                let green: CGFloat = abs(actual.greenComponent - expected.greenComponent)
+                let blue: CGFloat = abs(actual.blueComponent - expected.blueComponent)
+                if max(red, green, blue) < 0.2 { matches += 1 }
+            }
+        }
+        XCTAssertGreaterThan(samples, 20, "The paw must overlap the panel")
+        XCTAssertGreaterThan(matches * 4, samples * 3, "The stage must draw the paw: \(matches)/\(samples) samples match")
+
+        presentation.cancelTake()
+        XCTAssertFalse(take.holdsCard)
+        XCTAssertTrue(clipboard.writes.isEmpty)
+    }
 
     func testReadyReturnPlaysNineExposuresThenDeliversCopyOnlyOnce() throws {
         try files.write(Data("""
@@ -733,7 +825,8 @@ final class MacWishCardTests: XCTestCase {
 
         try sendKey(code: UInt16(kVK_ANSI_P), characters: "p", modifiers: .command, to: panel)
         XCTAssertTrue(presentation.proofShown)
-        XCTAssertEqual(presentation.preview, "Wish for {{word}}.")
+        // The thumbnail Proof renders defaults, as the picker preview always has.
+        XCTAssertEqual(presentation.preview, "Wish for Granted.")
         XCTAssertNotNil(axElement(identifier: "wish-proof", in: panel))
         try sendKey(code: UInt16(kVK_ANSI_P), characters: "p", modifiers: .command, to: panel)
         XCTAssertFalse(presentation.proofShown)
@@ -878,12 +971,17 @@ final class MacWishCardTests: XCTestCase {
         return result
     }
 
-    private func axElement(label: String, in window: NSWindow) -> NSObject? {
+    /// SwiftUI static text reports its label as AXValue, not AXDescription,
+    /// and may keep the drawn capitals; either spelling names the element.
+    private func axElement(text: String, in window: NSWindow) -> NSObject? {
+        let selectors = [#selector(NSAccessibilityProtocol.accessibilityLabel),
+                         #selector(NSAccessibilityProtocol.accessibilityTitle),
+                         Selector(("accessibilityValue"))]
         var result: NSObject?
         _ = spin {
             window.contentView?.layoutSubtreeIfNeeded()
-            result = self.axElements(under: window).first {
-                self.ax($0, #selector(NSAccessibilityProtocol.accessibilityLabel)) == label
+            result = self.axElements(under: window).first { element in
+                selectors.contains { self.ax(element, $0)?.caseInsensitiveCompare(text) == .orderedSame }
             }
             return result != nil
         }

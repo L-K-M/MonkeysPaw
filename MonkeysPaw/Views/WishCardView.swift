@@ -213,7 +213,9 @@ private struct WishCardSlot: View {
     }
 
     var body: some View {
-        control.frame(width: width)
+        // The flow layout proposes the scroll content's width, which a legacy
+        // scroller narrows. Slots shrink to it rather than overflow under the bar.
+        control.frame(minWidth: 0, idealWidth: width, maxWidth: field.kind == .multiline ? .infinity : width)
             .background(wantsFocus ? WishCardStyle.amber.opacity(0.12) : Color.clear)
             .overlay(alignment: .bottom) {
                 if field.kind != .multiline {

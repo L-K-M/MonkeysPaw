@@ -40,11 +40,13 @@ final class WishCardTake {
     }
 
     func cancel() {
+        // Blur and hide cancel too; an idle take must not republish the picker.
+        guard holdsCard || isPlaying else { return }
         generation &+= 1
         completion = nil
         snapshot = nil
         frameIndex = nil
-        onChange()
+        changed()
     }
 
     func finish() {
@@ -53,7 +55,7 @@ final class WishCardTake {
         completion = nil
         // Keep the frozen card until the delivery path hides the panel.
         work()
-        onChange()
+        changed()
     }
 
     private func queueNext(_ revision: UInt64) {
@@ -72,6 +74,13 @@ final class WishCardTake {
         case .lift: playCue(.take)
         case nil: break
         }
+        changed()
+    }
+
+    /// The stage view's inputs never change identity, so SwiftUI skips its
+    /// update; each exposure marks it dirty here instead.
+    private func changed() {
+        stage?.needsDisplay = true
         onChange()
     }
 }
@@ -99,6 +108,7 @@ struct WishCardTakeStage: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WishCardTakeDrawing {
         let view = WishCardTakeDrawing()
+        view.take = take
         take.stage = view
         return view
     }
