@@ -174,7 +174,7 @@ enum WishCardStyle {
     .mp-card button.mp-ink-remembered, .mp-card button.mp-ink-draft, .mp-card button.mp-ink-typed { color: \(dryInk); }
     .mp-card .mp-ink-wet, .mp-card .mp-ink-wet text, .mp-card button.mp-ink-wet { color: \(wetInk); text-shadow: 0 0 6px rgba(255,170,60,.55); }
     .mp-card .mp-ink-pending { opacity: 0; }
-    .mp-card .mp-slot-invalid { border: 1px dashed \(invalid); }
+    .mp-card .mp-slot-invalid, .mp-card button.mp-slot-invalid { border: 1px dashed \(invalid); }
     .mp-card .mp-stamp {
         font-size: 11px; font-weight: bold; letter-spacing: 1px; color: \(stamp);
         border: 1.5px solid \(stamp); border-radius: 3px; padding: 0 5px; transform: rotate(-2deg); opacity: .88;
@@ -190,6 +190,8 @@ enum WishCardStyle {
         40% { transform: translateX(4px); } 60% { transform: translateX(-3px); } 80% { transform: translateX(2px); }
     }
     .mp-card .mp-nudge { animation: mp-nudge \(milliseconds(WishCardMotion.nudge)) ease-out; border-bottom-color: \(invalid); }
+    .mp-card .mp-slot.mp-nudge:focus-within, .mp-card button.mp-nudge,
+    .mp-card .mp-well textview.mp-nudge { border-bottom: 2px solid \(invalid); }
     @keyframes mp-taking-grip {
         0% { transform: none; opacity: 1; }
         100% { transform: translateY(4px) scale(.985); opacity: 1; }
