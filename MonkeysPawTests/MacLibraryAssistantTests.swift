@@ -949,9 +949,13 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertFalse(view.showsRefresh)
         let bytes = try XCTUnwrap(view.state.candidate?.content.canonicalBytes)
         let diff = view.state.diff
+        let window = try XCTUnwrap(controller.improvementWindow?.window)
         view.accept()
         XCTAssertEqual(view.improvementStage, .saving)
         XCTAssertEqual(view.state.diff, diff)
+        h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == false }
+        window.performClose(nil)
+        XCTAssertTrue(window.isVisible, "An acceptance must finish before its window closes")
         h.work.drain()
         h.waitUntil { controller.improvementWindow == nil }
         XCTAssertEqual(h.presentation.assistantSaveMessage, "Prompt saved.")

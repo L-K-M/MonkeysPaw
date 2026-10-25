@@ -49,9 +49,12 @@ final class LibraryAssistantWindowController: NSWindowController, NSWindowDelega
         presentationUpdatePending = true
         RunLoop.main.perform(inModes: [.common]) { [weak self] in
             self?.mainThread.run { [weak self] in
-                guard let self else { return }
+                // The observation ends with the window, so a closed window stays closed.
+                guard let self, self.presentationObservation != nil else { return }
                 self.presentationUpdatePending = false
-                guard self.window?.isVisible == true, self.presentation.improvementStage == .ended else { return }
+                // windowShouldClose refuses during acceptance; show that on the close button.
+                self.window?.standardWindowButton(.closeButton)?.isEnabled = !self.presentation.state.isAccepting
+                guard self.presentation.improvementStage == .ended else { return }
                 self.close()
             }
         }

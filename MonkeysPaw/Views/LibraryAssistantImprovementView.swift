@@ -99,8 +99,11 @@ struct LibraryAssistantImprovementView: View {
     private var readyContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text(presentation.resultMessage).font(.caption)
-                    .accessibilityIdentifier("library-assistant-result")
+                // While saving, the bar reports progress; one status line is enough.
+                if presentation.improvementStage == .ready {
+                    Text(presentation.resultMessage).font(.caption)
+                        .accessibilityIdentifier("library-assistant-result")
+                }
                 let warnings = presentation.state.issues.filter { $0.severity == .warning }
                 if !warnings.isEmpty { LibraryAssistantIssueList(issues: warnings) }
                 if let diff = presentation.state.diff {

@@ -111,9 +111,10 @@ The example shows Source; Edit opens the properties form and body editor.
   wrapping preserves the source bytes, line numbers and newline markers.
   Cancel, Reject, Close and a committed save end the improvement and close its
   window; the save outcome remains in the Library status line. Failures and
-  conflicts keep it open; Escape leaves it open. Editor-session or library
-  retirement closes it. An acceptance must finish or be cancelled through its
-  editor guard before the window closes.
+  conflicts keep it open; Escape leaves it open. Closing the window cancels
+  its request/draft; editor-session or library retirement closes it. An
+  acceptance must finish or be cancelled through its editor guard before the
+  window closes; its close button is disabled meanwhile.
 - **Assistant creation (macOS).** File and the toolbar's **New Prompt** menu
   offer **Blank Prompt…** (⌘N) and **Generate with Assistant…**. Generation
   opens a separate sheet with a brief, candidate and diff; it sends no current
