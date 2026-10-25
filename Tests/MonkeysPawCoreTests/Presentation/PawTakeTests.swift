@@ -70,16 +70,19 @@ final class PawTakeTests: XCTestCase {
     /// A partial gouge follows the path and stops part-way along a segment.
     func testPartialGougeFollowsThePathByLength() {
         let path = PawTake.gougePath
-        let segments = zip(path, path.dropFirst()).map { a, b in
-            ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)).squareRoot()
-        }
-        let total = segments.reduce(0, +)
+        let total = Self.length(of: path)
         let half = PawTake.gouge(upTo: 0.5)
         XCTAssertEqual(Array(half.dropLast()), Array(path.prefix(half.count - 1)))
+        XCTAssertEqual(Self.length(of: half), total / 2, accuracy: 0.01)
+    }
 
-        let drawn = zip(half, half.dropFirst()).map { a, b in
-            ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)).squareRoot()
-        }.reduce(0, +)
-        XCTAssertEqual(drawn, total / 2, accuracy: 0.01)
+    private static func length(of points: [PawTake.Point]) -> Double {
+        var total = 0.0
+        for (a, b) in zip(points, points.dropFirst()) {
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            total += (dx * dx + dy * dy).squareRoot()
+        }
+        return total
     }
 }

@@ -97,7 +97,9 @@ public enum PawTake {
     private static let gougeLength = zip(gougePath, gougePath.dropFirst()).reduce(0) { $0 + distance($1.0, $1.1) }
 
     private static func distance(_ a: Point, _ b: Point) -> Double {
-        ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)).squareRoot()
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        return (dx * dx + dy * dy).squareRoot()
     }
 
     /// Reach in, curl over four cracks while gouging the paper, hold a beat,

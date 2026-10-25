@@ -87,7 +87,7 @@ final class MacUITourTests: XCTestCase {
         let clipboard = MacRepeatClipboard()
         clipboard.text = "diff --git a/Cart.swift b/Cart.swift\n--- a/Cart.swift\n+++ b/Cart.swift\n@@ -1,2 +1,3 @@\n-old\n+new\n+more\n context\n+done"
         delegate = AppDelegate(libraryRoot: root, dataRoot: data,
-            launchURI: { _ in }, revealLibrary: { _ in }, clipboard: clipboard,
+            launchURI: { _ in }, clipboard: clipboard, revealLibrary: { _ in },
             makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in true }),
                     mainThread: main, scheduler: scheduler, isTrusted: { false }, deactivateIfUnused: {})
