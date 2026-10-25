@@ -1,3 +1,9 @@
+/// Where a field's initial value came from at form open.
+public enum PrefillSource: Equatable, Sendable {
+    case remembered
+    case defaultValue
+}
+
 /// Metadata and initial value in body first-use order. Remembered text takes
 /// precedence over a declared default, including an explicitly empty string.
 public struct FillFormField: Equatable, Sendable {
@@ -9,8 +15,9 @@ public struct FillFormField: Equatable, Sendable {
     public let optional: Bool
     public let remember: Bool
     public let prefill: String
+    public let prefillSource: PrefillSource
 
-    init(_ field: PromptField, prefill: String) {
+    init(_ field: PromptField, prefill: String, prefillSource: PrefillSource = .defaultValue) {
         name = field.name
         kind = field.kind
         label = field.label
@@ -19,6 +26,7 @@ public struct FillFormField: Equatable, Sendable {
         optional = field.optional
         remember = field.remember
         self.prefill = prefill
+        self.prefillSource = prefillSource
     }
 }
 

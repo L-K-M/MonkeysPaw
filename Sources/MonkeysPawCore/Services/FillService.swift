@@ -68,8 +68,10 @@ public final class FillService: @unchecked Sendable {
             warning = .rememberedValuesUnavailable
         }
         let document = entry.document
-        let fields = document.effectiveFields.map {
-            FillFormField($0, prefill: $0.remember ? remembered[$0.name] ?? $0.defaultValue : $0.defaultValue)
+        let fields = document.effectiveFields.map { field in
+            let rememberedValue = field.remember ? remembered[field.name] : nil
+            return FillFormField(field, prefill: rememberedValue ?? field.defaultValue,
+                                 prefillSource: rememberedValue != nil ? .remembered : .defaultValue)
         }
         return FillForm(fields: fields, issues: document.issues, canRender: document.canRender,
                         isReadOnly: document.isReadOnly, warning: warning)
