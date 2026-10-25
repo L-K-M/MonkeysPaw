@@ -118,21 +118,18 @@ final class LinuxWishCard {
             gtk_widget_add_css_class(body, "mp-card-error")
         }
         tagXMLLines()
-        if !fullWidth.isEmpty {
-            // The wick and body share the paper's content width. Observe its
-            // allocation rather than keep a frame clock running on a still card.
-            GTK.onResize(effects.wick) { [weak self] width, _ in
-                guard let self, !self.retired else { return }
-                if width > 0, self.bodyWidth != width {
-                    self.bodyWidth = width
-                    GTK.onMainLoop { [weak self] in
-                        guard let self, !self.retired else { return }
-                        // Stay well inside the text view's own width: an anchored
-                        // child as wide as the view raises the view's minimum,
-                        // which widens the paper, which re-fires this resize.
-                        let inner = max(1, width - Int32(WishCardStyle.fullWidthInset))
-                        for child in self.fullWidth { gtk_widget_set_size_request(child, inner, -1) }
-                    }
+        // The wick and body share the paper's content width. Observe its
+        // allocation rather than keep a frame clock running on a still card.
+        GTK.onResize(effects.wick) { [weak self] width, _ in
+            guard let self, !self.retired else { return }
+            if width > 0, self.bodyWidth != width {
+                self.bodyWidth = width
+                GTK.onMainLoop { [weak self] in
+                    guard let self, !self.retired else { return }
+                    // Stay well inside the text view's own width: an anchored
+                    // child as wide as the view raises the view's minimum.
+                    for child in self.fullWidth { gtk_widget_set_size_request(child, self.innerWidth, -1) }
+                    self.fitTextSlots()
                 }
             }
         }
@@ -176,13 +173,12 @@ final class LinuxWishCard {
         }
         for slot in slots {
             let field = fill.fields[slot.index]
+            // Style first: fit() measures in the provenance's face.
+            provenance(field.provenance, on: slot.widget)
             switch field.kind {
             case .text:
                 if String(cString: mp_entry_text(slot.widget)) != field.value { mp_entry_set_text(slot.widget, field.value) }
-                let width = min(WishCardStyle.maximumSlot, max(WishCardStyle.minimumSlot,
-                    max(field.label.count, field.value.count) + 1))
-                gtk_editable_set_width_chars(mp_editable(slot.widget), Int32(width))
-                gtk_editable_set_max_width_chars(mp_editable(slot.widget), Int32(width))
+                fit(slot.widget, text: field.value.isEmpty ? field.label : field.value)
             case .multiline:
                 if text(in: slot.widget) != field.value {
                     gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(slot.widget)), field.value, -1)
@@ -190,7 +186,6 @@ final class LinuxWishCard {
                 if let placeholder = slot.placeholder { gtk_widget_set_visible(placeholder, field.value.isEmpty ? 1 : 0) }
             case .choice: slot.tumbler?.update(field.value)
             }
-            provenance(field.provenance, on: slot.widget)
             if field.provenance != .typed { gtk_widget_remove_css_class(slot.widget, "mp-ink-wet") }
         }
         for echo in echoes {
@@ -210,6 +205,28 @@ final class LinuxWishCard {
         setHeat(fill.warmth, ready: fill.deliverEnabled)
         if fill.deliverEnabled && !wasReady { sounds.play(.ready) }
         wasReady = fill.deliverEnabled
+    }
+
+    private var innerWidth: Int32 { max(1, bodyWidth - Int32(WishCardStyle.fullWidthInset)) }
+
+    /// A blank hugs its words: measure the set ink in the slot's own font
+    /// (pencil italic or ink roman), not an average glyph width, so the
+    /// sentence's punctuation follows without a ragged gap.
+    private func fit(_ entry: GTK.Widget, text: String) {
+        guard let layout = gtk_widget_create_pango_layout(entry, text) else { return }
+        var width: Int32 = 0, height: Int32 = 0
+        pango_layout_get_pixel_size(layout, &width, &height)
+        g_object_unref(UnsafeMutableRawPointer(layout))
+        let fitted = max(Int32(WishCardStyle.minimumSlotWidth), width + Int32(WishCardStyle.slotPadding))
+        gtk_widget_set_size_request(entry, bodyWidth > 0 ? min(innerWidth, fitted) : fitted, -1)
+    }
+
+    private func fitTextSlots() {
+        guard let fill else { return }
+        for slot in slots where fill.fields[slot.index].kind == .text {
+            let field = fill.fields[slot.index]
+            fit(slot.widget, text: field.value.isEmpty ? field.label : field.value)
+        }
     }
 
     /// "INTENDED BEHAVIOR — Describe what the change should accomplish."
@@ -341,6 +358,9 @@ final class LinuxWishCard {
         case .text:
             let entry = gtk_entry_new()!
             gtk_entry_set_has_frame(mp_entry(entry), 0)
+            // Width comes from fit(); a one-glyph floor keeps GTK out of it.
+            gtk_editable_set_width_chars(mp_editable(entry), 1)
+            gtk_editable_set_max_width_chars(mp_editable(entry), 1)
             gtk_entry_set_placeholder_text(mp_entry(entry), field.label)
             gtk_widget_add_css_class(entry, "mp-slot")
             gtk_widget_set_valign(entry, GTK_ALIGN_BASELINE)

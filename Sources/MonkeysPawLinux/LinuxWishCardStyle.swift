@@ -42,7 +42,7 @@ enum WishCardStyle {
     static let mono = "monospace"
     static let pangoMono = "Monospace"
     static let bodySize = 15, proofSize = 12, wellSize = 12, tagSize = 11.0
-    static let minimumSlot = 6, maximumSlot = 56, slotBaseline = 2
+    static let minimumSlotWidth = 48, slotPadding = 10, slotBaseline = 2
     static let wellMinimum = 26, wellMaximum = 170, wellFallbackWidth = 240
     static let bodyLineSpace = 3, panelGap = 12, cardGap = 10
     static let paperInset = 22, medallion = 12, resultsWidth = 232, fullWidthInset = 16, revealMargin = 18

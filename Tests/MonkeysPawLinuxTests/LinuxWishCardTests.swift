@@ -80,17 +80,27 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(try choiceValue(), "Rust")
     }
 
-    func testTextWidthTracksContentAndStopsAtMaximum() throws {
+    func testTextWidthHugsContentAndStopsAtTheCardEdge() throws {
         _ = try openFill("---\nfields:\n  word: {label: Word}\n---\n{{word}}")
         let entry = try widget("fill-field-word")
-        XCTAssertEqual(gtk_editable_get_width_chars(mp_editable(entry)), 6)
-        mp_entry_set_text(entry, "1234567890")
-        XCTAssertEqual(gtk_editable_get_width_chars(mp_editable(entry)), 11)
-        XCTAssertEqual(gtk_editable_get_max_width_chars(mp_editable(entry)), 11)
+        let scroll = try widget("card-scroll")
+        func requested() -> Int32 {
+            var width: Int32 = 0
+            gtk_widget_get_size_request(entry, &width, nil)
+            return width
+        }
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_width(scroll) > 0 })
+        let empty = requested()
+        XCTAssertGreaterThan(empty, 0)
+        mp_entry_set_text(entry, "Quantities multiply into the total")
+        XCTAssertGreaterThan(requested(), empty)
+        let sentence = requested()
+        mp_entry_set_text(entry, "Quantities")
+        XCTAssertLessThan(requested(), sentence)
         mp_entry_set_text(entry, String(repeating: "界", count: 80))
-        XCTAssertEqual(gtk_editable_get_width_chars(mp_editable(entry)), 56)
+        XCTAssertLessThanOrEqual(requested(), gtk_widget_get_width(scroll))
         mp_entry_set_text(entry, "")
-        XCTAssertEqual(gtk_editable_get_width_chars(mp_editable(entry)), 6)
+        XCTAssertEqual(requested(), empty)
     }
 
     func testInkMatchesDefaultTypedDraftAndRememberedProvenance() throws {
