@@ -258,7 +258,8 @@ final class LibraryWindowController: NSWindowController, NSWindowDelegate {
         guard !isTornDown, window?.isVisible == true, presentation.assistant === assistant else { return }
         updateImprovementWindow()
         if improvementWindow == nil {
-            let controller = LibraryAssistantWindowController(presentation: assistant, activation: activation)
+            let controller = LibraryAssistantWindowController(presentation: assistant, promptTitle: presentation.displayTitle,
+                activation: activation, mainThread: mainThread)
             controller.onClose = { [weak self, weak controller] in
                 guard let self, self.improvementWindow === controller else { return }
                 self.improvementWindow = nil
