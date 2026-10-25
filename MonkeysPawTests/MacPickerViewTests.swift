@@ -613,7 +613,6 @@ final class MacPickerViewTests: XCTestCase {
         let picker = try open()
         picker.use(mode: .copyOnly)
         XCTAssertTrue(spin { self.find("fill-description-language") != nil })
-        let field = try XCTUnwrap(find("fill-field-topic"))
 
         for name in ["topic", "detail", "language"] {
             let label = try XCTUnwrap(find("fill-description-" + name) as? NSTextField)
@@ -623,7 +622,8 @@ final class MacPickerViewTests: XCTestCase {
                 width: label.bounds.width, height: .greatestFiniteMagnitude)).height
             XCTAssertGreaterThan(requiredHeight, try XCTUnwrap(label.font).pointSize * 2)
             XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(requiredHeight), name + " help is clipped")
-            XCTAssertLessThanOrEqual(label.bounds.width, field.bounds.width + 1)
+            let viewport = try XCTUnwrap(label.enclosingScrollView).contentView
+            XCTAssertLessThanOrEqual(label.bounds.width, viewport.bounds.width)
 
             // Both ends must be reachable when the help is taller than the viewport.
             for edge in [label.bounds.minY, label.bounds.maxY - 1] {
