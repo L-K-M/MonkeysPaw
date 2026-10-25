@@ -10,17 +10,13 @@ enum WishCardMotion {
     static let bump = 0.120
     static let dry = 0.450
     static let dryTransition = 0.520
-    static let results = 0.200
-    static let search = 0.180
     static let stagger = 0.045
     static let ink = 0.220
     static let slip = 0.200
     static let sheen = 0.560
     static let sparks = 0.420
     static let nudge = 0.260
-    static let take = 0.200
-    static let takeGrip = take * 0.35
-    static let takeLift = take * 0.65
+    static let take = 0.220
     static func milliseconds(_ seconds: Double) -> UInt32 { UInt32(seconds * 1_000) }
 }
 
@@ -41,13 +37,15 @@ enum WishCardStyle {
     static let wickTrack = "#785A28", wickStart = "#E9902B", wickEnd = "#FFC765", ember = "#FFC86E"
     static let pawTop = "#3A2414", pawBottom = "#1A0F08", pawRim = "#FFBE6E"
     static let serif = "\"Literata\", \"Charis SIL\", \"P052\", \"Palatino\", \"Noto Serif\", \"DejaVu Serif\", serif"
-    static let mono = "\"JetBrains Mono\", \"DejaVu Sans Mono\", \"Liberation Mono\", monospace"
-    static let pangoMono = "JetBrains Mono,DejaVu Sans Mono,Liberation Mono"
-    static let bodySize = 15, proofSize = 12, tagSize = 11.0
+    /// The desktop's own monospace face: a named face the system lacks is
+    /// silently substituted by fontconfig, often with a poor match.
+    static let mono = "monospace"
+    static let pangoMono = "Monospace"
+    static let bodySize = 15, proofSize = 12, wellSize = 12, tagSize = 11.0
     static let minimumSlot = 6, maximumSlot = 56, slotBaseline = 2
     static let wellMinimum = 26, wellMaximum = 170, wellFallbackWidth = 240
     static let bodyLineSpace = 3, panelGap = 12, cardGap = 10
-    static let paperInset = 22, medallion = 12
+    static let paperInset = 22, medallion = 12, resultsWidth = 232, fullWidthInset = 16, revealMargin = 18
 
     static func source(_ cr: OpaquePointer, _ hex: String, alpha: Double = 1) {
         let color = components(hex)
@@ -98,8 +96,9 @@ enum WishCardStyle {
     }
     .mp-night .mp-picker-search {
         border: none; border-radius: 0; border-bottom: 1px solid rgba(255,255,255,.10);
-        background: transparent; font-size: 18px; padding: 6px;
+        background: transparent; font-size: 18px; padding: 6px; outline: none;
     }
+    .mp-night .mp-picker-search:focus-within { outline: none; box-shadow: none; }
     .mp-night .mp-picker-search placeholder { color: \(placeholder); }
     .mp-night list row { border-radius: 8px; padding: 6px 10px; font-size: 14px; }
     .mp-night list row .caption { font-size: 11px; color: \(secondary); }
@@ -137,29 +136,43 @@ enum WishCardStyle {
     .mp-card .mp-card-body, .mp-card .mp-card-body text {
         font-family: \(serif); font-size: \(bodySize)px; background: transparent; color: \(bodyInk);
     }
+    /* The proof is a paper sheet too; outrank the night's transparent views. */
+    .mp-night scrolledwindow.mp-proof { background: linear-gradient(180deg, \(paperTop), \(paperBottom)); }
     .mp-proof textview, .mp-proof textview text { font-family: \(mono); font-size: \(proofSize)px; color: \(bodyInk); background: transparent; }
     .mp-card .mp-slot, .mp-card .mp-echo, .mp-card .mp-slot-static {
-        font-family: \(serif); font-size: \(bodySize)px; font-weight: 600; color: \(dryInk);
-        min-height: 22px; min-width: 0; padding: 0 2px; border: none; border-radius: 0;
+        font-family: \(serif); font-size: \(bodySize)px; font-weight: 400; color: \(dryInk);
+        min-height: 22px; min-width: 0; padding: 0 2px; border: none; border-radius: 0; outline: none;
         background: transparent; box-shadow: none; border-bottom: 1.5px dashed \(blankRule);
         transition: color \(milliseconds(WishCardMotion.dryTransition)) ease-out, text-shadow \(milliseconds(WishCardMotion.dryTransition)) ease-out, opacity \(milliseconds(WishCardMotion.ink)) ease-out;
     }
     .mp-card .mp-slot placeholder { color: \(emptyInk); font-style: italic; }
     .mp-card .mp-slot:focus-within {
         background: radial-gradient(ellipse at center, rgba(255,190,90,.30), rgba(255,190,90,0) 75%);
-        border-bottom: 2px solid \(focusInk); caret-color: \(focusInk);
+        border-bottom: 2px solid \(focusInk); caret-color: \(focusInk); outline: none; box-shadow: none;
+    }
+    .mp-card button.mp-tumbler:focus, .mp-card button.mp-tumbler:focus-visible {
+        outline: none; border-color: \(focusInk);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 2px rgba(229,138,34,.35), 0 0 12px rgba(255,170,60,.35);
+    }
+    .mp-card .mp-well:focus-within {
+        box-shadow: inset 0 1px 3px rgba(60,40,10,.20), 0 0 0 2px rgba(229,138,34,.35);
+    }
+    .mp-card .mp-well textview, .mp-card .mp-well textview:focus { outline: none; }
+    .mp-card .mp-gloss {
+        font-family: \(serif); font-style: italic; font-size: 12px; color: \(folderInk);
+        border-top: 1px dotted rgba(120,90,40,.30); padding-top: 6px;
     }
     .mp-card .mp-well, .mp-card .mp-well textview {
-        background: \(well); font-family: \(mono); font-size: 12.5px; border: none;
+        background: \(well); font-family: \(mono); font-size: \(wellSize)px; border: none;
     }
-    .mp-card .mp-well textview text { background: transparent; font-family: \(mono); font-size: 12.5px; color: inherit; }
+    .mp-card .mp-well textview text { background: transparent; font-family: \(mono); font-size: \(wellSize)px; color: inherit; border: none; }
     .mp-card .mp-well { border-radius: 6px; padding: 7px 10px; box-shadow: inset 0 1px 3px rgba(60,40,10,.20); }
-    .mp-card .mp-well-placeholder { color: \(emptyInk); font-style: italic; font-size: 12.5px; }
+    .mp-card .mp-well-placeholder { color: \(emptyInk); font-style: italic; font-size: \(wellSize)px; }
     .mp-card button.mp-tumbler {
         background: linear-gradient(180deg, \(tumblerTop), \(tumblerBottom));
         border: 1px solid \(tumblerRim); border-radius: 6px;
         box-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 1px 2px rgba(80,50,10,.25);
-        padding: 0 8px; min-height: 22px; color: \(dryInk);
+        padding: 0 8px; min-height: 22px; color: \(dryInk); outline: none;
         transition: opacity \(milliseconds(WishCardMotion.ink)) ease-out;
     }
     .mp-card .mp-tumbler label { color: inherit; }
@@ -174,13 +187,15 @@ enum WishCardStyle {
     .mp-card button.mp-ink-remembered, .mp-card button.mp-ink-draft, .mp-card button.mp-ink-typed { color: \(dryInk); }
     .mp-card .mp-ink-wet, .mp-card .mp-ink-wet text, .mp-card button.mp-ink-wet { color: \(wetInk); text-shadow: 0 0 6px rgba(255,170,60,.55); }
     .mp-card .mp-ink-pending { opacity: 0; }
+    .mp-card .mp-well textview, .mp-card .mp-well textview text { border: none; }
+    .mp-card selection, .mp-card text selection { background: rgba(255,181,71,.38); color: \(bodyInk); }
+    .mp-card entry:not(:focus-within) selection { background: transparent; color: inherit; }
     .mp-card .mp-slot-invalid, .mp-card button.mp-slot-invalid { border: 1px dashed \(invalid); }
     .mp-card .mp-stamp {
         font-size: 11px; font-weight: bold; letter-spacing: 1px; color: \(stamp);
         border: 1.5px solid \(stamp); border-radius: 3px; padding: 0 5px; transform: rotate(-2deg); opacity: .88;
     }
     .mp-card .mp-card-error { color: \(errorInk); }
-    .mp-card .mp-field-description { font-family: \(mono); font-size: 10px; color: \(emptyInk); }
     @keyframes mp-bump-up { 50% { transform: translateY(-2px); } }
     @keyframes mp-bump-down { 50% { transform: translateY(2px); } }
     .mp-bump-up { animation: mp-bump-up \(milliseconds(WishCardMotion.bump)) ease-out; }
@@ -192,18 +207,7 @@ enum WishCardStyle {
     .mp-card .mp-nudge { animation: mp-nudge \(milliseconds(WishCardMotion.nudge)) ease-out; border-bottom-color: \(invalid); }
     .mp-card .mp-slot.mp-nudge:focus-within, .mp-card button.mp-nudge,
     .mp-card .mp-well textview.mp-nudge { border-bottom: 2px solid \(invalid); }
-    @keyframes mp-taking-grip {
-        0% { transform: none; opacity: 1; }
-        100% { transform: translateY(4px) scale(.985); opacity: 1; }
-    }
-    @keyframes mp-taking-lift {
-        0% { transform: translateY(4px) scale(.985); opacity: 1; }
-        100% { transform: translateY(-80px) rotate(-3deg); opacity: 0; }
-    }
-    .mp-taking {
-        animation: mp-taking-grip \(milliseconds(WishCardMotion.takeGrip)) ease-out forwards,
-                   mp-taking-lift \(milliseconds(WishCardMotion.takeLift)) cubic-bezier(.5,0,.75,0) \(milliseconds(WishCardMotion.takeGrip)) forwards;
-    }
+    .mp-taken { opacity: 0; }
     .mp-picker popover button, .mp-picker popover label,
     .mp-picker .mp-card popover button, .mp-picker .mp-card popover button label {
         color: @theme_fg_color;

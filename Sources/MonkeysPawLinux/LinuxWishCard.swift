@@ -28,6 +28,8 @@ final class LinuxWishCard {
     let widget: GTK.Widget
     private let paper: GTK.Widget
     private let body: GTK.Widget
+    private let gloss: GTK.Widget
+    private let scroll: GTK.Widget
     private let titleLabel: GTK.Widget
     private let folderLabel: GTK.Widget
     private let effects = LinuxCardEffects()
@@ -53,7 +55,7 @@ final class LinuxWishCard {
         self.sounds = sounds
         widget = gtk_overlay_new()!
         gtk_widget_set_name(widget, "wish-card")
-        gtk_widget_set_valign(widget, GTK_ALIGN_START)
+        gtk_widget_set_vexpand(widget, 1)
         gtk_widget_set_hexpand(widget, 1)
         paper = gtk_box_new(GTK_ORIENTATION_VERTICAL, Int32(WishCardStyle.cardGap))!
         gtk_widget_add_css_class(paper, "mp-card")
@@ -73,7 +75,6 @@ final class LinuxWishCard {
         folderLabel = GTK.label(folder.uppercased())
         gtk_widget_add_css_class(folderLabel, "mp-card-folder")
         gtk_label_set_wrap(mp_label(folderLabel), 0)
-        gtk_label_set_ellipsize(mp_label(folderLabel), PANGO_ELLIPSIZE_END)
         gtk_box_append(mp_box(header), folderLabel)
         gtk_box_append(mp_box(paper), header)
 
@@ -87,7 +88,25 @@ final class LinuxWishCard {
         gtk_text_view_set_pixels_below_lines(mp_text_view(body), Int32(WishCardStyle.bodyLineSpace))
         gtk_text_view_set_pixels_inside_wrap(mp_text_view(body), Int32(WishCardStyle.bodyLineSpace))
         gtk_widget_set_hexpand(body, 1)
-        gtk_box_append(mp_box(paper), body)
+        // The paper stays put while its text scrolls: the header, the gloss
+        // and the wick remain visible however long the template is.
+        scroll = gtk_scrolled_window_new()!
+        gtk_widget_set_name(scroll, "card-scroll")
+        // EXTERNAL: the panel, never the anchored slips, decides the width.
+        gtk_scrolled_window_set_policy(mp_scrolled_window(scroll), GTK_POLICY_EXTERNAL, GTK_POLICY_AUTOMATIC)
+        gtk_scrolled_window_set_child(mp_scrolled_window(scroll), body)
+        gtk_widget_set_vexpand(scroll, 1)
+        gtk_box_append(mp_box(paper), scroll)
+
+        // One marginal gloss names the focused blank and carries its
+        // description, so help text never pushes the sentence apart.
+        gloss = GTK.label("")
+        gtk_widget_set_name(gloss, "fill-gloss")
+        gtk_widget_add_css_class(gloss, "mp-gloss")
+        gtk_label_set_wrap(mp_label(gloss), 0)
+        gtk_label_set_ellipsize(mp_label(gloss), PANGO_ELLIPSIZE_END)
+        gtk_widget_set_visible(gloss, 0)
+        gtk_box_append(mp_box(paper), gloss)
         gtk_box_append(mp_box(paper), effects.wick)
         gtk_overlay_add_overlay(mp_overlay(widget), effects.sheen)
         gtk_widget_set_can_target(effects.sheen, 0)
@@ -108,7 +127,11 @@ final class LinuxWishCard {
                     self.bodyWidth = width
                     GTK.onMainLoop { [weak self] in
                         guard let self, !self.retired else { return }
-                        for child in self.fullWidth { gtk_widget_set_size_request(child, max(1, width - 2), -1) }
+                        // Stay well inside the text view's own width: an anchored
+                        // child as wide as the view raises the view's minimum,
+                        // which widens the paper, which re-fires this resize.
+                        let inner = max(1, width - Int32(WishCardStyle.fullWidthInset))
+                        for child in self.fullWidth { gtk_widget_set_size_request(child, inner, -1) }
                     }
                 }
             }
@@ -183,9 +206,45 @@ final class LinuxWishCard {
             gtk_label_set_text(mp_label(stamp), (fill.builtinText(name) ?? name.rawValue).uppercased())
         }
         for slip in slips { slip.update(text: fill.builtinText(.clipboard), summary: fill.clipboardSummary) }
+        updateGloss(fill)
         setHeat(fill.warmth, ready: fill.deliverEnabled)
         if fill.deliverEnabled && !wasReady { sounds.play(.ready) }
         wasReady = fill.deliverEnabled
+    }
+
+    /// "INTENDED BEHAVIOR — Describe what the change should accomplish."
+    private func updateGloss(_ fill: FillModel) {
+        guard let index = fill.focusIndex, fill.fields.indices.contains(index) else {
+            gtk_widget_set_visible(gloss, 0)
+            return
+        }
+        let field = fill.fields[index]
+        var note = field.description.flatMap { $0.isEmpty ? nil : $0 } ?? ""
+        if field.optional { note = note.isEmpty ? LinuxStrings.optionalField : note + " " + LinuxStrings.optionalSuffix }
+        let text = note.isEmpty ? field.label.uppercased() : field.label.uppercased() + "  —  " + note
+        gtk_label_set_text(mp_label(gloss), text)
+        gtk_widget_set_visible(gloss, 1)
+    }
+
+    /// GtkTextView does not scroll to a focused anchored child, so Tab could
+    /// land on a blank below the fold. Keep the focused blank in view with a
+    /// margin of paper around it, after layout has placed it.
+    func reveal(index: Int) {
+        guard !retired, let slot = slots.first(where: { $0.index == index }) else { return }
+        GTK.onMainLoop { [weak self, weak slot] in
+            guard let self, !self.retired, let slot else { return }
+            var bounds = graphene_rect_t()
+            guard gtk_widget_compute_bounds(slot.root, self.body, &bounds) != 0,
+                  let adjustment = gtk_scrolled_window_get_vadjustment(mp_scrolled_window(self.scroll)) else { return }
+            let margin = Double(WishCardStyle.revealMargin)
+            let page = Double(gtk_widget_get_height(self.scroll))
+            let top = Double(bounds.origin.y) - margin
+            let bottom = Double(bounds.origin.y + bounds.size.height) + margin
+            let value = gtk_adjustment_get_value(adjustment)
+            // Bounds are in the visible text area's coordinates: negative is above it.
+            if top < 0 { gtk_adjustment_set_value(adjustment, value + top) }
+            else if bottom > page { gtk_adjustment_set_value(adjustment, value + min(top, bottom - page)) }
+        }
     }
 
     func fieldWidget(at index: Int) -> GTK.Widget? { slots.first { $0.index == index }?.widget }
@@ -250,6 +309,7 @@ final class LinuxWishCard {
         case .field(let name, let label, let kind, let occurrence):
             guard let fill, let index = fill.fields.firstIndex(where: { $0.name == name }) else {
                 let placeholder = GTK.label(label.uppercased())
+                gtk_label_set_wrap(mp_label(placeholder), 0)
                 gtk_widget_add_css_class(placeholder, kind == .multiline ? "mp-well" : "mp-slot-static")
                 if kind == .multiline { fullWidth.append(placeholder) }
                 anchor(placeholder, alignBaseline: kind != .multiline)
@@ -335,10 +395,6 @@ final class LinuxWishCard {
         gtk_widget_set_tooltip_text(slot.widget, field.description)
         gtk_widget_set_margin_bottom(slot.root, Int32(WishCardStyle.slotBaseline))
         if let description = field.description, !description.isEmpty {
-            let label = GTK.label(description)
-            gtk_widget_set_name(label, "fill-description-" + field.name)
-            gtk_widget_add_css_class(label, "mp-field-description")
-            gtk_grid_attach(mp_grid(row), label, 0, 1, 1, 1)
             mp_accessible_description(slot.widget, description)
         }
         slots.append(slot)

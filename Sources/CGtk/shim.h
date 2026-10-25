@@ -168,6 +168,31 @@ static inline GtkTextTag *mp_card_anchor_baseline(GtkTextBuffer *buffer, int ris
     return tag;
 }
 
+/* Freezes a widget's current rendering into an image surface, so a transient
+ * effect can move and rotate it with plain Cairo. Animating CSS transforms on
+ * a live subtree is not reliable under GSK's cairo renderer (GTK 4.8), and a
+ * GtkWidgetPaintable only replays a cached node GTK 4.8 does not keep, so the
+ * parent re-records the child into a private snapshot. */
+static inline cairo_surface_t *mp_widget_capture(GtkWidget *widget) {
+    GtkWidget *parent = gtk_widget_get_parent(widget);
+    int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
+    int scale = gtk_widget_get_scale_factor(widget);
+    graphene_rect_t bounds;
+    if (!parent || width <= 0 || height <= 0 || !gtk_widget_compute_bounds(widget, parent, &bounds)) return NULL;
+    GtkSnapshot *snapshot = gtk_snapshot_new();
+    gtk_widget_snapshot_child(parent, widget, snapshot);
+    GskRenderNode *node = gtk_snapshot_free_to_node(snapshot);
+    if (!node) return NULL;
+    cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width * scale, height * scale);
+    cairo_surface_set_device_scale(surface, scale, scale);
+    cairo_t *cr = cairo_create(surface);
+    cairo_translate(cr, -bounds.origin.x, -bounds.origin.y);
+    gsk_render_node_draw(node, cr);
+    cairo_destroy(cr);
+    gsk_render_node_unref(node);
+    return surface;
+}
+
 /* ---- M1b delivery and setup --------------------------------------------- */
 
 static inline void mp_clipboard_set_text(GtkWidget *owner, const char *text) {

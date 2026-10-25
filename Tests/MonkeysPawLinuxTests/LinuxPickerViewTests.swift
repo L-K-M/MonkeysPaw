@@ -436,7 +436,7 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(environment.panel.isVisible)
     }
 
-    func testFieldDescriptionsAppearBelowControlsOnlyWhenNonempty() throws {
+    func testFocusedFieldGlossCarriesItsDescriptionOnlyWhenNonempty() throws {
         let source = """
         ---
         fields:
@@ -452,18 +452,17 @@ final class LinuxPickerViewTests: XCTestCase {
         try open()
         environment.pickerModel.use(mode: .copyOnly)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.builtinsResolved == true })
-        for (name, text) in [("topic", "Describe the topic"), ("detail", "Add details"),
-                             ("language", "Choose a language")] {
-            let description = try widget("fill-description-" + name)
-            XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(description))), text)
-            XCTAssertNotEqual(gtk_widget_is_visible(description), 0)
-            let control = try widget("fill-field-" + name)
-            let preceding = name == "detail" ? gtk_widget_get_parent(control) : control
-            XCTAssertEqual(gtk_widget_get_next_sibling(preceding), description)
+        let gloss = try widget("fill-gloss")
+        for (position, (name, text)) in [("topic", "TOPIC  —  Describe the topic"), ("detail", "DETAIL  —  Add details"),
+                                         ("language", "LANGUAGE  —  Choose a language"),
+                                         ("plain", "PLAIN"), ("empty", "EMPTY")].enumerated() {
+            gtk_widget_grab_focus(try widget("fill-field-" + name))
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.focusIndex == position })
+            XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(gloss))), text)
+            XCTAssertNotEqual(gtk_widget_is_visible(gloss), 0)
         }
-        for name in ["plain", "empty"] {
-            XCTAssertNil(findWidget { String(cString: gtk_widget_get_name($0)) == "fill-description-" + name })
-        }
+        // Descriptions never sit inside the sentence's flow.
+        XCTAssertNil(findWidget { String(cString: gtk_widget_get_name($0)).hasPrefix("fill-description-") })
     }
 
     func testNoMatchCreationPreservesTitleAfterFilenameSanitizing() throws {

@@ -284,19 +284,38 @@ private enum PawSegment {
 }
 
 private enum PawTakeMetric {
-    static let height = 118.0
+    /// The paw is drawn this tall; its fingers hang `overlap` onto the card's
+    /// face, the way the icon's paw grips its card.
+    static let height = 168.0
     static let viewBox = 24.0
     static let drawingHeight = 19.34
-    static let overlap = 16.0
-    static let gripAt = 0.35
-    /// Mirrored from the .mp-taking keyframes in WishCardStyle: a 4px dip into
-    /// the grip, then a -80px carry.
-    static let cardDip = 4.0
-    static let cardLift = -80.0
+    static let overlap = 40.0
+    /// Where along the card's width the paw grips, and its slant.
+    static let gripX = 0.36
+    static let tilt = -10.0 * .pi / 180
+    /// Phases of WishCardMotion.take: reach and press, hold, carry away.
+    static let reachEnd = 0.34
+    static let holdEnd = 0.46
+    /// The press: the card yields slightly to the grip.
+    static let pressScale = 0.965
+    static let pressDip = 6.0
+    /// The carry: up past the panel's top edge, turning and shrinking.
+    static let carryTurn = -5.0 * .pi / 180
+    static let carryScale = 0.9
+    static let fadeFrom = 0.55
     static let rimWidth = 1.2
     static let rimAlpha = 0.55
+    static let shadowOffset = (x: 2.5, y: 5.0)
+    static let shadowAlpha = 0.28
     /// Amber glow under the fingertips, in path units (viewBox space).
-    static let glowX = 10.5, glowY = 19.4, glowRadius = 14.0, glowAlpha = 0.45
+    static let glowX = 10.5, glowY = 18.4, glowRadius = 9.0, glowAlpha = 0.55
+    /// The card keeps its ready glow while it travels: a soft halo and a
+    /// dark drop shadow, approximated by expanding translucent outlines.
+    static let haloSteps = 8
+    static let haloSpread = 2.5
+    static let haloAlpha = 0.07
+    static let dropOffset = 10.0
+    static let cornerRadius = 10.0
     /// media-sources/paw-symbol.svg, transcribed; M, L, C and Z only.
     static let path: [PawSegment] = [
         .m(6.90, 0.00),
@@ -333,9 +352,13 @@ private enum PawTakeMetric {
     ]
 }
 
-/// The monkey paw that takes a card. The panel layers `widget` over the whole
-/// window; `play` drops the paw onto the card's top edge, and the card's own
-/// .mp-taking keyframes carry it away while the paw rides along.
+/// The monkey paw that takes a card. The panel layers `widget` over the
+/// whole window. `play` freezes the card into an image, hides the live card,
+/// and draws the take with Cairo:
+///
+///   0 ──── reach ──── .34 ─ hold ─ .46 ──────── carry ──────── 1
+///   paw drops in,         claws        card and paw rise past the
+///   card yields 3.5%      set          top edge, turning and fading
 final class LinuxPawTake {
     let widget: GTK.Widget
 
@@ -343,12 +366,12 @@ final class LinuxPawTake {
     private var timerID: guint?
     private var widgetAlive = true
     private var card: GTK.Widget?
+    private var image: OpaquePointer?
     private var completion: (() -> Void)?
     private var began: Int64?
     private var progress = 0.0
     private var showing = false
-    private var cardTop = 0.0
-    private var cardCenterX = 0.0
+    private var frame = (x: 0.0, y: 0.0, width: 0.0, height: 0.0)
 
     init() {
         widget = gtk_drawing_area_new()!
@@ -357,7 +380,7 @@ final class LinuxPawTake {
         g_object_ref_sink(widget)
         gtk_widget_set_can_target(widget, 0)
 
-        GTK.draw(widget) { [weak self] cr, w, h in self?.drawPaw(cr, w: Double(w), h: Double(h)) }
+        GTK.draw(widget) { [weak self] cr, w, h in self?.draw(cr, w: Double(w), h: Double(h)) }
         GTK.onSignal(UnsafeMutableRawPointer(widget), "unrealize") { [weak self] in
             self?.tickID = nil
             self?.began = nil
@@ -384,22 +407,21 @@ final class LinuxPawTake {
 
         self.completion = completion
         self.card = card
-        // The card is still untransformed now; once .mp-taking starts its
-        // translate lives in cardLift, not in measured bounds.
         var bounds = graphene_rect_t()
         if gtk_widget_compute_bounds(card, widget, &bounds) != 0 {
-            cardTop = Double(bounds.origin.y)
-            cardCenterX = Double(bounds.origin.x + bounds.size.width / 2)
+            frame = (Double(bounds.origin.x), Double(bounds.origin.y),
+                     Double(bounds.size.width), Double(bounds.size.height))
         } else {
-            cardTop = 0
-            cardCenterX = Double(gtk_widget_get_width(widget)) / 2
+            frame = (0, 0, Double(gtk_widget_get_width(widget)), Double(gtk_widget_get_height(widget)))
         }
+        image = mp_widget_capture(card)
 
         let observed = card
         GTK.onSignal(UnsafeMutableRawPointer(card), "destroy") { [weak self] in
             if self?.card == observed { self?.card = nil }
         }
-        gtk_widget_add_css_class(card, "mp-taking")
+        // Opacity alone hides the live card; the image does all the moving.
+        if image != nil { gtk_widget_add_css_class(card, "mp-taken") }
         progress = 0
         began = nil
         showing = true
@@ -421,8 +443,10 @@ final class LinuxPawTake {
         if let tickID, widgetAlive { GTK.removeTick(widget, tickID) }
         tickID = nil
         began = nil
-        if let card { gtk_widget_remove_css_class(card, "mp-taking") }
+        if let card { gtk_widget_remove_css_class(card, "mp-taken") }
         card = nil
+        if let image { cairo_surface_destroy(image) }
+        image = nil
         completion = nil
         showing = false
         progress = 0
@@ -441,8 +465,8 @@ final class LinuxPawTake {
         return true
     }
 
-    /// Runs exactly once, from the timer. The keyframes fill forwards so the
-    /// class stays on: the card remains hidden until the panel's dismissal.
+    /// Runs exactly once, from the timer. The live card stays hidden until
+    /// the panel's dismissal resets it.
     private func finish() {
         if let tickID, widgetAlive { GTK.removeTick(widget, tickID) }
         tickID = nil
@@ -454,34 +478,107 @@ final class LinuxPawTake {
         completion?()
     }
 
-    private func drawPaw(_ cr: OpaquePointer, w: Double, h: Double) {
-        guard showing, w > 0, h > 0 else { return }
-        let height = PawTakeMetric.height
-        let top: Double
-        let grip = cardTop + cardLift(progress) + PawTakeMetric.overlap - height
-        if progress < PawTakeMetric.gripAt {
-            let s = CardEase.cssOut(progress / PawTakeMetric.gripAt)
-            top = -height + (grip + height) * s
-        } else {
-            top = grip
+    /// The card's pose at `t`: offset, scale, turn and opacity.
+    private func pose(_ t: Double) -> (dy: Double, scale: Double, turn: Double, alpha: Double) {
+        typealias M = PawTakeMetric
+        if t <= M.reachEnd {
+            let s = CardEase.cubicOut(t / M.reachEnd)
+            return (M.pressDip * s, 1 - (1 - M.pressScale) * s, 0, 1)
         }
-        let scale = height / PawTakeMetric.drawingHeight
+        if t <= M.holdEnd { return (M.pressDip, M.pressScale, 0, 1) }
+        let s = CardEase.takeRise((t - M.holdEnd) / (1 - M.holdEnd))
+        let travel = -(frame.y + frame.height * 0.9) - M.pressDip
+        let fade = max(0, (s - M.fadeFrom) / (1 - M.fadeFrom))
+        return (M.pressDip + travel * s, M.pressScale + (M.carryScale - M.pressScale) * s, M.carryTurn * s, 1 - fade)
+    }
+
+    private func draw(_ cr: OpaquePointer, w: Double, h: Double) {
+        guard showing, w > 0, h > 0 else { return }
+        typealias M = PawTakeMetric
+        let pose = pose(progress)
+        let center = (x: frame.x + frame.width / 2, y: frame.y + frame.height / 2)
+
+        // Card space: every later drawing rides with the card.
+        cairo_save(cr)
+        defer { cairo_restore(cr) }
+        cairo_translate(cr, center.x, center.y + pose.dy)
+        cairo_rotate(cr, pose.turn)
+        cairo_scale(cr, pose.scale, pose.scale)
+        cairo_translate(cr, -frame.width / 2, -frame.height / 2)
+
+        cairo_push_group(cr)
+        drawHalo(cr)
+        if let image {
+            cairo_set_source_surface(cr, image, 0, 0)
+            cairo_paint(cr)
+        }
+        drawPaw(cr)
+        cairo_pop_group_to_source(cr)
+        cairo_paint_with_alpha(cr, pose.alpha)
+    }
+
+    /// The ready glow and drop shadow the live card wore, drawn by hand.
+    private func drawHalo(_ cr: OpaquePointer) {
+        typealias M = PawTakeMetric
+        for step in 0..<M.haloSteps {
+            let spread = Double(step + 1) * M.haloSpread
+            let alpha = M.haloAlpha * Double(M.haloSteps - step) / Double(M.haloSteps)
+            roundedRect(cr, -spread, M.dropOffset - spread, frame.width + spread * 2, frame.height + spread * 2)
+            cairo_set_source_rgba(cr, 0, 0, 0, alpha * 1.6)
+            cairo_fill(cr)
+            roundedRect(cr, -spread, -spread, frame.width + spread * 2, frame.height + spread * 2)
+            WishCardStyle.source(cr, WishCardStyle.amber, alpha: alpha)
+            cairo_fill(cr)
+        }
+    }
+
+    /// The paw drops in from above the panel and hangs its fingers over the
+    /// card's face; once it grips, it rides in card space.
+    private func drawPaw(_ cr: OpaquePointer) {
+        typealias M = PawTakeMetric
+        let scale = M.height / M.drawingHeight
+        let reach = progress < M.reachEnd ? CardEase.cubicOut(progress / M.reachEnd) : 1
+        // From fully above the panel's top edge to the grip.
+        let gripTop = M.overlap - M.height
+        let startTop = -(frame.y + M.height + M.pressDip)
+        let top = startTop + (gripTop - startTop) * reach
 
         cairo_save(cr)
         defer { cairo_restore(cr) }
-        cairo_translate(cr, cardCenterX - PawTakeMetric.viewBox * scale / 2, top)
+        cairo_translate(cr, frame.width * M.gripX, top)
+        cairo_rotate(cr, M.tilt)
         cairo_scale(cr, scale, scale)
+        cairo_translate(cr, -M.viewBox / 2, 0)
 
-        let glow = cairo_pattern_create_radial(PawTakeMetric.glowX, PawTakeMetric.glowY, 0,
-                                               PawTakeMetric.glowX, PawTakeMetric.glowY,
-                                               PawTakeMetric.glowRadius)!
-        WishCardStyle.stop(glow, 0, WishCardStyle.amber, PawTakeMetric.glowAlpha)
+        // Contact shadow on the paper, then the warm light under the claws.
+        cairo_save(cr)
+        cairo_translate(cr, M.shadowOffset.x / scale, M.shadowOffset.y / scale)
+        tracePaw(cr)
+        cairo_set_source_rgba(cr, 0.12, 0.06, 0.02, M.shadowAlpha)
+        cairo_fill(cr)
+        cairo_restore(cr)
+
+        let glow = cairo_pattern_create_radial(M.glowX, M.glowY, 0, M.glowX, M.glowY, M.glowRadius)!
+        WishCardStyle.stop(glow, 0, WishCardStyle.amber, M.glowAlpha * reach)
         WishCardStyle.stop(glow, 1, WishCardStyle.amber, 0)
         cairo_set_source(cr, glow)
         cairo_pattern_destroy(glow)
-        cairo_arc(cr, PawTakeMetric.glowX, PawTakeMetric.glowY, PawTakeMetric.glowRadius, 0, 2 * .pi)
+        cairo_arc(cr, M.glowX, M.glowY, M.glowRadius, 0, 2 * .pi)
         cairo_fill(cr)
 
+        tracePaw(cr)
+        let fill = cairo_pattern_create_linear(0, 0, 0, M.drawingHeight)!
+        WishCardStyle.stop(fill, 0, WishCardStyle.pawTop, 1)
+        WishCardStyle.stop(fill, 1, WishCardStyle.pawBottom, 1)
+        cairo_set_source(cr, fill)
+        cairo_pattern_destroy(fill)
+        cairo_fill_preserve(cr)
+        WishCardStyle.source(cr, WishCardStyle.pawRim, alpha: M.rimAlpha)
+        cairo_set_line_width(cr, M.rimWidth / scale)
+        cairo_stroke(cr)
+    }
+
+    private func tracePaw(_ cr: OpaquePointer) {
         for segment in PawTakeMetric.path {
             switch segment {
             case let .m(x, y): cairo_move_to(cr, x, y)
@@ -490,26 +587,16 @@ final class LinuxPawTake {
             case .z: cairo_close_path(cr)
             }
         }
-        let fill = cairo_pattern_create_linear(0, 0, 0, PawTakeMetric.viewBox)!
-        WishCardStyle.stop(fill, 0, WishCardStyle.pawTop, 1)
-        WishCardStyle.stop(fill, 1, WishCardStyle.pawBottom, 1)
-        cairo_set_source(cr, fill)
-        cairo_pattern_destroy(fill)
-        cairo_fill_preserve(cr)
-        WishCardStyle.source(cr, WishCardStyle.pawRim, alpha: PawTakeMetric.rimAlpha)
-        cairo_set_line_width(cr, PawTakeMetric.rimWidth / scale)
-        cairo_stroke(cr)
     }
 
-    /// The card's translateY, mirrored from .mp-taking rather than measured:
-    /// compute_bounds does not promise live CSS transforms, and a modeled lift
-    /// keeps the paw glued to the edge wherever the card sits in the panel.
-    private func cardLift(_ t: Double) -> Double {
-        if t <= PawTakeMetric.gripAt {
-            return PawTakeMetric.cardDip * CardEase.cssOut(t / PawTakeMetric.gripAt)
-        }
-        let s = CardEase.takeRise((t - PawTakeMetric.gripAt) / (1 - PawTakeMetric.gripAt))
-        return PawTakeMetric.cardDip + (PawTakeMetric.cardLift - PawTakeMetric.cardDip) * s
+    private func roundedRect(_ cr: OpaquePointer, _ x: Double, _ y: Double, _ w: Double, _ h: Double) {
+        let r = min(PawTakeMetric.cornerRadius, w / 2, h / 2)
+        cairo_new_sub_path(cr)
+        cairo_arc(cr, x + w - r, y + r, r, -.pi / 2, 0)
+        cairo_arc(cr, x + w - r, y + h - r, r, 0, .pi / 2)
+        cairo_arc(cr, x + r, y + h - r, r, .pi / 2, .pi)
+        cairo_arc(cr, x + r, y + r, r, .pi, 3 * .pi / 2)
+        cairo_close_path(cr)
     }
 }
 #endif

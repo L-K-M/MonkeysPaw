@@ -217,12 +217,17 @@ specified elsewhere.
 - **Pick.** The selected card is a read-only thumbnail with field labels,
   date/time stamps and a placeholder clipboard slip. Selection reads neither
   remembered values nor the clipboard. Invalid entries show their issues.
-- **Fill.** Search and results slide away. Text blanks grow with their
+- **Fill.** Search and results give way at once: animating their width
+  would reflow the sentence every frame. The paper stays put while its text
+  scrolls, keeping the focused blank in view. Text blanks grow with their
   contents; multiline blanks are paper wells; choice tumblers roll with
   Up/Down, jump by initial letter and open their option list with Space or
   a click. Repeated names echo the first blank and focus it when clicked.
-  Descriptions, accessible labels, composition, field order, held drafts and
-  the existing Return variants retain their behaviour (§2, §5.3).
+  One gloss line under the text names the focused blank with its
+  description, so help never splits the sentence; descriptions stay
+  accessible descriptions and tooltips. Accessible labels, composition,
+  field order, held drafts and the existing Return variants retain their
+  behaviour (§2, §5.3).
 - **Ink and warmth.** Suggestions look like pencil, remembered values and
   drafts like dry ink, and fresh typing dries from bright amber. A wick and
   the card's glow track filled required blanks. Ready cards receive one
@@ -234,7 +239,10 @@ specified elsewhere.
   typing never reads it again. The exact expanded text remains available
   through **Ctrl+P Proof** in picker and fill, including blocking reasons.
 - **Take.** A ready Return or Deliver lets the paw descend, grip the card
-  and lift it out over 200 ms, then invokes the existing delivery path.
+  and lift it out over 220 ms, then invokes the existing delivery path. The
+  card is frozen into an image that Cairo moves and turns while the live
+  card hides by opacity: animated CSS transforms on a live subtree render
+  incorrectly under GSK's cairo renderer.
   Repeated input is ignored during the take. Hiding, dismissing, rebinding
   or destroying the panel cancels it. Fieldless prompts take the thumbnail
   directly. Clipboard write, hide, focus restoration and paste retain §6's

@@ -54,6 +54,7 @@ final class LinuxPanel: PanelWindow {
     private var forgetButton: GTK.Widget!
     private var editButton: GTK.Widget!
     private var libraryButton: GTK.Widget!
+    private var proofButton: GTK.Widget!
     private var menuPopover: GTK.Widget?
 
     var clipboardOwner: GTK.Widget { window }
@@ -180,8 +181,9 @@ final class LinuxPanel: PanelWindow {
         mp_accessible_label(queryEntry, LinuxStrings.searchPrompts)
         initialFocus = queryEntry
         queryRevealer = gtk_revealer_new()!
-        gtk_revealer_set_transition_type(mp_revealer(queryRevealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_UP)
-        gtk_revealer_set_transition_duration(mp_revealer(queryRevealer), WishCardMotion.milliseconds(WishCardMotion.search))
+        // Instant swaps: animating widths reflows the card's sentence every
+        // frame. The card's ink-in and sheen carry the arrival instead.
+        gtk_revealer_set_transition_type(mp_revealer(queryRevealer), GTK_REVEALER_TRANSITION_TYPE_NONE)
         gtk_revealer_set_reveal_child(mp_revealer(queryRevealer), 1)
         gtk_revealer_set_child(mp_revealer(queryRevealer), queryEntry)
         gtk_box_append(mp_box(content), queryRevealer)
@@ -243,10 +245,11 @@ final class LinuxPanel: PanelWindow {
         gtk_stack_add_named(mp_stack(stack), pickerPage, "picker")
 
         resultsRevealer = gtk_revealer_new()!
-        gtk_revealer_set_transition_type(mp_revealer(resultsRevealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT)
-        gtk_revealer_set_transition_duration(mp_revealer(resultsRevealer), WishCardMotion.milliseconds(WishCardMotion.results))
+        gtk_revealer_set_transition_type(mp_revealer(resultsRevealer), GTK_REVEALER_TRANSITION_TYPE_NONE)
         gtk_revealer_set_reveal_child(mp_revealer(resultsRevealer), 1)
         gtk_revealer_set_child(mp_revealer(resultsRevealer), stack)
+        // A fixed column keeps the panel at its size; titles ellipsize.
+        gtk_widget_set_size_request(stack, Int32(WishCardStyle.resultsWidth), -1)
         gtk_box_append(mp_box(split), resultsRevealer)
         proofStack = gtk_stack_new()!
         gtk_widget_set_name(proofStack, "picker-proof-stack")
@@ -254,12 +257,12 @@ final class LinuxPanel: PanelWindow {
         gtk_stack_set_vhomogeneous(mp_stack(proofStack), 0)
         gtk_widget_set_hexpand(proofStack, 1)
         gtk_widget_set_vexpand(proofStack, 1)
+        // The card scrolls its own text, so the paper, gloss and wick stay put.
         cardHost = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0)!
-        let cardScroll = scrolled(cardHost)
-        gtk_scrolled_window_set_policy(mp_scrolled_window(cardScroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC)
+        gtk_widget_set_vexpand(cardHost, 1)
         for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom,
                      gtk_widget_set_margin_start, gtk_widget_set_margin_end] { edge(cardHost, Int32(WishCardStyle.cardGap)) }
-        gtk_stack_add_named(mp_stack(proofStack), cardScroll, "card")
+        gtk_stack_add_named(mp_stack(proofStack), cardHost, "card")
         preview = gtk_text_view_new()!
         gtk_widget_set_name(preview, "picker-preview")
         mp_accessible_label(preview, LinuxStrings.preview)
@@ -371,7 +374,7 @@ final class LinuxPanel: PanelWindow {
             gtk_widget_add_css_class(button, "flat")
             gtk_box_append(mp_box(actions), button)
         }
-        let proofButton = GTK.button("Ctrl+P Proof") { [weak self] in self?.toggleProof() }
+        proofButton = GTK.button(LinuxPickerStrings.proofHint) { [weak self] in self?.toggleProof() }
         gtk_widget_set_name(proofButton, "picker-proof")
         gtk_widget_add_css_class(proofButton, "flat")
         gtk_box_append(mp_box(actions), proofButton)
@@ -449,6 +452,7 @@ final class LinuxPanel: PanelWindow {
                newForm || renderedFocus != position {
                 initialFocus = field
                 gtk_widget_grab_focus(field)
+                cardView?.reveal(index: position)
             }
             renderedFocus = fill.focusIndex
         } else {
@@ -502,6 +506,8 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_visible(editButton, inFill ? 0 : 1)
         gtk_widget_set_sensitive(editButton, picker.selectionIndex == nil ? 0 : 1)
         gtk_widget_set_visible(libraryButton, inFill ? 0 : 1)
+        // The picker footer is full; Ctrl+P still toggles the proof there.
+        gtk_widget_set_visible(proofButton, inFill ? 1 : 0)
         let deliveryHint = picker.fillModel?.deliveryHint ?? picker.deliveryHint
         gtk_label_set_text(mp_label(hint), deliveryHint + " · " + (inFill ? LinuxPickerStrings.escapeFill : LinuxPickerStrings.escapePicker))
         gtk_widget_set_tooltip_text(hint, inFill ? LinuxStrings.fillHint : LinuxStrings.pickerHint)
@@ -536,9 +542,15 @@ final class LinuxPanel: PanelWindow {
                 gtk_widget_set_valign(icon, GTK_ALIGN_CENTER)
                 gtk_box_append(mp_box(row), icon)
                 let text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
-                gtk_box_append(mp_box(text), GTK.label(result.title))
+                let title = GTK.label(result.title)
+                gtk_box_append(mp_box(text), title)
                 let subtitle = GTK.label(resultSubtitle(result))
                 for css in ["dim-label", "caption"] { gtk_widget_add_css_class(subtitle, css) }
+                // One line each: the fixed results column must not grow rows.
+                for label in [title, subtitle] {
+                    gtk_label_set_wrap(mp_label(label), 0)
+                    gtk_label_set_ellipsize(mp_label(label), PANGO_ELLIPSIZE_END)
+                }
                 gtk_box_append(mp_box(text), subtitle)
                 gtk_box_append(mp_box(row), text)
                 gtk_list_box_append(mp_list_box(resultsList), row)
@@ -594,10 +606,10 @@ final class LinuxPanel: PanelWindow {
     }
 
     private func revealPicker(_ visible: Bool) {
-        gtk_revealer_set_transition_duration(mp_revealer(queryRevealer), WishCardMotion.enabled ? WishCardMotion.milliseconds(WishCardMotion.search) : 0)
-        gtk_revealer_set_transition_duration(mp_revealer(resultsRevealer), WishCardMotion.enabled ? WishCardMotion.milliseconds(WishCardMotion.results) : 0)
-        gtk_revealer_set_reveal_child(mp_revealer(queryRevealer), visible ? 1 : 0)
-        gtk_revealer_set_reveal_child(mp_revealer(resultsRevealer), visible ? 1 : 0)
+        // Visibility, not reveal-child: GTK 4.8 revealers without a slide
+        // keep measuring a concealed child at full size.
+        gtk_widget_set_visible(queryRevealer, visible ? 1 : 0)
+        gtk_widget_set_visible(resultsRevealer, visible ? 1 : 0)
     }
 
     private func toggleProof() {

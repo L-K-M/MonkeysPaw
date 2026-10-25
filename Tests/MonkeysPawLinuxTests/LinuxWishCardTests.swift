@@ -213,7 +213,7 @@ final class LinuxWishCardTests: XCTestCase {
         try waitPastTake()
         XCTAssertEqual(fill.state, .editing)
         XCTAssertEqual(notifications.notificationCount, 0)
-        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taking"), 0)
+        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
         XCTAssertNotEqual(gtk_widget_get_sensitive(try widget("picker-use")), 0)
         XCTAssertTrue(focused(try widget("fill-field-word")))
         XCTAssertTrue(key(GDK_KEY_Return))
@@ -241,12 +241,12 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.isResolvingBuiltins })
         XCTAssertTrue(GTKTestSupport.spin { clipboard.reads == 1 })
-        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taking"), 0)
+        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
-        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taking"), 0)
+        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
         try waitPastTake()
         XCTAssertEqual(clipboard.reads, 1)
-        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taking"), 0)
+        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
         clipboard.resolve("Resolved wish")
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
         XCTAssertEqual(clipboard.writes, ["Resolved wish"])
@@ -341,6 +341,67 @@ final class LinuxWishCardTests: XCTestCase {
             gsk_render_node_unref(node)
             g_object_unref(UnsafeMutableRawPointer(paintable))
         }
+    }
+
+    func testFullWidthSlotsKeepThePanelAtItsSize() throws {
+        let source = """
+        ---
+        fields:
+          context: {type: multiline, optional: true}
+        ---
+        Review this change.
+
+        <diff>
+        {{clipboard}}
+        </diff>
+
+        <context>
+        {{context}}
+        </context>
+
+        """ + (1...30).map { "Instruction \($0): trace each changed path through its callers." }.joined(separator: "\n")
+        try files.write(Data(source.utf8), at: "wish.md")
+        try open()
+        let window = environment.panel.clipboardOwner
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_get_width(window) > 0 })
+        let pickerWidth = gtk_widget_get_width(window)
+        let wide = (1...12).map { "+    let line\($0) = items.reduce(0) { partial, item in partial + item.price * Decimal(item.quantity) }" }
+        mp_clipboard_set_text(window, (["diff --git a/Sources/Shop/Cart.swift b/Sources/Shop/Cart.swift"] + wide).joined(separator: "\n"))
+        XCTAssertTrue(key(GDK_KEY_Return))
+        let fill = try XCTUnwrap(environment.pickerModel.fillModel)
+        XCTAssertTrue(GTKTestSupport.spin { fill.clipboardSummary?.kind == .diff })
+        // Slips size themselves from the card's measured width over several
+        // frames. Their requests must never raise the card's own minimum,
+        // or a window manager grows the panel frame by frame.
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.5
+        XCTAssertTrue(GTKTestSupport.spin { ProcessInfo.processInfo.systemUptime >= deadline })
+        let card = try widget("wish-card")
+        var minimum: Int32 = 0
+        gtk_widget_measure(card, GTK_ORIENTATION_HORIZONTAL, -1, &minimum, nil, nil, nil)
+        XCTAssertLessThanOrEqual(minimum, gtk_widget_get_width(card))
+        XCTAssertEqual(gtk_widget_get_width(window), pickerWidth)
+    }
+
+    func testTabRevealsABlankBelowTheFold() throws {
+        let lines = (1...40).map { "Line \($0) of the instructions." }.joined(separator: "\n")
+        let fill = try openFill("---\nfields:\n  first: {default: A}\n  last: {default: B}\n---\n{{first}}\n\(lines)\n{{last}}")
+        let last = try widget("fill-field-last")
+        let scroll = try widget("card-scroll")
+        XCTAssertTrue(key(GDK_KEY_Tab))
+        XCTAssertTrue(GTKTestSupport.spin { fill.focusIndex == 1 && self.focused(last) })
+        XCTAssertTrue(GTKTestSupport.spin {
+            var bounds = graphene_rect_t()
+            guard gtk_widget_compute_bounds(last, scroll, &bounds) != 0 else { return false }
+            return bounds.origin.y >= 0 && bounds.origin.y + bounds.size.height <= Float(gtk_widget_get_height(scroll))
+        })
+    }
+
+    func testTakeHidesTheLiveCardWhileThePawCarriesItsImage() throws {
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertNotEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
+        XCTAssertEqual(fill.state, .editing)
+        XCTAssertTrue(GTKTestSupport.spin { fill.state != .editing })
     }
 
     private func openFill(_ source: String) throws -> FillModel {

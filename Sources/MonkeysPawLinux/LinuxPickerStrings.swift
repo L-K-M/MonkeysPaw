@@ -9,6 +9,7 @@ enum LinuxPickerStrings {
     static let copyHint = "Alt+↵ " + LinuxStrings.copy
     static let editHint = "Ctrl+↵ " + LinuxStrings.edit
     static let libraryHint = "Ctrl+L " + LinuxStrings.library
+    static let proofHint = "Ctrl+P Proof"
     static let escapePicker = "Esc: close"
     static let escapeFill = "Esc: back"
     static let moreActions = "More actions"
