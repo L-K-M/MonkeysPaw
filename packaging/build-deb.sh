@@ -29,6 +29,16 @@ STAGE="$ROOT/build/deb/monkeyspaw_${DEB_VERSION}_${ARCH}"
 VERSION_SOURCE="$ROOT/Sources/MonkeysPawLinux/PackagedBuildVersion.generated.swift"
 deps_work=""
 
+# The Wish Card take ships as nine committed frames. Fail on a missing input
+# before the build, not at staging or in the Flatpak repack.
+for frame in 00 01 02 03 04 05 06 07 08; do
+    frame_source="$ROOT/MonkeysPaw/Resources/WishPaw/wish-paw-$frame@2x.png"
+    if [[ ! -f "$frame_source" ]]; then
+        echo "!! Missing required WishPaw frame: $frame_source" >&2
+        exit 1
+    fi
+done
+
 # Never overwrite another in-progress package build's version source. Cleanup
 # on failure too, so an ordinary development build cannot inherit a release.
 if ! (set -o noclobber; printf 'enum PackagedBuildVersion { static let value = "%s" }\n' \
@@ -87,6 +97,8 @@ for size in 16 24 32 48 64 128 256 512; do
     install -D -m 0644 "$ROOT/packaging/icons/hicolor/${size}x${size}/apps/$APP_ID.png" \
         "$STAGE/usr/share/icons/hicolor/${size}x${size}/apps/$APP_ID.png"
 done
+install -D -m 0644 -t "$STAGE/usr/share/monkeyspaw/wish-paw" \
+    "$ROOT"/MonkeysPaw/Resources/WishPaw/wish-paw-0{0..8}@2x.png
 install -m 0644 "$ROOT/packaging/debian/copyright" "$STAGE/usr/share/doc/monkeyspaw/"
 printf 'monkeyspaw (%s) unstable; urgency=low\n\n  * Release %s.\n\n -- L-K-M <noreply@lkmc.ch>  %s\n' \
     "$DEB_VERSION" "$VERSION" "$(date -R)" \

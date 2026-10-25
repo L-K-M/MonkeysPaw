@@ -74,6 +74,7 @@ class SelectionTests(unittest.TestCase):
             "packaging/macos/background.png": MACOS,
             "MonkeysPaw/AppDelegate.swift": MACOS,
             "MonkeysPaw/Resources/Assets.xcassets/Contents.json": MACOS,
+            "MonkeysPaw/Resources/WishPaw/wish-paw-00@2x.png": LINUX | MACOS,
             "MonkeysPawTests/PanelTests.swift": MACOS,
             "MonkeysPaw.xcodeproj/project.pbxproj": MACOS | {"core-linux", "deb"},
             "MonkeysPaw.xcodeproj/xcshareddata/xcschemes/MonkeysPaw.xcscheme":
@@ -90,6 +91,7 @@ class SelectionTests(unittest.TestCase):
             "media-sources/icon.png": LINUX | MACOS,
             "media-sources/paw-symbol.svg": MACOS | {"android", "android-sync"},
             "media-sources/paw/render-paw.c": frozenset(),
+            "media-sources/paw/preview.c": frozenset(),
             "android/app/src/main/AndroidManifest.xml": frozenset({"android", "android-sync"}),
             "android/core/build.gradle.kts": frozenset({"android", "android-sync"}),
             "android/app/build.gradle.kts": frozenset({"android", "android-sync", "core-linux", "deb"}),
@@ -129,6 +131,7 @@ class SelectionTests(unittest.TestCase):
             "scripts/tests/test_flatpak_workflow.py": frozenset({"core-linux", "deb", "flatpak"}),
             "scripts/build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
             "scripts/tests/test-build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
+            "scripts/tests/test-build-deb.sh": frozenset({"core-linux", "deb"}),
             "scripts/flatpak-smoke.py": frozenset({"core-linux", "deb", "flatpak"}),
             "flatpak/ch.lkmc.monkeyspaw.yml": frozenset({"deb", "flatpak"}),
             # A new test may run in any job; it selects everything until mapped.
