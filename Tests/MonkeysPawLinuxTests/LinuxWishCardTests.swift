@@ -12,6 +12,7 @@ final class LinuxWishCardTests: XCTestCase {
     private var environment: LinuxEnvironment!
     private var files: RootedFileStore!
     private var animations: gboolean?
+    private var takeTimer: WishTakeStepper!
 
     override func setUpWithError() throws {
         let address = try FakePortal.requirePrivateBus()
@@ -27,6 +28,8 @@ final class LinuxWishCardTests: XCTestCase {
         notifications = try FakePortal(address: address)
         try notifications.ownNotifications()
         environment = LinuxEnvironment(application: application, environment: tools.environment)
+        takeTimer = WishTakeStepper()
+        environment.panel.take.scheduler = takeTimer
     }
 
     override func tearDown() {
@@ -150,17 +153,128 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(fill.state, .editing)
     }
 
-    func testTakeDelaysAndDeliversExactlyOnce() throws {
+    func testEscapeDuringTakeRestoresCardAndKeepsDraft() throws {
+        let fill = try openFill("{{word}}")
+        mp_entry_set_text(try widget("fill-field-word"), "Kept wish")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        let card = try widget("wish-card")
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_has_css_class(card, "mp-taken") != 0 })
+        XCTAssertTrue(key(GDK_KEY_Escape))
+        XCTAssertEqual(gtk_widget_has_css_class(card, "mp-taken"), 0)
+        try waitPastTake()
+        XCTAssertEqual(fill.state, .editing)
+        XCTAssertEqual(fill.values["word"], "Kept wish")
+        XCTAssertTrue(focused(try widget("fill-field-word")))
+        XCTAssertEqual(notifications.notificationCount, 0)
+        XCTAssertEqual(try usageCount(), 0)
+    }
+
+    func testTakePlaysAllNineExposuresAndCuesThenDeliversExactlyOnce() throws {
         let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
         XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
-        let started = ProcessInfo.processInfo.systemUptime
+        var cues: [WishCardCue] = []
+        environment.panel.take.playCue = { cues.append($0) }
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
         XCTAssertEqual(fill.state, .editing)
         XCTAssertTrue(environment.panel.isVisible)
-        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.take.frameIndex == 0 })
+        for index in PawTake.frames.indices {
+            var painted = false
+            GTK.afterNextPaint(environment.panel.take.widget) { painted = true }
+            XCTAssertTrue(GTKTestSupport.spin { painted })
+            XCTAssertEqual(environment.panel.take.frameIndex, index)
+            XCTAssertEqual(fill.state, .editing, "Every exposure, including the last, gets a full interval")
+            XCTAssertEqual(notifications.notificationCount, 0)
+            XCTAssertEqual(takeTimer.pending.count, 1)
+            takeTimer.step()
+        }
+        XCTAssertEqual(takeTimer.delays, Array(repeating: PawTake.frameInterval, count: PawTake.frames.count))
+        XCTAssertEqual(cues, [.crack, .crack, .crack, .crack, .take])
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
-        XCTAssertGreaterThanOrEqual(ProcessInfo.processInfo.systemUptime - started, WishCardMotion.take * 0.9)
+        takeTimer.drain()
         XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
+        XCTAssertEqual(try usageCount(), 1)
+    }
+
+    func testFreshReturnSkipsToPreviouslyChosenDeliveryMode() throws {
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.take.frameIndex == 0 })
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_CONTROL_MASK))
+        XCTAssertEqual(fill.state, .delivering)
+        try waitPastTake()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
+        XCTAssertEqual(try usageCount(), 1)
+    }
+
+    func testFreshKeypadEnterSkipsEvenBeforeCapture() throws {
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertNil(environment.panel.take.frameIndex)
+        XCTAssertTrue(key(GDK_KEY_KP_Enter))
+        XCTAssertEqual(fill.state, .delivering)
+        try waitPastTake()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(try usageCount(), 1)
+    }
+
+    func testFreshISOReturnSkipsWithTheOriginalMode() throws {
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(key(GDK_KEY_ISO_Enter))
+        XCTAssertEqual(fill.state, .delivering)
+        try waitPastTake()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(try usageCount(), 1)
+    }
+
+    func testDeliveryHideClearsTheHeldTakeInputGuard() throws {
+        _ = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        try waitPastTake()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertFalse(environment.panel.isVisible)
+        // Delivery's panel port can show it independently of a model render.
+        environment.panel.show()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isActiveAndVisible })
+        XCTAssertFalse(key(GDK_KEY_q))
+    }
+
+    func testRepeatedReturnAndOtherInputDoNotSkipOrChangeTheWish() throws {
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK, release: false))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.take.frameIndex == 0 })
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_CONTROL_MASK, release: false))
+        for input in [GDK_KEY_q, GDK_KEY_Down, GDK_KEY_Tab, GDK_KEY_space] {
+            XCTAssertTrue(key(input))
+        }
+        XCTAssertTrue(key(GDK_KEY_p, modifiers: GDK_CONTROL_MASK))
+        XCTAssertEqual(environment.panel.take.frameIndex, 0)
+        XCTAssertEqual(fill.state, .editing)
+        XCTAssertEqual(fill.values["word"], "Wish")
+        XCTAssertEqual(try proofPage(), "card")
+        XCTAssertEqual(notifications.notificationCount, 0)
+        try waitPastTake()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(try usageCount(), 1)
+    }
+
+    func testMissingPawFramesStillPlayCardAndDeliver() throws {
+        let data = tools.directory.appendingPathComponent("paw-data")
+        try FileManager.default.createDirectory(at: data.appendingPathComponent("monkeyspaw/wish-paw"),
+                                                withIntermediateDirectories: true)
+        environment.shutdown()
+        tools.environment["XDG_DATA_DIRS"] = data.path
+        environment = LinuxEnvironment(application: application, environment: tools.environment)
+        environment.panel.take.scheduler = takeTimer
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        let card = try widget("wish-card")
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_has_css_class(card, "mp-taken") != 0 })
+        XCTAssertEqual(fill.state, .editing)
+        try waitPastTake()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
         XCTAssertEqual(try usageCount(), 1)
     }
 
@@ -176,6 +290,20 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
     }
 
+    func testHidingDuringTakeRestoresCardAndRevokesQueuedFrames() throws {
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        let card = try widget("wish-card")
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.take.frameIndex == 0 })
+        environment.panel.hide()
+        try waitPastTake()
+        XCTAssertEqual(gtk_widget_has_css_class(card, "mp-taken"), 0)
+        XCTAssertNil(environment.panel.take.frameIndex)
+        XCTAssertEqual(fill.state, .editing)
+        XCTAssertEqual(notifications.notificationCount, 0)
+        XCTAssertEqual(try usageCount(), 0)
+    }
+
     func testFieldlessThumbnailTakesAndCanBeCancelled() throws {
         try files.write(Data("A wish without blanks".utf8), at: "wish.md")
         try open()
@@ -188,6 +316,7 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { !self.environment.panel.isVisible })
         try open()
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        try waitPastTake()
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
         XCTAssertEqual(try usageCount(), 1)
     }
@@ -216,6 +345,26 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertTrue(key(GDK_KEY_Return))
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.deliverEnabled == true })
         XCTAssertTrue(focused(try widget("fill-field-word")))
+    }
+
+    func testLibraryRebindRevokesTheOldTake() throws {
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.take.frameIndex == 0 })
+        let previous = environment.pickerModel
+        let second = tools.directory.appendingPathComponent("second-library")
+        let secondFiles = try RootedFileStore(root: second)
+        try secondFiles.write(Data("A different wish".utf8), at: "other.md")
+        XCTAssertEqual(environment.switchLibrary(to: second), .switched)
+        try waitPastTake()
+        XCTAssertNil(environment.panel.take.frameIndex)
+        XCTAssertEqual(previous.state, .closed)
+        XCTAssertEqual(fill.state, .closed)
+        XCTAssertEqual(notifications.notificationCount, 0)
+        try open()
+        XCTAssertEqual(environment.pickerModel.results.map(\.relativePath), ["other.md"])
+        XCTAssertEqual(gtk_widget_has_css_class(try widget("wish-card"), "mp-taken"), 0)
+        XCTAssertEqual(try usageCount(), 0)
     }
 
     func testBlockedPreviewDuringTakeRestoresCardWithoutDelivery() throws {
@@ -248,9 +397,11 @@ final class LinuxWishCardTests: XCTestCase {
         let clipboard = WishDeferredClipboard()
         environment.shutdown()
         environment = LinuxEnvironment(application: application, environment: tools.environment, clipboard: clipboard)
+        environment.panel.take.scheduler = takeTimer
         try files.write(Data("{{clipboard}}".utf8), at: "wish.md")
         try open()
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        try waitPastTake()
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.isResolvingBuiltins })
         XCTAssertTrue(GTKTestSupport.spin { clipboard.reads == 1 })
         // The taken card stays away while delivery waits for the clipboard.
@@ -429,6 +580,7 @@ final class LinuxWishCardTests: XCTestCase {
         let card = try widget("wish-card")
         XCTAssertTrue(GTKTestSupport.spin { gtk_widget_has_css_class(card, "mp-taken") != 0 })
         XCTAssertEqual(fill.state, .editing)
+        try waitPastTake()
         XCTAssertTrue(GTKTestSupport.spin { fill.state != .editing })
     }
 
@@ -468,6 +620,7 @@ final class LinuxWishCardTests: XCTestCase {
         // Hold no reference: in the app nothing keeps a delivered FillModel.
         _ = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
         XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        try waitPastTake()
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
         XCTAssertFalse(environment.panel.isVisible)
         try open()
@@ -504,8 +657,10 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(environment.pickerModel.state, .picker)
     }
 
-    private func key(_ key: Int32, modifiers: GdkModifierType = GdkModifierType(rawValue: 0)) -> Bool {
-        mp_test_emit_key_pressed(environment.panel.clipboardOwner, UInt32(key), modifiers) != 0
+    private func key(_ key: Int32, modifiers: GdkModifierType = GdkModifierType(rawValue: 0), release: Bool = true) -> Bool {
+        let handled = mp_test_emit_key_pressed(environment.panel.clipboardOwner, UInt32(key), modifiers) != 0
+        if release { mp_test_emit_key_released(environment.panel.clipboardOwner, UInt32(key), modifiers) }
+        return handled
     }
 
     private func widget(_ name: String) throws -> GTK.Widget {
@@ -557,8 +712,29 @@ final class LinuxWishCardTests: XCTestCase {
     }
 
     private func waitPastTake() throws {
-        let deadline = ProcessInfo.processInfo.systemUptime + WishCardMotion.take + 0.15
-        XCTAssertTrue(GTKTestSupport.spin { ProcessInfo.processInfo.systemUptime >= deadline })
+        if environment.panel.take.isPlaying && takeTimer.pending.isEmpty {
+            XCTAssertTrue(GTKTestSupport.spin { !self.takeTimer.pending.isEmpty || !self.environment.panel.take.isPlaying })
+        }
+        takeTimer.drain()
+    }
+}
+
+private final class WishTakeStepper: Scheduler {
+    private(set) var pending: [() -> Void] = []
+    private(set) var delays: [Duration] = []
+
+    func after(_ delay: Duration, _ work: @escaping () -> Void) {
+        delays.append(delay)
+        pending.append(work)
+    }
+
+    func step() {
+        guard !pending.isEmpty else { return }
+        pending.removeFirst()()
+    }
+
+    func drain() {
+        while !pending.isEmpty { step() }
     }
 }
 

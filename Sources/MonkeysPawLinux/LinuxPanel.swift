@@ -20,7 +20,7 @@ final class LinuxPanel: PanelWindow {
     private var renderedResults: [PickerResultRow] = []
     private var renderedFocus: Int?
     private let sounds: LinuxFeedbackSounds
-    private let take = LinuxPawTake()
+    let take: LinuxPawTake
     private var takeRevision = 0
     private var isTaking = false
     /// The take finished and delivery is under way: the live card stays
@@ -67,8 +67,11 @@ final class LinuxPanel: PanelWindow {
     var isVisible: Bool { !isDestroyed && gtk_widget_get_visible(window) != 0 }
     var isActiveAndVisible: Bool { isVisible && gtk_window_is_active(mp_window(window)) != 0 }
 
-    init(application: UnsafeMutablePointer<GtkApplication>, sounds: LinuxFeedbackSounds = LinuxFeedbackSounds()) {
+    init(application: UnsafeMutablePointer<GtkApplication>, sounds: LinuxFeedbackSounds = LinuxFeedbackSounds(),
+         pawFrames: LinuxPawFrames = LinuxPawFrames()) {
         self.sounds = sounds
+        take = LinuxPawTake(frames: pawFrames)
+        take.playCue = { [weak sounds] in sounds?.play($0) }
         window = gtk_application_window_new(application)!
         GTK.hideOnClose(window)
         LinuxStyle.install(on: window)
@@ -111,7 +114,9 @@ final class LinuxPanel: PanelWindow {
 
         // The window survives library switches. Install its controllers once;
         // they always use the current binding rather than a captured picker.
-        GTK.observeKeys(window) { [weak self] key, modifiers in self?.keyPressed(key, modifiers: modifiers) ?? false }
+        GTK.observeKeys(window) { [weak self] key, modifiers, isRepeat in
+            self?.keyPressed(key, modifiers: modifiers, isRepeat: isRepeat) ?? false
+        }
         GTK.onCloseRequested(window) { [weak self] in
             guard let self, !self.isDestroyed else { return }
             self.trace("dismiss.request", reason: "close-request")
@@ -669,11 +674,21 @@ final class LinuxPanel: PanelWindow {
         picker?.fillModel?.focusField(at: position)
     }
 
-    private func keyPressed(_ key: UInt32, modifiers: UInt32) -> Bool {
+    private func keyPressed(_ key: UInt32, modifiers: UInt32, isRepeat: Bool) -> Bool {
         // Capture runs before GtkText/GtkTextView's input method. Composition
         // keys must reach the focused native control without picker intents.
         guard !isDestroyed, let picker else { return false }
-        if isTaking { return true }
+        if isTaking || takeHeld {
+            guard isTaking else { return true }
+            if key == UInt32(GDK_KEY_Escape) {
+                cancelTake()
+                render()
+                restoreEditingFocus()
+            } else if !isRepeat && [UInt32(GDK_KEY_Return), UInt32(GDK_KEY_KP_Enter), UInt32(GDK_KEY_ISO_Enter)].contains(key) {
+                take.finish()
+            }
+            return true
+        }
         guard !focusedHasPreedit else { return false }
         // An open overflow menu keeps native navigation: its Escape closes the
         // popover rather than the panel, and arrows select menu items.
@@ -729,7 +744,6 @@ final class LinuxPanel: PanelWindow {
 
     private func startTake(_ deliver: @escaping () -> Void) {
         guard !isDestroyed, !isTaking, let cardView, let picker else { return }
-        sounds.play(.take)
         guard WishCardMotion.enabled else { deliver(); return }
         if proofShown {
             proofShown = false
@@ -760,8 +774,8 @@ final class LinuxPanel: PanelWindow {
                 return
             }
             self.isTaking = false
-            deliver()
             self.takeHeld = true
+            deliver()
             self.releaseHeldTake()
             self.render()
             self.restoreEditingFocus()

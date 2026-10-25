@@ -268,6 +268,7 @@ final class LinuxEnvironment {
     private let suppliedReleasePage: ReleasePageOpening?
     private let isRunningTests: Bool
     private let feedbackSounds: LinuxFeedbackSounds
+    private let pawFrames: LinuxPawFrames
     private let updateScheduler = GLibUpdateScheduler()
     private let libraryAvailabilityNotifier: LibraryAvailabilityNotifier?
     private let statusNotifierBusAddress: String?
@@ -277,7 +278,7 @@ final class LinuxEnvironment {
     // GApplication can dispatch a cold action without "activate". A stored lazy
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
     private(set) lazy var panel = LinuxPanel(application: application,
-        sounds: feedbackSounds)
+        sounds: feedbackSounds, pawFrames: pawFrames)
     var pickerModel: PickerModel { libraryGraph.picker }
     var repeatModel: RepeatModel? { libraryGraph.repeatModel }
     var libraryBrowserModel: LibraryBrowserModel { libraryGraph.browser }
@@ -514,6 +515,7 @@ final class LinuxEnvironment {
             || environment["XCTestConfigurationFilePath"] != nil
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         feedbackSounds = LinuxFeedbackSounds(environment: isRunningTests ? nil : environment)
+        pawFrames = LinuxPawFrames(environment: environment)
         self.libraryAvailabilityNotifier = libraryAvailabilityNotifier
         statusNotifierBusAddress = environment["DBUS_SESSION_BUS_ADDRESS"]
         log = CompositeLogSink(

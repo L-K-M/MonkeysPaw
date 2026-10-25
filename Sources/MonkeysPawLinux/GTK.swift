@@ -102,8 +102,9 @@ enum GTK {
     }
 
     private final class KeyBox {
-        let call: (UInt32, UInt32) -> Bool
-        init(_ call: @escaping (UInt32, UInt32) -> Bool) { self.call = call }
+        let call: (UInt32, UInt32, Bool) -> Bool
+        var pressed = Set<UInt32>()
+        init(_ call: @escaping (UInt32, UInt32, Bool) -> Bool) { self.call = call }
     }
 
     private final class PreeditBox {
@@ -266,12 +267,25 @@ enum GTK {
 
     /// Vervellum's exact-arity key trampoline. Controllers own their closures.
     static func observeKeys(_ widget: Widget, _ handler: @escaping (UInt32, UInt32) -> Bool) {
+        observeKeys(widget) { key, modifiers, _ in handler(key, modifiers) }
+    }
+
+    /// GTK supplies no repeat flag: pair presses with hardware-key releases.
+    static func observeKeys(_ widget: Widget, _ handler: @escaping (UInt32, UInt32, Bool) -> Bool) {
         let controller = gtk_event_controller_key_new()!
-        let box = Unmanaged.passRetained(KeyBox(handler)).toOpaque()
+        let keys = KeyBox(handler)
+        let box = Unmanaged.passRetained(keys).toOpaque()
         let trampoline: @convention(c) (UnsafeMutableRawPointer?, guint, guint, GdkModifierType,
-                                        UnsafeMutableRawPointer?) -> gboolean = { _, key, _, modifiers, data in
+                                        UnsafeMutableRawPointer?) -> gboolean = { _, key, code, modifiers, data in
             guard let data else { return 0 }
-            return Unmanaged<KeyBox>.fromOpaque(data).takeUnretainedValue().call(key, modifiers.rawValue) ? 1 : 0
+            let keys = Unmanaged<KeyBox>.fromOpaque(data).takeUnretainedValue()
+            let isRepeat = !keys.pressed.insert(code == 0 ? key : code).inserted
+            return keys.call(key, modifiers.rawValue, isRepeat) ? 1 : 0
+        }
+        let released: @convention(c) (UnsafeMutableRawPointer?, guint, guint, GdkModifierType,
+                                      UnsafeMutableRawPointer?) -> Void = { _, key, code, _, data in
+            guard let data else { return }
+            Unmanaged<KeyBox>.fromOpaque(data).takeUnretainedValue().pressed.remove(code == 0 ? key : code)
         }
         let release: GClosureNotify = { data, _ in
             guard let data else { return }
@@ -280,6 +294,13 @@ enum GTK {
         gtk_event_controller_set_propagation_phase(controller, GTK_PHASE_CAPTURE)
         mp_connect(UnsafeMutableRawPointer(controller), "key-pressed",
                    unsafeBitCast(trampoline, to: GCallback.self), box, release)
+        mp_connect(UnsafeMutableRawPointer(controller), "key-released",
+                   unsafeBitCast(released, to: GCallback.self), Unmanaged.passRetained(keys).toOpaque(), release)
+        onSignal(UnsafeMutableRawPointer(widget), "unmap") { [weak keys] in keys?.pressed.removeAll() }
+        if mp_is_window(widget) != 0 {
+            // Releases may go to another window while this one is inactive.
+            onNotify(UnsafeMutableRawPointer(widget), "is-active") { [weak keys] in keys?.pressed.removeAll() }
+        }
         gtk_widget_add_controller(widget, controller)
     }
 

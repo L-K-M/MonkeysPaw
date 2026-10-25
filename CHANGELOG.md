@@ -14,10 +14,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   nine-frame stop-motion paw timeline grips and takes the card before delivery;
   Escape cancels, Return skips, and Reduce Motion delivers immediately.
 - Shared deterministic Wish Card sound cues, including dry finger cracks,
-  with macOS system sound preference support. Linux keeps its 220 ms lift.
+  with macOS system sound preference support.
 - Linux picker Wish Card prototype: fill blanks inside the prompt, with
   choice tumblers, clipboard slips, ink provenance, a warming wick and a
-  paw take before delivery. Ctrl+P switches to the exact-text proof.
+  shared nine-frame stop-motion paw take before delivery. Escape restores the
+  card and draft; a fresh Return skips, held Return is ignored, and disabling
+  animations delivers immediately. Ctrl+P switches to the exact-text proof.
 - `scripts/build.sh --install` installs what the run built: the macOS app,
   the deb or (when the deb is not targeted) the Flatpak bundle, and the APK on
   the connected device.

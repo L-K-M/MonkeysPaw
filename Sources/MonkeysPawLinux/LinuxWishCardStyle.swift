@@ -16,7 +16,6 @@ enum WishCardMotion {
     static let sheen = 0.560
     static let sparks = 0.420
     static let nudge = 0.260
-    static let take = 0.220
     static func milliseconds(_ seconds: Double) -> UInt32 { UInt32(seconds * 1_000) }
 }
 
@@ -35,7 +34,6 @@ enum WishCardStyle {
     static let invalid = "#C2410C", errorInk = "#A13A0B", stamp = "#A23B57"
     static let slipPaper = "#FFFEFA", slipInk = "#2E2A36"
     static let wickTrack = "#785A28", wickStart = "#E9902B", wickEnd = "#FFC765", ember = "#FFC86E"
-    static let pawTop = "#3A2414", pawBottom = "#1A0F08", pawRim = "#FFBE6E"
     static let serif = "\"Literata\", \"Charis SIL\", \"P052\", \"Palatino\", \"Noto Serif\", \"DejaVu Serif\", serif"
     /// The desktop's own monospace face: a named face the system lacks is
     /// silently substituted by fontconfig, often with a poor match.

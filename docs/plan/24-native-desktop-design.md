@@ -251,9 +251,11 @@ size is unchanged.
   through **⌘P Proof** on macOS and **Ctrl+P Proof** on Linux in picker and
   fill, including blocking reasons. Fill also has a Proof footer button. Proof
   is selectable monospace and changes no expanded whitespace or text.
-- **macOS take.** A ready Return or Deliver freezes the paper using
-  `bitmapImageRepForCachingDisplay` and `cacheDisplay`, including its AppKit
-  controls. Core's `PawTake` supplies nine discrete 83 ms exposures (12 fps,
+- **Take.** A ready Return or Deliver freezes the paper, including its native
+  editors, so the same card moves through every exposure. macOS uses
+  `bitmapImageRepForCachingDisplay` and `cacheDisplay`; Linux captures with
+  `mp_widget_capture` after the next paint and hides the live card by opacity.
+  Core's `PawTake` supplies nine discrete 83 ms exposures (12 fps,
   stop-motion on twos), geometry, the claw's gouge and cue timing. A withered
   monkey's paw lurches in, curls its index finger into a hook over four dry
   knuckle cracks while the claw gouges the paper, holds a beat, then carries
@@ -261,20 +263,19 @@ size is unchanged.
   drawings: `media-sources/paw/render-paw.c` raymarches a hairy, clawed paw
   underlit by the card and re-seeds its fur per exposure so it boils like a
   handled puppet. Each @2x PNG in `MonkeysPaw/Resources/WishPaw/` is loaded
-  by `PawTake.imageName`; missing art leaves the paper motion intact.
+  by `PawTake.imageName`. Linux installs the frames in
+  `share/monkeyspaw/wish-paw/`, searching `XDG_DATA_DIRS` before the source tree,
+  and validates the complete set before drawing it. Missing or invalid art
+  leaves the paper motion and delivery intact.
   No interpolation or implicit animation runs between exposures. After the
   ninth exposure has shown for a full interval, the existing delivery path
-  runs with the mode chosen by Return, ⌘Return, ⌥Return or the footer.
+  runs with the delivery mode chosen at the start of the take.
   Escape cancels the take, restores the live paper and keeps the draft; a fresh
   non-repeat Return skips directly to delivery. Repeats and other input are
-  ignored. Hiding, dismissal, loss of key status, rebind or root replacement
-  revokes queued frames. Fieldless prompts take the thumbnail directly.
-- **Linux take.** Linux still uses its 220 ms lift until it adopts `PawTake`.
-  Cairo moves a frozen card image while the live card hides by opacity, since
-  animated transforms on a live subtree render incorrectly under GSK's cairo
-  renderer. Repeated input is ignored. Hiding, dismissing, rebinding or
-  destroying the panel cancels it. Fieldless prompts take the thumbnail.
-- **Delivery.** Both takes preserve §6's clipboard write, hide, focus restore
+  ignored. Hiding, dismissal, rebind, root replacement or destruction revokes
+  queued frames; macOS also cancels on loss of key status. Fieldless prompts
+  take the thumbnail directly.
+- **Delivery.** The take preserves §6's clipboard write, hide, focus restore
   and paste order and §2's keystroke budget. Incomplete or obsolete choice
   blanks nudge and take focus, with the reason in the gloss. Return while
   builtins resolve does nothing.

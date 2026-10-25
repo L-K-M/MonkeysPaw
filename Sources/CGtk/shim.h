@@ -68,6 +68,7 @@ static inline GtkTextTag *mp_text_buffer_background_tag(GtkTextBuffer *buffer,
 #endif
 
 /* ---- Upcasts (the GTK_*() / G_*() macros) ---------------------------------- */
+static inline gboolean mp_is_window(GtkWidget *w) { return GTK_IS_WINDOW(w); }
 
 static inline GtkWindow    *mp_window(GtkWidget *w)    { return GTK_WINDOW(w); }
 static inline GtkWidget    *mp_window_widget(GtkWindow *w) { return GTK_WIDGET(w); }
@@ -169,9 +170,7 @@ static inline GtkTextTag *mp_card_anchor_baseline(GtkTextBuffer *buffer, int ris
     return tag;
 }
 
-/* Freezes a widget's current rendering into an image surface, so a transient
- * effect can move and rotate it with plain Cairo. Animating CSS transforms on
- * a live subtree is not reliable under GSK's cairo renderer (GTK 4.8), and a
+/* Freeze native children into the same card for every take exposure. A
  * GtkWidgetPaintable only replays a cached node GTK 4.8 does not keep, so the
  * parent re-records the child into a private snapshot. */
 static inline cairo_surface_t *mp_widget_capture(GtkWidget *widget) {
@@ -451,6 +450,21 @@ static inline void mp_test_emit_preedit_changed(GtkWidget *w, const char *text) 
 
 static inline void mp_test_emit_native_response(GtkFileChooserNative *dialog, gint response) {
     g_signal_emit_by_name(dialog, "response", response);
+}
+
+static inline void mp_test_emit_key_released(GtkWidget *w, guint key, GdkModifierType modifiers) {
+    GListModel *controllers = gtk_widget_observe_controllers(w);
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+        GtkEventController *controller = g_list_model_get_item(controllers, i);
+        if (GTK_IS_EVENT_CONTROLLER_KEY(controller) &&
+            gtk_event_controller_get_propagation_phase(controller) == GTK_PHASE_CAPTURE) {
+            g_signal_emit_by_name(controller, "key-released", key, 0, modifiers);
+            g_object_unref(controller);
+            break;
+        }
+        g_object_unref(controller);
+    }
+    g_object_unref(controllers);
 }
 
 static inline gboolean mp_test_emit_key_pressed(GtkWidget *w, guint key, GdkModifierType modifiers) {
