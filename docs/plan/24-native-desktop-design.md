@@ -101,11 +101,17 @@ The example shows Source; Edit opens the properties form and body editor.
   Direct improvement needs only an instruction; its action is **Generate
   improvements**. Switching tabs preserves instructions, selected findings and
   the candidate. Either improvement action opens a separate, resizable desktop
-  window immediately, showing progress, validation, the diff and Accept/Reject.
+  window immediately. Its header names the prompt and echoes the instruction
+  and selected findings. Generating and preparing the diff each show one
+  centered status. A fixed bar keeps the provider footer, retry feedback,
+  Reject and prominent Accept (⌘↩) visible; Show diff appears only for a stale
+  or missing diff.
   **Open improvement…** in the inspector returns to that window. Diff columns
   share the available width and wrap long lines, including long tokens;
   wrapping preserves the source bytes, line numbers and newline markers.
-  Closing the window cancels its request/draft; editor-session or library
+  Cancel, Reject, Close and a committed save end the improvement and close its
+  window; the save outcome remains in the Library status line. Failures and
+  conflicts keep it open; Escape leaves it open. Editor-session or library
   retirement closes it. An acceptance must finish or be cancelled through its
   editor guard before the window closes.
 - **Assistant creation (macOS).** File and the toolbar's **New Prompt** menu
