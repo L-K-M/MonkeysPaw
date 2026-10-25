@@ -591,7 +591,7 @@ final class MacPickerViewTests: XCTestCase {
     }
 
     func testLongDescriptionsWrapToFormWidthAndRemainScrollable() throws {
-        let description = String(repeating: "Explain this field with enough detail to guide the answer. ", count: 8)
+        let description = String(repeating: "Explain this field with enough detail to guide the answer. ", count: 24)
         let source = """
         ---
         fields:
@@ -620,10 +620,16 @@ final class MacPickerViewTests: XCTestCase {
             let cell = try XCTUnwrap(label.cell)
             let requiredHeight = cell.cellSize(forBounds: NSRect(x: 0, y: 0,
                 width: label.bounds.width, height: .greatestFiniteMagnitude)).height
-            XCTAssertGreaterThan(requiredHeight, try XCTUnwrap(label.font).pointSize * 2)
             XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(requiredHeight), name + " help is clipped")
             let viewport = try XCTUnwrap(label.enclosingScrollView).contentView
-            XCTAssertLessThanOrEqual(label.bounds.width, viewport.bounds.width)
+            XCTAssertGreaterThan(requiredHeight, viewport.bounds.height)
+            // Native text insets extend the frame beyond its layout alignment rect.
+            XCTAssertLessThanOrEqual(label.alignmentRect(forFrame: label.frame).width, viewport.bounds.width)
+
+            let text = NSAttributedString(string: label.stringValue, attributes: [.font: try XCTUnwrap(label.font)])
+            let textBounds = text.boundingRect(with: NSSize(width: cell.drawingRect(forBounds: label.bounds).width,
+                height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin)
+            XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(textBounds.height), name + " text is clipped")
 
             // Both ends must be reachable when the help is taller than the viewport.
             for edge in [label.bounds.minY, label.bounds.maxY - 1] {
