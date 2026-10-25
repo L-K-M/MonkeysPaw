@@ -184,12 +184,13 @@ use the full-color paw app icon for contrast on light and dark menus.
   borderless search field with a magnifying-glass symbol, result rows with
   a symbol, title and folder/tags, the preview, and a footer bar with the
   paste target, sync state and key caps for Return, ⌥Return, ⌘Return and
-  ⌘L. The fill form uses labelled rows and a default Deliver button.
+  ⌘L. The picker and fill form use the Wish Card (§24.7), with a default
+  Deliver button.
 - **Setup, onboarding and Repeat** use the welcome-window pattern: symbol,
   title, short explanation, status rows with symbols, a default button.
 - **Visual rules.** System fonts and semantic colours only; SF Symbols for
   state (never colour alone); standard spacing; light, dark and increased
-  contrast checked; Reduce Motion disables animated transitions. The Linux
+  contrast checked; Reduce Motion disables animated transitions. The desktop
   picker panel's Wish Card (§24.7) is the deliberate visual exception.
 
 ### 24.6 Linux
@@ -213,13 +214,16 @@ libadwaita dependency):
 - **Picker.** An undecorated rounded window with a search entry, result
   rows with icons, the preview and a footer of key hints; no button row.
 
-### 24.7 Wish Card (Linux prototype)
+### 24.7 Wish Card (macOS and Linux)
 
-The Linux picker treats the prompt as a wish written on paper. A serif card
+The desktop picker treats the prompt as a wish written on paper. A serif card
 on a night-indigo panel opens each placeholder into a blank in the sentence,
 so you fill the wish where its words belong. This is an art-directed panel
-prototype; Library, macOS, Android, the grammar and delivery contract stay as
-specified elsewhere.
+design; Library, Android, the grammar and delivery contract stay as specified
+elsewhere. macOS uses Palatino at 15 pt, native AppKit controls in a SwiftUI
+sentence layout, and a cached native-view image for the take. Both appearances
+use the same paper and night palette. Results stay 232 pt wide; the panel's
+size is unchanged.
 
 - **Pick.** The selected card is a read-only thumbnail with field labels,
   date/time stamps and a placeholder clipboard slip. Selection reads neither
@@ -244,20 +248,40 @@ specified elsewhere.
   slip showing at most six lines, with a local line-count/type summary and
   explicit pending/empty states. It resolves once when the form opens;
   typing never reads it again. The exact expanded text remains available
-  through **Ctrl+P Proof** in picker and fill, including blocking reasons.
-- **Take.** A ready Return or Deliver lets the paw descend, grip the card
-  and lift it out over 220 ms, then invokes the existing delivery path. The
-  card is frozen into an image that Cairo moves and turns while the live
-  card hides by opacity: animated CSS transforms on a live subtree render
-  incorrectly under GSK's cairo renderer.
-  Repeated input is ignored during the take. Hiding, dismissing, rebinding
-  or destroying the panel cancels it. Fieldless prompts take the thumbnail
-  directly. Clipboard write, hide, focus restoration and paste retain §6's
-  order and §2's keystroke budget.
-- **Preferences.** HighContrast themes retain native panel colours while
-  the card remains paper. Disabling GTK animations skips all custom motion
-  and delivers immediately. Quiet synthesized tick, ready, take and nudge
-  sounds respect GTK feedback/event preferences; tests and
-  `MONKEYSPAW_SOUNDS=0` silence them. The cues play from files in the
-  private runtime directory, since GTK's GStreamer backend aborts on
-  stream-backed media. Missing media support or runtime storage stays silent.
+  through **⌘P Proof** on macOS and **Ctrl+P Proof** on Linux in picker and
+  fill, including blocking reasons. Fill also has a Proof footer button. Proof
+  is selectable monospace and changes no expanded whitespace or text.
+- **macOS take.** A ready Return or Deliver freezes the paper using
+  `bitmapImageRepForCachingDisplay` and `cacheDisplay`, including its AppKit
+  controls. Core's `PawTake` supplies nine discrete 83 ms exposures, geometry,
+  scratches and cue timing. A creepy paw reaches in, curls a finger over four
+  dry cracks, holds a beat, then lifts and turns the paper. Each @2x PNG is
+  loaded by `PawTake.imageName`; missing art leaves the paper motion intact.
+  No interpolation or implicit animation runs between exposures. After the
+  ninth exposure has shown for a full interval, the existing delivery path
+  runs with the mode chosen by Return, ⌘Return, ⌥Return or the footer.
+  Escape cancels the take, restores the live paper and keeps the draft; a fresh
+  non-repeat Return skips directly to delivery. Repeats and other input are
+  ignored. Hiding, dismissal, loss of key status, rebind or root replacement
+  revokes queued frames. Fieldless prompts take the thumbnail directly.
+- **Linux take.** Linux still uses its 220 ms lift until it adopts `PawTake`.
+  Cairo moves a frozen card image while the live card hides by opacity, since
+  animated transforms on a live subtree render incorrectly under GSK's cairo
+  renderer. Repeated input is ignored. Hiding, dismissing, rebinding or
+  destroying the panel cancels it. Fieldless prompts take the thumbnail.
+- **Delivery.** Both takes preserve §6's clipboard write, hide, focus restore
+  and paste order and §2's keystroke budget. Incomplete or obsolete choice
+  blanks nudge and take focus, with the reason in the gloss. Return while
+  builtins resolve does nothing.
+- **Preferences.** Increased Contrast on macOS and HighContrast themes on
+  Linux retain native panel colours while the card remains paper. macOS Reduce
+  Motion disables ink-in, drying, tumbler rolls, sheen, nudge shake and the
+  take; delivery is immediate. Disabling GTK animations does the same on
+  Linux. Quiet synthesized tick, ready, take, nudge and crack WAV cues live in
+  Core's `WishCardCue`. On macOS the ready cue and sheen mark becoming ready,
+  not opening an already-ready card. macOS plays retained `NSSound(data:)` instances and
+  respects “Play user interface sound effects” (`com.apple.sound.uiaudio.enabled`
+  in `com.apple.systemsound`, with the global domain as a legacy fallback;
+  unset means on). Linux respects GTK input/event preferences, playing private
+  runtime files because GStreamer's stream-backed media aborts. Tests and
+  `MONKEYSPAW_SOUNDS=0` silence playback. Missing media support stays silent.

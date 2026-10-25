@@ -9,6 +9,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- macOS Wish Card: inline paper blanks, native choice tumblers, clipboard
+  slips, provenance ink, a warming wick, and ⌘P exact-text Proof. A shared
+  nine-frame stop-motion paw timeline grips and takes the card before delivery;
+  Escape cancels, Return skips, and Reduce Motion delivers immediately.
+- Shared deterministic Wish Card sound cues, including dry finger cracks,
+  with macOS system sound preference support. Linux keeps its 220 ms lift.
 - Linux picker Wish Card prototype: fill blanks inside the prompt, with
   choice tumblers, clipboard slips, ink provenance, a warming wick and a
   paw take before delivery. Ctrl+P switches to the exact-text proof.
@@ -33,7 +39,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - macOS Assistant no longer repeats "Working…" or leaves a blank improvement
   window after Cancel or Reject.
-- macOS fill-form help text wraps to the available width and shows every line.
+- macOS fill-form help stays available through each blank’s accessible help
+  and tooltip, with the focused description in a single marginal gloss.
 - macOS search keeps keyboard focus when matches return after an empty result.
 - UUID-based secret-account factories construct their validated names directly,
   removing the forced-try crash reported during macOS sync sign-in.
