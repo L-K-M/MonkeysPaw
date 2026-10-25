@@ -171,7 +171,12 @@ struct LibraryAssistantImprovementView: View {
                 Button(MainMenuStrings.close, action: presentation.cancel)
                     .accessibilityIdentifier("library-assistant-close")
                 if presentation.showsRefresh { showDiffButton }
-            case .invalid, .ready:
+            case .invalid:
+                rejectButton
+                // Source-side errors can clear after an edit; a fresh merge then helps.
+                if presentation.showsRefresh { showDiffButton }
+                acceptButton
+            case .ready:
                 rejectButton
                 acceptButton
             case .outdated:

@@ -869,14 +869,16 @@ final class MacLibraryAssistantTests: XCTestCase {
         defer { h.close() }
         let view = try h.assistant()
         try h.request { view.review() }
-        try h.respond(["summary": "Two findings", "findings": [
+        try h.respond(["summary": "Three findings", "findings": [
             ["criterion": "clarity", "severity": "high", "quote": "Original",
              "problem": "Unclear", "suggestion": "Clarify"],
+            ["criterion": "context", "severity": "low", "quote": "Original",
+             "problem": "Missing context", "suggestion": "Explain"],
             ["criterion": "examples", "severity": "medium", "quote": "Original",
              "problem": "Missing example", "suggestion": "Add an example"]
         ]], phase: .draft)
         let findings = try XCTUnwrap(view.state.review?.findings)
-        view.toggleFinding(1)
+        view.toggleFinding(2)
         view.toggleFinding(0)
         view.editInstruction(" \nMake it shorter and add an example.\n ")
         try h.request { view.improve() }
@@ -884,7 +886,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(view.resultMessage, "")
         let request = try XCTUnwrap(view.improvementRequest)
         XCTAssertEqual(request.instruction, "Make it shorter and add an example.")
-        XCTAssertEqual(request.findings, findings)
+        XCTAssertEqual(request.findings, [findings[0], findings[2]], "Only selected findings, in index order")
         XCTAssertEqual(LibraryAssistantStrings.findingsSummary(request.findings), "Clarity (High), Examples (Medium)")
         XCTAssertNil(view.state.review)
         XCTAssertTrue(view.state.selectedFindings.isEmpty)
@@ -1252,7 +1254,7 @@ private final class MacLibraryAssistantHarness {
         while !predicate(), Date() < deadline {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
         }
-        XCTAssertTrue(predicate(), file: file, line: line)
+        XCTAssertTrue(predicate(), "Condition not met within \(timeout) s", file: file, line: line)
     }
 
     func request(_ start: () -> Void, file: StaticString = #filePath, line: UInt = #line) throws {

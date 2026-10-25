@@ -105,8 +105,9 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         case .ready: return .ready
         case .failed: return .failed
         case .draft:
-            if state.isStale { return .outdated }
+            // A failed re-merge keeps Core's stale flag; its errors explain more than staleness.
             if state.issues.contains(where: { $0.severity == .error }) { return .invalid }
+            if state.isStale { return .outdated }
             return .preparing
         case .idle, .saved: return .ended
         }
