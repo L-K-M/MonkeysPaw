@@ -543,6 +543,20 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(try usageCount(), 2)
     }
 
+    func testDeliveryWithoutTakeFromProofReopensOnCard() throws {
+        environment.settingsModel.setCreepy(.disabled)
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+        XCTAssertTrue(key(GDK_KEY_p, modifiers: GDK_CONTROL_MASK))
+        XCTAssertEqual(try proofPage(), "proof")
+
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        try open()
+
+        XCTAssertEqual(try proofPage(), "card")
+    }
+
     func testCardAnchorsHaveVisibleAllocations() throws {
         GTKClipboard(owner: environment.panel.clipboardOwner).writeText("diff --git a/wish.swift b/wish.swift\n--- a/wish.swift\n+++ b/wish.swift\n@@ -1 +1 @@\n-oldWish()\n+newWish()\n context")
         let fill = try openFill("""
