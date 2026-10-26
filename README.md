@@ -75,3 +75,31 @@ Read [Security](SECURITY.md) for trust boundaries and signing limits.
 `scripts/build.sh --install` builds and installs from source.
 The [M7 acceptance ledger](docs/platform/m7-acceptance.md) starts entirely
 NOT RUN; code and green automated checks do not close owner acceptance.
+
+## License
+
+Monkey's Paw's own code is released under the [Unlicense](LICENSE). The builds
+bundle third-party code that keeps its own licenses: the desktop apps bundle
+Yams with its vendored libyaml (MIT) and tables generated from the Unicode
+Character Database (Unicode License v3), and the Linux packages add the
+statically linked Swift runtime and ICU (Unicode License v3). The Android app
+bundles AndroidX, Jetpack Compose, Kotlin, Dagger/Hilt, OkHttp and ICU4J
+libraries (mostly Apache-2.0; ICU4J under the Unicode License v3), plus OkHttp's
+copy of the Public Suffix List (MPL-2.0). The server image adds the server's
+Swift packages, including swift-crypto and swift-nio-ssl with their copies of
+BoringSSL (Apache-2.0; OpenSSL, ISC and MIT licenses), and the system packages
+it installs. Their notices ship inside each artifact:
+
+- macOS: `MonkeysPaw.app/Contents/Resources/Third-Party-Notices.txt`, linked
+  from About Monkey's Paw
+- Linux packages: `Third-Party-Notices.txt` and `copyright` in
+  `/usr/share/doc/monkeyspaw/` (Flatpak: `/app/share/doc/monkeyspaw/`)
+- Android: Settings > Open-source licenses
+- Server image: `/usr/share/doc/monkeyspaw-server/Third-Party-Notices.txt`;
+  system packages keep their notices in `/usr/share/doc/*/copyright`
+
+The Unlicense covers Monkey's Paw's own code only. The upstream license texts
+under `docs/licenses/`, `scripts/licenses/`, `packaging/licenses/`,
+`server/licenses/` and `android/app/config/licenses/` belong to the components
+they name, and the Gradle wrapper (`android/gradlew`, `android/gradlew.bat`,
+`android/gradle/wrapper/gradle-wrapper.jar`) is Gradle's, under Apache-2.0.
