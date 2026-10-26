@@ -31,6 +31,9 @@ final class PickerViewState: ObservableObject {
     private var takingCard: PromptCard?
     private var takingSelection: PromptIdentity?
     private var takingValues: [String: String]?
+    /// The Escape that cancelled a take may still be held; its repeats must
+    /// not then back out of the card.
+    private var swallowsEscapeRepeats = false
     let model: PickerModel
     let syncStatus: SyncStatusViewState?
     private let mainThread: MainThread
@@ -252,9 +255,12 @@ final class PickerViewState: ObservableObject {
 
     /// This runs before marked-text and focused-button routing during a take.
     func interceptTakeKey(_ event: NSEvent) -> Bool {
-        guard isCurrent(), take.holdsCard else { return false }
+        guard isCurrent(), event.type == .keyDown else { return false }
+        if !event.isARepeat { swallowsEscapeRepeats = false }
+        if swallowsEscapeRepeats && event.keyCode == 53 { return true }
+        guard take.holdsCard else { return false }
         guard take.isPlaying else { return true }
-        if event.keyCode == 53 { cancelTake() }
+        if event.keyCode == 53 { cancelTake(); swallowsEscapeRepeats = true }
         else if (event.keyCode == 36 || event.keyCode == 76) && !event.isARepeat { take.finish() }
         return true
     }

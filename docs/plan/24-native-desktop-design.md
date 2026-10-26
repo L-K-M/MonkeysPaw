@@ -272,7 +272,7 @@ size is unchanged.
   runs with the delivery mode chosen at the start of the take.
   Escape cancels the take, restores the live paper and keeps the draft; a fresh
   non-repeat Return skips directly to delivery. Repeats and other input are
-  ignored. Hiding, dismissal, rebind, root replacement or destruction revokes
+  ignored, as are repeats of the Escape that cancelled the take. Hiding, dismissal, rebind, root replacement or destruction revokes
   queued frames; macOS also cancels on loss of key status. Fieldless prompts
   take the thumbnail directly.
 - **Delivery.** The take preserves §6's clipboard write, hide, focus restore

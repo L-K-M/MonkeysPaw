@@ -590,6 +590,9 @@ final class MacWishCardTests: XCTestCase {
         XCTAssertEqual(take.frameIndex, 0)
 
         try sendKey(code: UInt16(kVK_Escape), characters: "\u{1b}", to: panel)
+        // Repeats of the Escape that cancelled the take must not leave the card.
+        try sendKey(code: UInt16(kVK_Escape), characters: "\u{1b}", isARepeat: true, to: panel)
+        try sendKey(code: UInt16(kVK_Escape), characters: "\u{1b}", isARepeat: true, to: panel)
 
         XCTAssertFalse(take.isPlaying)
         XCTAssertFalse(take.holdsCard)

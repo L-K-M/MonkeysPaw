@@ -26,6 +26,9 @@ final class LinuxPanel: PanelWindow {
     /// The take finished and delivery is under way: the live card stays
     /// hidden until the panel hides, so it never flashes back in between.
     private var takeHeld = false
+    /// The Escape that cancelled a take may still be held; its repeats must
+    /// not then back out of the card.
+    private var swallowsEscapeRepeats = false
     private var cardView: LinuxWishCard?
     private var renderedCard: PromptCard?
     /// The shown card is bound to a form. `boundFill` is weak and clears once
@@ -678,12 +681,15 @@ final class LinuxPanel: PanelWindow {
         // Capture runs before GtkText/GtkTextView's input method. Composition
         // keys must reach the focused native control without picker intents.
         guard !isDestroyed, let picker else { return false }
+        if !isRepeat { swallowsEscapeRepeats = false }
+        if swallowsEscapeRepeats && key == UInt32(GDK_KEY_Escape) { return true }
         if isTaking || takeHeld {
             guard isTaking else { return true }
             if key == UInt32(GDK_KEY_Escape) {
                 cancelTake()
                 render()
                 restoreEditingFocus()
+                swallowsEscapeRepeats = true
             } else if !isRepeat && [UInt32(GDK_KEY_Return), UInt32(GDK_KEY_KP_Enter), UInt32(GDK_KEY_ISO_Enter)].contains(key) {
                 take.finish()
             }

@@ -169,6 +169,28 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(try usageCount(), 0)
     }
 
+    func testHeldEscapeThatCancelsTakeKeepsTheCard() throws {
+        let fill = try openFill("{{word}}")
+        mp_entry_set_text(try widget("fill-field-word"), "Kept wish")
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        let card = try widget("wish-card")
+        XCTAssertTrue(GTKTestSupport.spin { gtk_widget_has_css_class(card, "mp-taken") != 0 })
+
+        // Auto-repeats of the Escape that cancelled the take.
+        XCTAssertTrue(key(GDK_KEY_Escape, release: false))
+        XCTAssertTrue(key(GDK_KEY_Escape, release: false))
+        XCTAssertTrue(key(GDK_KEY_Escape))
+        XCTAssertEqual(environment.pickerModel.state, .fill)
+        XCTAssertEqual(fill.state, .editing)
+        XCTAssertEqual(fill.values["word"], "Kept wish")
+        XCTAssertTrue(environment.panel.isVisible)
+
+        // A fresh Escape still backs out of the card.
+        XCTAssertTrue(key(GDK_KEY_Escape))
+        XCTAssertEqual(environment.pickerModel.state, .picker)
+        XCTAssertEqual(notifications.notificationCount, 0)
+    }
+
     func testTakePlaysAllNineExposuresAndCuesThenDeliversExactlyOnce() throws {
         let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
         XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
