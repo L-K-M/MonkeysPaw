@@ -280,8 +280,9 @@ private struct WishCardSlot: View {
         let revision = presentation.nudgeRevision
         for step in 0...6 {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * WishCardStyle.nudge / 6) {
-                guard presentation.nudgeRevision == revision, presentation.nudgeIndex == position,
-                      !presentation.take.holdsCard else { shake = 0; return }
+                // A newer nudge owns the shake; only this chain's own abort resets it.
+                guard presentation.nudgeRevision == revision else { return }
+                guard presentation.nudgeIndex == position, !presentation.take.holdsCard else { shake = 0; return }
                 shake = step == 6 ? 0 : (step.isMultiple(of: 2) ? -6 : 6)
             }
         }

@@ -136,7 +136,9 @@ struct WishCardChoiceInput: NSViewRepresentable {
         button.onFocus = onFocus
         button.identifier = NSUserInterfaceItemIdentifier("fill-field-" + field.name)
         button.setAccessibilityLabel(field.label)
-        button.setAccessibilityValue(field.value)
+        // Announce what the tumbler shows: the option label, or the blank's label.
+        button.setAccessibilityValue(field.options.first { $0.value == field.value }?.label
+            ?? (field.value.isEmpty ? field.label : field.value))
         button.setAccessibilityHelp(field.description)
         button.toolTip = field.description
         button.pickerFocus.update(view: button, wantsFocus: wantsFocus, revision: focusRevision)

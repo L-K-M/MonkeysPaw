@@ -194,7 +194,7 @@ private struct PickerResultView: View {
     private var symbolColor: Color {
         if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast { return .primary }
         if isSelected || row.favorite { return WishCardStyle.amber }
-        return NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? .secondary : WishCardStyle.secondary
+        return WishCardStyle.secondary
     }
 
     private var detail: String {
@@ -254,6 +254,7 @@ private struct PickerActionsView: View {
                     .accessibilityIdentifier("picker-copy")
                 Button { presentation.perform(.proof) } label: { Text("Proof ⌘P") }
                     .accessibilityLabel("Proof").accessibilityIdentifier("picker-proof")
+                    .accessibilityAddTraits(presentation.proofShown ? .isSelected : [])
                 Button { presentation.perform(.back) } label: { keyCap(Strings.back, "⎋") }
                     .accessibilityLabel(Strings.back).accessibilityIdentifier("picker-back")
             } else {
