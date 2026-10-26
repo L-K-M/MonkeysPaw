@@ -21,6 +21,19 @@ on:
       - scripts/package-macos.sh
       - scripts/package-android.sh
       - scripts/verify-android-release.py
+      # Third-party notices generators, checks and texts.
+      - scripts/swiftpm-notices.py
+      - scripts/bundle-notices.sh
+      - scripts/third-party-notices.json
+      - scripts/deb-copyright.py
+      - scripts/static-runtime-notices.py
+      - scripts/android_notices.py
+      - scripts/oci-licenses.py
+      - scripts/check-image-notices.sh
+      - scripts/licenses/**
+      - server/licenses/**
+      - docs/licenses/UNICODE.txt
+      - LICENSE
       - scripts/build.sh
       - scripts/check-version.py
       - scripts/sync-android-version.sh

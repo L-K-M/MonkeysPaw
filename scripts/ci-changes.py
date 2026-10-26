@@ -20,6 +20,8 @@ SERVER_JOBS = frozenset({"server", "server-image", "compose-smoke", "android-syn
 # The parent manifest validates Linux target paths even for Core/server builds;
 # Docker also copies all of Sources/, including the Linux targets.
 LINUX_SOURCE_JOBS = LINUX_JOBS | SERVER_JOBS | {"core-linux"}
+# Jobs that build the server image from server/Dockerfile.
+IMAGE_JOBS = frozenset({"server-image", "compose-smoke", "android-sync"})
 
 FILES = {
     "Package.swift": SWIFT_JOBS | {"android-sync"},
@@ -47,10 +49,20 @@ FILES = {
     "scripts/check-version.py": frozenset({"core-linux", "deb", "android"}),
     "scripts/linux-delivery-smoke.sh": frozenset({"linux-app"}),
     "scripts/package-macos.sh": frozenset({"macos-artifacts"}),
-    # The macOS app's "Bundle license notices" build phase runs these.
+    # Third-party notices: the macOS "Bundle license notices" build phase, the
+    # deb build and the server image generate them; the APK verifier checks them.
     "scripts/bundle-notices.sh": MACOS_JOBS,
-    "scripts/swiftpm-notices.py": MACOS_JOBS,
+    "scripts/swiftpm-notices.py": MACOS_JOBS | IMAGE_JOBS | {"deb"},
     "scripts/third-party-notices.json": MACOS_JOBS,
+    "scripts/deb-copyright.py": frozenset({"deb"}),
+    "scripts/static-runtime-notices.py": IMAGE_JOBS | {"deb"},
+    "scripts/oci-licenses.py": frozenset({"server-image"}),
+    "scripts/check-image-notices.sh": frozenset({"server-image"}),
+    "scripts/android_notices.py": frozenset({"android"}),
+    "packaging/licenses/ICU-76.1-LICENSE.txt": LINUX_JOBS | IMAGE_JOBS,
+    "docs/licenses/UNICODE.txt": MACOS_JOBS | IMAGE_JOBS | {"deb"},
+    # The deb's copyright file and the server image ship it.
+    "LICENSE": IMAGE_JOBS | {"deb"},
     "scripts/make-icons.sh": MACOS_JOBS,
     "scripts/make-linux-icons.sh": frozenset({"deb"}),
     "scripts/build.sh": frozenset({"core-linux", "deb", "macos-artifacts", "android"}),
@@ -108,7 +120,7 @@ PREFIXES = (
     ("android/", frozenset({"android", "android-sync"})),
     ("flatpak/", frozenset({"deb", "flatpak"})),
     # Upstream license texts for the bundled notices.
-    ("scripts/licenses/", MACOS_JOBS),
+    ("scripts/licenses/", MACOS_JOBS | IMAGE_JOBS | {"deb"}),
     ("docs/", frozenset()),
 )
 
@@ -119,7 +131,7 @@ def jobs_for_path(path):
     for prefix, jobs in PREFIXES:
         if path.startswith(prefix):
             return jobs
-    if path == "LICENSE" or ("/" not in path and path.endswith(".md")):
+    if "/" not in path and path.endswith(".md"):
         return frozenset()
     # New inputs must receive a rule before they can skip any checks.
     return ALL_JOBS
