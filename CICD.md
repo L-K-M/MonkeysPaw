@@ -80,9 +80,11 @@ native runners: `ubuntu-24.04` for `linux/amd64` and `ubuntu-24.04-arm` for
 `linux/arm64`. There is no QEMU/binfmt setup. Each build receives `VERSION`,
 `REVISION` from the checked-out commit SHA and `CREATED` from that commit's
 timestamp, rather than the run's wall clock. It checks source, revision,
-version, created and Unlicense OCI labels, loads its OCI archive into Docker,
-and smoke-tests container health plus `/api/health` status 200 using a
-throwaway admin password file mounted read-only at `/run/secrets/`.
+version, created and licenses OCI labels, loads its OCI archive into Docker,
+checks that `/usr/share/doc/monkeyspaw-server/` holds the third-party notices
+and that the licenses label names every term they carry, and smoke-tests
+container health plus `/api/health` status 200 using a throwaway admin
+password file mounted read-only at `/run/secrets/`.
 
 Only smoke-tested OCI archives and digests are uploaded as
 `MonkeysPaw-server-image-{amd64,arm64}` workflow artifacts. They stay outside

@@ -280,6 +280,10 @@ def locate(pin, checkouts, state, problems):
 
 def is_license_name(name):
     lower = name.lower()
+    # Hidden files are tooling configuration (.license_header_template,
+    # .licenseignore in Apple's swift-* packages), never shipped license texts.
+    if lower.startswith("."):
+        return False
     stem, dot, suffix = lower.rpartition(".")
     if not dot or "." + suffix not in TEXT_SUFFIXES:
         if lower.endswith(CODE_SUFFIXES):

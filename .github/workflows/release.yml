@@ -511,6 +511,9 @@ jobs:
             -f server/Dockerfile .
           skopeo inspect --raw "oci-archive:$archive" > "$RUNNER_TEMP/server-manifest.json"
           skopeo inspect --config "oci-archive:$archive" > "$RUNNER_TEMP/server-config.json"
+          # The licenses label must stay as the Dockerfile states it.
+          IMAGE_LICENSES=$(python3 scripts/oci-licenses.py dockerfile server/Dockerfile)
+          export IMAGE_LICENSES
           python3 - "$RUNNER_TEMP/server-manifest.json" "$RUNNER_TEMP/server-config.json" <<'PY'
           import json
           import os
@@ -528,7 +531,7 @@ jobs:
               "version": os.environ["VERSION"],
               "revision": os.environ["REVISION"],
               "created": os.environ["CREATED"],
-              "licenses": "Unlicense",
+              "licenses": os.environ["IMAGE_LICENSES"],
           }
           for key, value in expected.items():
               assert labels["org.opencontainers.image." + key] == value, key
@@ -536,6 +539,13 @@ jobs:
           skopeo manifest-digest "$RUNNER_TEMP/server-manifest.json" \
             > "$RUNNER_TEMP/server-image/server-$ARCH.digest"
           skopeo copy "oci-archive:$archive" docker-daemon:monkeyspaw-server:release
+          # Notices for the statically linked code ship in the image, and the
+          # label names every term they and the installed packages carry.
+          # Installed packages (server/Dockerfile): tini MIT; ca-certificates
+          # GPL-2.0-or-later scripts and MPL-2.0 CA data; libcurl4t64 curl.
+          sh scripts/check-image-notices.sh monkeyspaw-server:release /usr/share/doc/monkeyspaw-server \
+            Third-Party-Notices.txt LICENSE \
+            -- --own Unlicense --add MIT --add GPL-2.0-or-later --add MPL-2.0 --add curl
       - name: Wait for container health and require API status 200
         run: |
           set -euo pipefail

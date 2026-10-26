@@ -902,6 +902,20 @@ jobs:
           persist-credentials: false
       - name: Build image
         run: docker build --tag monkeyspaw-server:ci -f server/Dockerfile .
+      # Notices for the statically linked code ship in the image, and the
+      # licenses label names every term they and the installed packages carry.
+      - name: Check third-party notices in the image
+        run: |
+          set -euo pipefail
+          # Installed packages (server/Dockerfile): tini MIT; ca-certificates
+          # GPL-2.0-or-later scripts and MPL-2.0 CA data; libcurl4t64 curl.
+          sh scripts/check-image-notices.sh monkeyspaw-server:ci /usr/share/doc/monkeyspaw-server \
+            Third-Party-Notices.txt LICENSE \
+            -- --own Unlicense --add MIT --add GPL-2.0-or-later --add MPL-2.0 --add curl
+          for marker in BoringSSL 'Kirill Simonov' 'UNICODE LICENSE V3'; do
+            docker run --rm --entrypoint grep monkeyspaw-server:ci -q "$marker" \
+              /usr/share/doc/monkeyspaw-server/Third-Party-Notices.txt
+          done
       - name: Wait for container health and check the API
         run: |
           set -euo pipefail
