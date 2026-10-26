@@ -20,6 +20,9 @@ import sys
 
 # Fixed by docs/decisions/0001-android-zero-secret-signing.md, not the build's key.
 SIGNER_SHA256 = "76a19df68d562789f6ea990b23232875b70a98c9996ba81e794ccab063edd765"
+# The notices scan downloads jars and AARs that a restored CI Gradle cache lacks
+# from the repositories android/settings.gradle.kts resolves dependencies from.
+MAVEN_REPOSITORIES = ("https://dl.google.com/dl/android/maven2", "https://repo.maven.apache.org/maven2")
 
 
 def tool_output(tool, arguments):
@@ -32,10 +35,11 @@ def tool_output(tool, arguments):
 
 def verify_notices(apk, root):
     """Require complete third-party notices in the APK (android/android-notices.toml)."""
-    for mode in ("check", "scan"):
+    fetch = [argument for url in MAVEN_REPOSITORIES for argument in ("--fetch-from", url)]
+    for mode, extra in (("check", []), ("scan", fetch)):
         result = subprocess.run([sys.executable, "-I", str(root / "scripts/android_notices.py"), mode,
-                                 str(apk.resolve()), "--config", str(root / "android/android-notices.toml")],
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
+                                 str(apk.resolve()), "--config", str(root / "android/android-notices.toml"), *extra],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=900)
         if result.returncode != 0:
             sys.stderr.write(result.stdout)
             raise ValueError(f"APK third-party notices fail android_notices.py {mode}")

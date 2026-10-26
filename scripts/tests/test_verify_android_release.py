@@ -53,7 +53,9 @@ from pathlib import Path
 import sys
 mode = sys.argv[1]
 assert mode in ("check", "scan") and Path(sys.argv[2]).is_absolute()
-assert sys.argv[3:] == ["--config", {str(self.root / "android/android-notices.toml")!r}]
+fetch = ["--fetch-from", "https://dl.google.com/dl/android/maven2",
+         "--fetch-from", "https://repo.maven.apache.org/maven2"] if mode == "scan" else []
+assert sys.argv[3:] == ["--config", {str(self.root / "android/android-notices.toml")!r}, *fetch]
 with open({str(self.notices_log)!r}, "a") as log:
     log.write(mode + "\\n")
 sys.exit(int(os.environ.get("FAKE_NOTICES_" + mode.upper() + "_EXIT", "0")))
