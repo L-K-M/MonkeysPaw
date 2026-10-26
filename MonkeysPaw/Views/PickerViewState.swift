@@ -19,6 +19,7 @@ final class PickerViewState: ObservableObject {
     private(set) var clipboardSlip = WishCardSlip.Content(mode: .thumbnail)
     let take = WishCardTake()
     var reduceMotion: () -> Bool
+    private let creepy: () -> Bool
     private let playCue: (WishCardCue) -> Void
     private var wasReady = false
     private var observedResolved = false
@@ -47,11 +48,13 @@ final class PickerViewState: ObservableObject {
          isCurrent: @escaping () -> Bool = { true },
          syncStatus: SyncStatusViewState? = nil,
          reduceMotion: @escaping () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+         creepy: @escaping () -> Bool = { true },
          playCue: @escaping (WishCardCue) -> Void = { _ in },
          openSetup: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
          requestedIntent: @escaping (PickerModel.Intent) -> Void,
          createPrompt: @escaping (String) -> Void) {
         self.reduceMotion = reduceMotion
+        self.creepy = creepy
         self.playCue = playCue
         self.model = model
         self.syncStatus = syncStatus
@@ -250,7 +253,7 @@ final class PickerViewState: ObservableObject {
             if let fill = self.model.fillModel { fill.deliver(mode: mode) }
             else { self.model.use(mode: mode) }
         }
-        if reduceMotion() || !take.start(deliver: deliver) { deliver() }
+        if reduceMotion() || !creepy() || !take.start(deliver: deliver) { deliver() }
     }
 
     /// This runs before marked-text and focused-button routing during a take.

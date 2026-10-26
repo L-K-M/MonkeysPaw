@@ -6,6 +6,7 @@ public final class GeneralSettingsModel {
     public struct State: Equatable, Sendable {
         public let activeLibraryPath: String
         public let isDefaultLibrary: Bool
+        public let creepy: CreepyMode
         public let isReadOnly: Bool
         public let settingsError: SettingsError?
         /// Nil after success, including choosing the already-active folder.
@@ -14,6 +15,7 @@ public final class GeneralSettingsModel {
         public static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.activeLibraryPath.utf8.elementsEqual(rhs.activeLibraryPath.utf8)
                 && lhs.isDefaultLibrary == rhs.isDefaultLibrary
+                && lhs.creepy == rhs.creepy
                 && lhs.isReadOnly == rhs.isReadOnly
                 && lhs.settingsError == rhs.settingsError
                 && lhs.lastSwitchMessage == rhs.lastSwitchMessage
@@ -36,6 +38,7 @@ public final class GeneralSettingsModel {
         self.mainThread = mainThread
         state = State(activeLibraryPath: library.activeLibraryPath,
             isDefaultLibrary: Self.sameFolder(library.activeLibraryPath, library.defaultLibraryPath),
+            creepy: settings.creepy,
             isReadOnly: settings.isReadOnly, settingsError: settings.error, lastSwitchMessage: nil)
         observer = settings.addObserver { [weak self] _, _ in
             guard let self, !self.isReadingSettings else { return }
@@ -78,6 +81,10 @@ public final class GeneralSettingsModel {
         mainThread.run { self.library.revealLibrary() }
     }
 
+    public func setCreepy(_ mode: CreepyMode) {
+        mainThread.run { self.settings.setCreepy(mode) }
+    }
+
     /// Republish after another composition operation replaces the graph.
     /// Failed startup can change its path without a shared-settings event.
     public func refresh() {
@@ -108,6 +115,7 @@ public final class GeneralSettingsModel {
     private func publish(path: String, message: LibrarySwitchOutcome?) {
         let next = State(activeLibraryPath: path,
             isDefaultLibrary: Self.sameFolder(path, library.defaultLibraryPath),
+            creepy: settings.creepy,
             isReadOnly: settings.isReadOnly, settingsError: settings.error, lastSwitchMessage: message)
         guard next != state else { return }
         state = next

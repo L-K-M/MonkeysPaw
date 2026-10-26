@@ -278,7 +278,8 @@ final class LinuxEnvironment {
     // GApplication can dispatch a cold action without "activate". A stored lazy
     // panel covers both paths and keeps the Swift wrapper alive while hidden.
     private(set) lazy var panel = LinuxPanel(application: application,
-        sounds: feedbackSounds, pawFrames: pawFrames)
+        sounds: feedbackSounds, pawFrames: pawFrames,
+        creepy: { [weak self] in self?.settings.snapshot.document.creepy == .enabled })
     var pickerModel: PickerModel { libraryGraph.picker }
     var repeatModel: RepeatModel? { libraryGraph.repeatModel }
     var libraryBrowserModel: LibraryBrowserModel { libraryGraph.browser }

@@ -740,6 +740,79 @@ final class MacWishCardTests: XCTestCase {
         XCTAssertFalse(controller.isVisible)
     }
 
+    func testCreepyOffReturnDeliversOnceAndLiveEnableRestoresTake() throws {
+        try files.write(Data("""
+        ---
+        fields:
+          word: {label: Word, default: Granted}
+        ---
+        Wish granted: {{word}}.
+        """.utf8), at: "granted.md")
+        let clipboard = MacRepeatClipboard()
+        let picker = try open(clipboard: clipboard)
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        let settings = try XCTUnwrap(delegate.settingsModel)
+        settings.setCreepy(.disabled)
+        presentation.use(mode: .copyOnly)
+        let fill = try XCTUnwrap(picker.fillModel)
+        XCTAssertTrue(spin { fill.deliverEnabled && self.find("fill-field-word") != nil })
+        let stepper = WishCardStepper()
+        let take = try attach(stepper)
+        var cues: [WishCardCue] = []
+        take.playCue = { cues.append($0) }
+        let panel = try currentPanel()
+
+        try sendKey(code: UInt16(kVK_Return), characters: "\r", to: panel)
+
+        XCTAssertFalse(take.isPlaying)
+        XCTAssertFalse(take.holdsCard)
+        XCTAssertNil(take.frameIndex)
+        XCTAssertEqual(stepper.queued, 0)
+        XCTAssertTrue(cues.isEmpty)
+        XCTAssertTrue(spin { picker.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(clipboard.writes.count, 1)
+
+        settings.setCreepy(.enabled)
+        delegate.togglePicker()
+        XCTAssertTrue(spin { self.controller.isActiveAndVisible && picker.state == .picker })
+        XCTAssertTrue(delegate.pickerPresentation === presentation)
+        presentation.use(mode: .copyOnly)
+        XCTAssertTrue(spin { picker.fillModel?.deliverEnabled == true && self.find("fill-field-word") != nil })
+        try attach(stepper)
+
+        try sendKey(code: UInt16(kVK_Return), characters: "\r", to: panel)
+
+        XCTAssertTrue(take.isPlaying)
+        XCTAssertTrue(take.holdsCard)
+        XCTAssertEqual(take.frameIndex, 0)
+        XCTAssertEqual(clipboard.writes.count, 1)
+        for _ in PawTake.frames { XCTAssertTrue(stepper.advance()) }
+        XCTAssertTrue(cues.contains(.crack))
+        XCTAssertTrue(cues.contains(.take))
+        XCTAssertTrue(spin { picker.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(clipboard.writes.count, 2)
+    }
+
+    func testCreepyOffFieldlessDeliverySkipsTake() throws {
+        try files.write(Data("May it be granted.".utf8), at: "plain.md")
+        let clipboard = MacRepeatClipboard()
+        let picker = try open(clipboard: clipboard)
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        let stepper = WishCardStepper()
+        let take = try attach(stepper)
+        delegate.settingsModel?.setCreepy(.disabled)
+        var cues: [WishCardCue] = []
+        take.playCue = { cues.append($0) }
+
+        presentation.use(mode: .copyOnly)
+
+        XCTAssertFalse(take.holdsCard)
+        XCTAssertEqual(stepper.queued, 0)
+        XCTAssertTrue(cues.isEmpty)
+        XCTAssertTrue(spin { picker.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(clipboard.writes.count, 1)
+    }
+
     func testReduceMotionDeliversImmediatelyWithoutTake() throws {
         try files.write(Data("""
         ---
@@ -757,6 +830,7 @@ final class MacWishCardTests: XCTestCase {
         let stepper = WishCardStepper()
         let take = try attach(stepper)
         presentation.reduceMotion = { true }
+        XCTAssertEqual(delegate.settingsModel?.creepy, .enabled)
 
         presentation.use(mode: .copyOnly)
 

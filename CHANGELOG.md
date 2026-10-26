@@ -9,6 +9,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Creepy toggle in macOS and Linux General settings, on by default. Turn it
+  off to skip the paw take and deliver immediately while keeping the Wish Card.
 - macOS Wish Card: inline paper blanks, native choice tumblers, clipboard
   slips, provenance ink, a warming wick, and ⌘P exact-text Proof. A shared
   nine-frame stop-motion paw timeline grips and takes the card before delivery;

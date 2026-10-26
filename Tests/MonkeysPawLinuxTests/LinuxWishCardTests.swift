@@ -494,6 +494,69 @@ final class LinuxWishCardTests: XCTestCase {
         XCTAssertEqual(try usageCount(), 1)
     }
 
+    func testAnimationsDisabledSkipsTakeWithCreepyEnabled() throws {
+        mp_test_set_animations(0)
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+        var cues: [WishCardCue] = []
+        environment.panel.take.playCue = { cues.append($0) }
+        XCTAssertEqual(environment.settingsModel.creepy, .enabled)
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertEqual(fill.state, .delivering)
+        XCTAssertFalse(environment.panel.take.isPlaying)
+        XCTAssertTrue(cues.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(try usageCount(), 1)
+    }
+
+    func testCreepyOffDeliversOnceImmediatelyAndReenableRestoresTake() throws {
+        environment.settingsModel.setCreepy(.disabled)
+        try files.write(Data("---\nfields:\n  word: {default: Wish}\n---\n{{word}}".utf8), at: "wish.md")
+        try open()
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        let fill = try XCTUnwrap(environment.pickerModel.fillModel)
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+        XCTAssertEqual(fill.preferredMode, .copyOnly)
+        var cues: [WishCardCue] = []
+        environment.panel.take.playCue = { cues.append($0) }
+        let card = try widget("wish-card")
+
+        XCTAssertTrue(key(GDK_KEY_Return))
+        XCTAssertEqual(fill.state, .delivering)
+        XCTAssertFalse(environment.panel.take.isPlaying)
+        XCTAssertNil(environment.panel.take.frameIndex)
+        XCTAssertEqual(gtk_widget_has_css_class(card, "mp-taken"), 0)
+        XCTAssertTrue(takeTimer.pending.isEmpty)
+        XCTAssertTrue(cues.isEmpty)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertTrue(GTKTestSupport.spin { self.notifications.notificationCount == 1 })
+        XCTAssertEqual(try usageCount(), 1)
+
+        environment.settingsModel.setCreepy(.enabled)
+        let restored = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(GTKTestSupport.spin { restored.deliverEnabled })
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.take.frameIndex == 0 })
+        try waitPastTake()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertEqual(cues, [.crack, .crack, .crack, .crack, .take])
+        XCTAssertEqual(try usageCount(), 2)
+    }
+
+    func testDeliveryWithoutTakeFromProofReopensOnCard() throws {
+        environment.settingsModel.setCreepy(.disabled)
+        let fill = try openFill("---\nfields:\n  word: {default: Wish}\n---\n{{word}}")
+        XCTAssertTrue(GTKTestSupport.spin { fill.deliverEnabled })
+        XCTAssertTrue(key(GDK_KEY_p, modifiers: GDK_CONTROL_MASK))
+        XCTAssertEqual(try proofPage(), "proof")
+
+        XCTAssertTrue(key(GDK_KEY_Return, modifiers: GDK_ALT_MASK))
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        try open()
+
+        XCTAssertEqual(try proofPage(), "card")
+    }
+
     func testCardAnchorsHaveVisibleAllocations() throws {
         GTKClipboard(owner: environment.panel.clipboardOwner).writeText("diff --git a/wish.swift b/wish.swift\n--- a/wish.swift\n+++ b/wish.swift\n@@ -1 +1 @@\n-oldWish()\n+newWish()\n context")
         let fill = try openFill("""

@@ -96,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var editorSwitchRefused = false
     private(set) var setupModel: SetupModel?
     private(set) var settingsModel: SettingsModel?
+    private var settingsService: SettingsService?
     private(set) var generalSettingsModel: GeneralSettingsModel?
     private(set) var shortcutsSettingsModel: ShortcutsSettingsModel?
     private(set) var rememberedValuesSettingsModel: RememberedValuesSettingsModel?
@@ -463,6 +464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             log.write(.warning, "App data unavailable; settings, remembered values and usage cannot be saved")
         }
         let settings = SettingsService(store: SettingsStore(files: data, legacyFirstRun: legacyFirstRun))
+        settingsService = settings
         let settingsModel = SettingsModel(settings: settings)
         self.settingsModel = settingsModel
         let updates = UpdateService(transport: httpTransport, currentVersion: currentReleaseVersion,
@@ -839,7 +841,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installLibrary(files: FileStore, availability initialAvailability: Bool) {
         guard let data = dataFiles, let values, let usage, let fill, let delivery,
-              let panel = panelController, let focus = focusTracker, let log else { return }
+              let panel = panelController, let focus = focusTracker, let log,
+              let settings = settingsService else { return }
         let generation = libraryGeneration
         let isCurrent: () -> Bool = { [weak self] in
             guard let self else { return false }
@@ -909,7 +912,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let sounds = WishCardSounds()
         let presentation = PickerViewState(model: model, mainThread: libraryMain, isCurrent: isCurrent,
-            syncStatus: makeSyncStatus(.picker), playCue: { sounds.play($0) },
+            syncStatus: makeSyncStatus(.picker), creepy: { settings.snapshot.document.creepy == .enabled },
+            playCue: { sounds.play($0) },
             openSetup: { [weak self] in self?.showSetup() },
             openSettings: { [weak self] in self?.showSettings() },
             requestedIntent: { [weak self] intent in

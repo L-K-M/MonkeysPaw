@@ -156,18 +156,22 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let page = try show()
         page.delivery.setRestore(true)
         page.updates.setAutomatic(false)
+        page.setCreepy(false)
         XCTAssertEqual(page.delivery.state.preferences.clipboardRestore, .previousText)
         XCTAssertEqual(page.updates.state.automaticUpdateChecks, .disabled)
+        XCTAssertEqual(page.general.creepy, .disabled)
         start()
         let restarted = try show()
         XCTAssertEqual(restarted.delivery.state.preferences.clipboardRestore, .previousText)
         XCTAssertEqual(restarted.updates.state.automaticUpdateChecks, .disabled)
+        XCTAssertEqual(restarted.general.creepy, .disabled)
         XCTAssertEqual(restarted.updates.state.update?.result, .notChecked)
         XCTAssertTrue(restarted.updates.canCheck)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: files.read(at: "settings.json")) as? [String: Any])
         XCTAssertEqual((object["account"] as? [String: String])?["opaque"], "keep")
         XCTAssertEqual((object["uri"] as? [String: Bool])?["enabled"], true)
         XCTAssertEqual((object["delivery"] as? [String: Any])?["foreign"] as? Int, 42)
+        XCTAssertEqual(object["creepy"] as? String, "disabled")
         assertRequestCount()
     }
 
@@ -181,18 +185,25 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         for _ in 0..<2 {
             page.delivery.setRestore(true)
             page.updates.setAutomatic(false)
+            page.setCreepy(false)
             XCTAssertEqual(page.delivery.state.preferences.clipboardRestore, .off)
             XCTAssertEqual(page.updates.state.automaticUpdateChecks, .enabled)
+            XCTAssertEqual(page.general.creepy, .enabled)
+            XCTAssertNotNil(page.general.settingsError)
             XCTAssertNotNil(page.delivery.state.settingsError)
             XCTAssertNotNil(page.updates.state.settingsError)
             XCTAssertTrue(page.delivery.canEdit)
             XCTAssertTrue(page.updates.canEdit)
+            XCTAssertTrue(page.canEditCreepy)
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: data.path)
         page.delivery.setRestore(true)
         page.updates.setAutomatic(false)
+        page.setCreepy(false)
         XCTAssertEqual(page.delivery.state.preferences.clipboardRestore, .previousText)
         XCTAssertEqual(page.updates.state.automaticUpdateChecks, .disabled)
+        XCTAssertEqual(page.general.creepy, .disabled)
+        XCTAssertNil(page.general.settingsError)
         XCTAssertNil(page.delivery.state.settingsError)
         XCTAssertNil(page.updates.state.settingsError)
     }
@@ -206,11 +217,37 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let page = try show()
         XCTAssertFalse(page.delivery.canEdit)
         XCTAssertFalse(page.updates.canEdit)
+        XCTAssertFalse(page.canEditCreepy)
         page.delivery.setRestore(true)
         page.updates.setAutomatic(false)
+        page.setCreepy(false)
         XCTAssertEqual(page.delivery.state.settingsError, .futureVersion(999))
         XCTAssertEqual(page.updates.state.settingsError, .futureVersion(999))
+        XCTAssertEqual(page.general.creepy, .enabled)
+        XCTAssertEqual(page.general.settingsError, .futureVersion(999))
         XCTAssertEqual(try files.read(at: "settings.json"), bytes)
+        assertRequestCount()
+    }
+
+    func testGeneralCreepyControlTracksLiveChangesAndIgnoresHiddenEdits() throws {
+        start()
+        let page = try show()
+        XCTAssertTrue(page.canEditCreepy)
+        XCTAssertEqual(page.general.creepy, .enabled)
+
+        page.setCreepy(false)
+
+        XCTAssertEqual(page.general.creepy, .disabled)
+        XCTAssertEqual(delegate.settingsModel?.creepy, .disabled)
+        delegate.settingsModel?.setCreepy(.enabled)
+        XCTAssertEqual(page.general.creepy, .enabled)
+        try XCTUnwrap(delegate.settingsWindow?.window).close()
+        XCTAssertFalse(page.canEditCreepy)
+        page.setCreepy(false)
+        XCTAssertEqual(delegate.settingsModel?.creepy, .enabled)
+        delegate.showSettings()
+        XCTAssertTrue(page.canEditCreepy)
+        XCTAssertEqual(page.general.creepy, .enabled)
         assertRequestCount()
     }
 
@@ -456,7 +493,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         let page = try show()
         let content = NSHostingView(rootView: VStack {
             SettingsDeliveryView(presentation: page.delivery)
-            Form { SettingsUpdateView(presentation: page.updates) }.formStyle(.grouped)
+            SettingsView(presentation: page, pane: .general)
         })
         // Like the shortcut tests, this host can become key while XCTest's app is inactive.
         let window = MacSettingsKeyViewPanel(contentRect: NSRect(x: 0, y: 0, width: 640, height: 1400),
@@ -482,7 +519,7 @@ final class MacDeliveryUpdateSettingsTests: XCTestCase {
         wait(for: [accessibilityReady], timeout: 5)
         let expectedLabels: Set<String> = [DeliverySettingsStrings.restoreClipboard, DeliverySettingsStrings.testPaste,
             DeliverySettingsStrings.openSetup, SettingsUpdateStrings.automatic,
-            SettingsUpdateStrings.checkNow, SettingsUpdateStrings.viewRelease]
+            SettingsUpdateStrings.checkNow, SettingsUpdateStrings.viewRelease, GeneralSettingsStrings.creepy]
         var observedLabels = Set<String>()
         waitFor("missing accessibility labels=\(expectedLabels.subtracting(observedLabels).sorted()); observed=\(observedLabels.sorted())") {
             observedLabels = self.accessibilityLabels(content)

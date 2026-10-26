@@ -20,6 +20,7 @@ final class LinuxPanel: PanelWindow {
     private var renderedResults: [PickerResultRow] = []
     private var renderedFocus: Int?
     private let sounds: LinuxFeedbackSounds
+    private let creepy: () -> Bool
     let take: LinuxPawTake
     private var takeRevision = 0
     private var isTaking = false
@@ -71,7 +72,8 @@ final class LinuxPanel: PanelWindow {
     var isActiveAndVisible: Bool { isVisible && gtk_window_is_active(mp_window(window)) != 0 }
 
     init(application: UnsafeMutablePointer<GtkApplication>, sounds: LinuxFeedbackSounds = LinuxFeedbackSounds(),
-         pawFrames: LinuxPawFrames = LinuxPawFrames()) {
+         pawFrames: LinuxPawFrames = LinuxPawFrames(), creepy: @escaping () -> Bool = { true }) {
+        self.creepy = creepy
         self.sounds = sounds
         take = LinuxPawTake(frames: pawFrames)
         take.playCue = { [weak sounds] in sounds?.play($0) }
@@ -130,7 +132,7 @@ final class LinuxPanel: PanelWindow {
         GTK.onNotify(UnsafeMutableRawPointer(window), "visible") { [weak self] in
             guard let self, !self.isDestroyed else { return }
             if self.isVisible { self.syncStatusView?.show() }
-            else { self.cancelTake(); self.syncStatusView?.suspend() }
+            else { self.cancelTake(); self.closeProof(); self.syncStatusView?.suspend() }
         }
         if let settings = gtk_settings_get_default() {
             GTK.onNotify(UnsafeMutableRawPointer(settings), "gtk-theme-name") { [weak self] in
@@ -638,6 +640,14 @@ final class LinuxPanel: PanelWindow {
         }
     }
 
+    /// Like macOS, every open starts on the card: a hide, including a
+    /// delivery without the take, must not leave Proof up for next time.
+    private func closeProof() {
+        guard proofShown else { return }
+        proofShown = false
+        gtk_stack_set_visible_child_name(mp_stack(proofStack), "card")
+    }
+
     private func setPreview(_ text: String) { gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(preview)), text, -1) }
 
     private func scrolled(_ child: GTK.Widget) -> GTK.Widget {
@@ -750,11 +760,8 @@ final class LinuxPanel: PanelWindow {
 
     private func startTake(_ deliver: @escaping () -> Void) {
         guard !isDestroyed, !isTaking, let cardView, let picker else { return }
-        guard WishCardMotion.enabled else { deliver(); return }
-        if proofShown {
-            proofShown = false
-            gtk_stack_set_visible_child_name(mp_stack(proofStack), "card")
-        }
+        guard WishCardMotion.enabled, creepy() else { deliver(); return }
+        closeProof()
         isTaking = true
         takeRevision += 1
         let revision = takeRevision

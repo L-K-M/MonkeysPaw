@@ -1,6 +1,7 @@
 #if os(Linux)
 import CGtk
 import Foundation
+import Glibc
 import MonkeysPawCore
 import XCTest
 @testable import MonkeysPawLinux
@@ -214,6 +215,69 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.labelText(path) == self.defaultFolder.path })
         XCTAssertNotEqual(gtk_widget_get_sensitive(try settingsWidget("settings-use-default", in: window)), 0)
         XCTAssertEqual(try config.read(at: "settings.json"), future)
+    }
+
+    func testCreepyToggleCommitsAndTracksRepublishing() throws {
+        let window = try showSettings()
+        let toggle = try settingsWidget("settings-creepy", in: window)
+        XCTAssertNotEqual(gtk_check_button_get_active(mp_check_button(toggle)), 0)
+        gtk_check_button_set_active(mp_check_button(toggle), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.settingsModel.creepy == .disabled })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.creepy == .disabled })
+        XCTAssertEqual(gtk_check_button_get_active(mp_check_button(toggle)), 0)
+        let config = try RootedFileStore(root: paths.configDirectory)
+        let reopened = SettingsService(store: SettingsStore(files: config))
+        XCTAssertEqual(reopened.snapshot.document.creepy, .disabled)
+        // An external write republishes into the open view.
+        environment.settingsModel.setCreepy(.enabled)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.creepy == .enabled })
+        XCTAssertTrue(GTKTestSupport.spin { gtk_check_button_get_active(mp_check_button(toggle)) != 0 })
+        // A hidden window ignores toggles; reopening re-syncs the control.
+        gtk_window_close(mp_window(window))
+        gtk_check_button_set_active(mp_check_button(toggle), 0)
+        drainUI()
+        XCTAssertEqual(environment.settingsModel.creepy, .enabled)
+        XCTAssertEqual(try showSettings(), window)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_check_button_get_active(mp_check_button(toggle)) != 0 })
+    }
+
+    func testReadOnlySettingsDisableCreepyToggleWithoutWriting() throws {
+        let config = try RootedFileStore(root: paths.configDirectory)
+        let bytes = Data("{\"version\":999}".utf8)
+        try config.write(bytes, at: "settings.json")
+        compose()
+        let window = try showSettings()
+        let toggle = try settingsWidget("settings-creepy", in: window)
+        XCTAssertEqual(gtk_widget_get_sensitive(toggle), 0)
+        gtk_check_button_set_active(mp_check_button(toggle), 0)
+        drainUI()
+        XCTAssertEqual(environment.settingsModel.creepy, .enabled)
+        XCTAssertEqual(environment.generalSettingsModel.state.creepy, .enabled)
+        XCTAssertEqual(try config.read(at: "settings.json"), bytes)
+    }
+
+    func testCreepyWriteFailureRestoresCommittedToggleAndRetries() throws {
+        guard geteuid() != 0 else { throw XCTSkip("Root bypasses directory permissions.") }
+        let window = try showSettings()
+        let toggle = try settingsWidget("settings-creepy", in: window)
+        environment.settingsModel.markSetupPresented()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: paths.configDirectory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.configDirectory.path) }
+        for _ in 0..<2 {
+            gtk_check_button_set_active(mp_check_button(toggle), 0)
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.settingsError != nil })
+            drainUI()
+            XCTAssertNotEqual(gtk_check_button_get_active(mp_check_button(toggle)), 0)
+            XCTAssertEqual(environment.settingsModel.creepy, .enabled)
+        }
+        XCTAssertNotEqual(gtk_widget_get_visible(try settingsWidget("settings-general-error", in: window)), 0)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.configDirectory.path)
+        gtk_check_button_set_active(mp_check_button(toggle), 0)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.settingsModel.creepy == .disabled })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.creepy == .disabled })
+        XCTAssertEqual(gtk_check_button_get_active(mp_check_button(toggle)), 0)
+        drainUI()
+        XCTAssertEqual(gtk_widget_get_visible(try settingsWidget("settings-general-error", in: window)), 0)
     }
 
     func testSandboxExternalFolderRefusalPreservesGraphAndLiveWatcher() throws {

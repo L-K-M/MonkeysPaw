@@ -3,6 +3,69 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class GeneralSettingsModelTests: XCTestCase {
+    func testCreepySetterPersistsAndRepublishesThroughMainThread() {
+        for mode in [FakeCompletionMode.immediate, .deferred] {
+            let h = GeneralSettingsHarness()
+            h.main.mode = mode
+            let model = h.makeModel()
+            XCTAssertEqual(model.state.creepy, .enabled)
+            var changes: [CreepyMode] = []
+            model.onChange = {
+                XCTAssertTrue(h.main.isRunning)
+                changes.append(model.state.creepy)
+            }
+
+            model.setCreepy(.disabled)
+            if mode == .deferred {
+                XCTAssertEqual(model.state.creepy, .enabled)
+                XCTAssertEqual(h.settings.creepy, .enabled)
+                XCTAssertTrue(changes.isEmpty)
+            }
+            h.main.drain()
+
+            XCTAssertEqual(changes, [.disabled])
+            XCTAssertEqual(model.state.creepy, .disabled)
+            XCTAssertEqual(h.settings.creepy, .disabled)
+            XCTAssertEqual(SettingsService(store: SettingsStore(files: h.files)).snapshot.document.creepy, .disabled)
+            h.settings.setCreepy(.enabled)
+            h.main.drain()
+            XCTAssertEqual(changes, [.disabled, .enabled])
+            XCTAssertEqual(model.state.creepy, .enabled)
+            XCTAssertTrue(h.library.switches.isEmpty)
+        }
+    }
+
+    func testCreepySaveFailureKeepsCommittedValueAndRetryPublishes() {
+        let h = GeneralSettingsHarness()
+        let model = h.makeModel()
+        h.files.failNextWrite = true
+
+        model.setCreepy(.disabled)
+
+        XCTAssertEqual(model.state.creepy, .enabled)
+        XCTAssertEqual(model.state.settingsError, .writeFailed(.ioFailure))
+        XCTAssertEqual(SettingsService(store: SettingsStore(files: h.files)).snapshot.document.creepy, .enabled)
+        model.setCreepy(.disabled)
+        XCTAssertEqual(model.state.creepy, .disabled)
+        XCTAssertNil(model.state.settingsError)
+        XCTAssertEqual(SettingsService(store: SettingsStore(files: h.files)).snapshot.document.creepy, .disabled)
+    }
+
+    func testCreepyRejectsReadOnlyChanges() throws {
+        let h = GeneralSettingsHarness()
+        let original = #"{"version":2}"#
+        try h.files.put(original, at: "settings.json")
+        h.settings = SettingsModel(settings: SettingsService(store: SettingsStore(files: h.files)))
+        let model = h.makeModel()
+
+        model.setCreepy(.disabled)
+
+        XCTAssertEqual(model.state.creepy, .enabled)
+        XCTAssertTrue(model.state.isReadOnly)
+        XCTAssertEqual(model.state.settingsError, .futureVersion(2))
+        XCTAssertEqual(try h.files.text(at: "settings.json"), original)
+    }
+
     func testInitialStateUsesRunningFolderRatherThanSavedChoiceOrDefaultMarker() {
         let h = GeneralSettingsHarness()
         h.settings.setLibraryFolder("/saved")

@@ -10,11 +10,12 @@ public final class SettingsStore: @unchecked Sendable {
         let firstRun: FirstRunProgress
         let delivery: DeliveryPreferences
         let automaticUpdateChecks: AutomaticUpdateChecks
+        let creepy: CreepyMode
         let carbonShortcuts: CarbonShortcutChoices
         let readOnlyError: SettingsError?
 
         private enum CodingKeys: String, CodingKey {
-            case version, libraryFolderPath, firstRun, delivery, automaticUpdateChecks, carbonShortcuts
+            case version, libraryFolderPath, firstRun, delivery, automaticUpdateChecks, creepy, carbonShortcuts
         }
 
         init(from decoder: Decoder) throws {
@@ -26,6 +27,8 @@ public final class SettingsStore: @unchecked Sendable {
                 ? try values.decode(DeliveryPreferences.self, forKey: .delivery) : DeliveryPreferences()
             automaticUpdateChecks = values.contains(.automaticUpdateChecks)
                 ? try values.decode(AutomaticUpdateChecks.self, forKey: .automaticUpdateChecks) : .enabled
+            creepy = values.contains(.creepy)
+                ? try values.decode(CreepyMode.self, forKey: .creepy) : .enabled
             do {
                 carbonShortcuts = values.contains(.carbonShortcuts)
                     ? try values.decode(CarbonShortcutChoices.self, forKey: .carbonShortcuts) : CarbonShortcutChoices()
@@ -120,7 +123,8 @@ public final class SettingsStore: @unchecked Sendable {
             guard payload.version == SettingsDocument.currentVersion else { throw SettingsError.corruptFile }
             let document = try SettingsDocument(libraryFolderPath: payload.libraryFolderPath,
                 firstRun: payload.firstRun, delivery: payload.delivery,
-                automaticUpdateChecks: payload.automaticUpdateChecks, carbonShortcuts: payload.carbonShortcuts)
+                automaticUpdateChecks: payload.automaticUpdateChecks, creepy: payload.creepy,
+                carbonShortcuts: payload.carbonShortcuts)
             return Loaded(document: document, object: object,
                           needsRewrite: sourceVersion != SettingsDocument.currentVersion,
                           readOnlyError: payload.readOnlyError)
@@ -140,6 +144,7 @@ public final class SettingsStore: @unchecked Sendable {
         delivery["clipboardRestore"] = document.delivery.clipboardRestore.rawValue
         object["delivery"] = delivery
         object["automaticUpdateChecks"] = document.automaticUpdateChecks.rawValue
+        object["creepy"] = document.creepy.rawValue
         var shortcuts = object["carbonShortcuts"] as? [String: Any] ?? [:]
         shortcuts["togglePicker"] = document.carbonShortcuts.togglePicker.map { $0.settingsText as Any } ?? NSNull()
         shortcuts["repeatLast"] = document.carbonShortcuts.repeatLast.map { $0.settingsText as Any } ?? NSNull()

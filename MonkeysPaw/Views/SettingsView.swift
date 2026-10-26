@@ -34,7 +34,7 @@ final class SettingsViewState: ObservableObject {
     /// An installed override may return nil to hide a resolved busy outcome.
     var librarySwitchMessage: (() -> String?)?
     private let openSetup: () -> Void
-    private var windowIsVisible = false
+    @Published private var windowIsVisible = false
 
     init(general: GeneralSettingsModel, shortcuts: ShortcutsSettingsModel,
          rememberedValues: RememberedValuesSettingsModel,
@@ -100,6 +100,7 @@ final class SettingsViewState: ObservableObject {
     func instructions(for action: HotkeyAction) -> String? { actionInstructions[action] }
 
     var canUseDefault: Bool { !general.isDefaultLibrary || general.settingsError != nil }
+    var canEditCreepy: Bool { windowIsVisible && !general.isReadOnly }
 
     var generalMessages: [String] {
         let outcome = general.lastSwitchMessage
@@ -162,13 +163,15 @@ final class SettingsViewState: ObservableObject {
     }
 
     func windowShown() {
-        if !windowIsVisible { assistant?.refreshSyncKey() }
-        windowIsVisible = true
+        if !windowIsVisible {
+            assistant?.refreshSyncKey()
+            windowIsVisible = true
+        }
         updateAccountVisibility()
     }
 
     func windowHidden() {
-        windowIsVisible = false
+        if windowIsVisible { windowIsVisible = false }
         account.hide()
     }
 
@@ -180,6 +183,13 @@ final class SettingsViewState: ObservableObject {
     func chooseFolder() { onChooseFolder?() }
     func useDefaultFolder() { generalModel.useDefaultFolder() }
     func revealFolder() { generalModel.revealFolder() }
+    func setCreepy(_ enabled: Bool) {
+        guard canEditCreepy else { return }
+        generalModel.setCreepy(enabled ? .enabled : .disabled)
+        // A repeated failed save leaves the state unchanged and publishes
+        // nothing; republish so the toggle snaps back to the saved value.
+        general = generalModel.state
+    }
     func requestForgetAll() { rememberedValuesModel.requestForgetAll() }
     func confirmForgetAll() { rememberedValuesModel.confirmForgetAll() }
     func cancelForgetAll() { rememberedValuesModel.cancelForgetAll() }
@@ -232,6 +242,7 @@ struct SettingsView: View {
     private var general: some View {
         Form {
             libraryFolder
+            creepy
             Section {
                 Text(Strings.rememberedValuesExplanation)
                 Button(Strings.forgetAllValues, action: presentation.requestForgetAll)
@@ -276,6 +287,19 @@ struct SettingsView: View {
             Text(Strings.libraryFolder)
         } footer: {
             Text(presentation.general.isDefaultLibrary ? Strings.defaultLibraryFolder : Strings.chosenLibraryFolder)
+        }
+    }
+
+    private var creepy: some View {
+        Section {
+            Toggle(GeneralSettingsStrings.creepy, isOn: Binding(
+                get: { presentation.general.creepy == .enabled },
+                set: presentation.setCreepy))
+                .disabled(!presentation.canEditCreepy)
+                .accessibilityLabel(GeneralSettingsStrings.creepy)
+                .accessibilityIdentifier("settings-creepy")
+        } footer: {
+            Text(GeneralSettingsStrings.creepyHelp)
         }
     }
 

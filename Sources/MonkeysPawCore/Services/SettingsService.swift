@@ -14,7 +14,7 @@ public final class SettingsService: Sendable {
         try store.update { document in
             try SettingsDocument(libraryFolderPath: path, firstRun: document.firstRun,
                 delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,
-                carbonShortcuts: document.carbonShortcuts)
+                creepy: document.creepy, carbonShortcuts: document.carbonShortcuts)
         }
     }
 
@@ -23,7 +23,8 @@ public final class SettingsService: Sendable {
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
                 delivery: DeliveryPreferences(linuxDefaultPasteChord: chord,
                     clipboardRestore: document.delivery.clipboardRestore),
-                automaticUpdateChecks: document.automaticUpdateChecks, carbonShortcuts: document.carbonShortcuts)
+                automaticUpdateChecks: document.automaticUpdateChecks, creepy: document.creepy,
+                carbonShortcuts: document.carbonShortcuts)
         }
     }
 
@@ -32,14 +33,23 @@ public final class SettingsService: Sendable {
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
                 delivery: DeliveryPreferences(linuxDefaultPasteChord: document.delivery.linuxDefaultPasteChord,
                     clipboardRestore: mode), automaticUpdateChecks: document.automaticUpdateChecks,
-                carbonShortcuts: document.carbonShortcuts)
+                creepy: document.creepy, carbonShortcuts: document.carbonShortcuts)
         }
     }
 
     public func setAutomaticUpdateChecks(_ mode: AutomaticUpdateChecks) throws {
         try store.update { document in
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
-                delivery: document.delivery, automaticUpdateChecks: mode, carbonShortcuts: document.carbonShortcuts)
+                delivery: document.delivery, automaticUpdateChecks: mode, creepy: document.creepy,
+                carbonShortcuts: document.carbonShortcuts)
+        }
+    }
+
+    public func setCreepy(_ mode: CreepyMode) throws {
+        try store.update { document in
+            try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
+                delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,
+                creepy: mode, carbonShortcuts: document.carbonShortcuts)
         }
     }
 
@@ -48,6 +58,7 @@ public final class SettingsService: Sendable {
         try store.update { document in
             try SettingsDocument(libraryFolderPath: document.libraryFolderPath, firstRun: document.firstRun,
                 delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,
+                creepy: document.creepy,
                 carbonShortcuts: document.carbonShortcuts.replacing(action, with: accelerator))
         }
     }
@@ -67,7 +78,7 @@ public final class SettingsService: Sendable {
                     seedsOffered: progress.seedsOffered || step == .seeds,
                     tourCompleted: progress.tourCompleted || step == .tour),
                 delivery: document.delivery, automaticUpdateChecks: document.automaticUpdateChecks,
-                carbonShortcuts: document.carbonShortcuts)
+                creepy: document.creepy, carbonShortcuts: document.carbonShortcuts)
         }
     }
 }
