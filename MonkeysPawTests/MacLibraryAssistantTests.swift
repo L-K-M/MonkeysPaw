@@ -1009,6 +1009,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(h.presentation.editorState.source, "Unsaved source")
         XCTAssertTrue(h.presentation.editorState.isDirty)
         XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+        // Let any cancellation bookkeeping on the main queue run; the window must stay open.
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
         XCTAssertTrue(controller.improvementWindow === improvement)
         XCTAssertTrue(window.isVisible)
@@ -1333,7 +1334,11 @@ private final class MacLibraryAssistantHarness {
 
         let press = Selector(("accessibilityPerformPress"))
         XCTAssertTrue(control.responds(to: press), file: file, line: line)
-        _ = control.perform(press)
+        guard let imp = control.method(for: press) else {
+            return XCTFail("Control does not implement accessibilityPerformPress", file: file, line: line)
+        }
+        let performPress = unsafeBitCast(imp, to: (@convention(c) (NSObject, Selector) -> Bool).self)
+        XCTAssertTrue(performPress(control, press), "Control did not accept the press", file: file, line: line)
     }
 
     // SwiftUI nodes expose these selectors without protocol conformance.
@@ -1341,8 +1346,11 @@ private final class MacLibraryAssistantHarness {
         // Window chrome can expose a partial tree; the content view holds the rest.
         var roots: [NSObject] = [window]
         if let content = window.contentView { roots.append(content) }
-        return roots.lazy.compactMap { accessibilityElement(identifier, under: $0, depth: 14) }.first
+        return roots.lazy.compactMap { accessibilityElement(identifier, under: $0, depth: Self.maxAccessibilityDepth) }.first
     }
+
+    /// Bounds the accessibility-tree walk; SwiftUI hierarchies stay well below this.
+    private static let maxAccessibilityDepth = 14
 
     private static func accessibilityElement(_ identifier: String, under root: NSObject, depth: Int) -> NSObject? {
         let children = #selector(NSAccessibilityProtocol.accessibilityChildren)
