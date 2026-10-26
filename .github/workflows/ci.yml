@@ -80,6 +80,11 @@ jobs:
         run: python3 scripts/check-pbxproj.py
       - name: Check committed versions and Debian version mapping
         run: python3 scripts/check-version.py
+      # The README scopes the Unlicense to our code and names the shipped notices.
+      - name: Check README license section
+        run: |
+          grep -q '^## License$' README.md
+          grep -q 'Third-Party-Notices.txt' README.md
       - name: Check compiled assistant prompt catalogs
         run: python3 scripts/generate-assistant-prompts.py --check
       - name: Test packaging scripts
