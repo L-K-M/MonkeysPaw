@@ -276,6 +276,8 @@ final class LinuxSettingsWindowTests: XCTestCase {
         XCTAssertTrue(GTKTestSupport.spin { self.environment.settingsModel.creepy == .disabled })
         XCTAssertTrue(GTKTestSupport.spin { self.environment.generalSettingsModel.state.creepy == .disabled })
         XCTAssertEqual(gtk_check_button_get_active(mp_check_button(toggle)), 0)
+        drainUI()
+        XCTAssertEqual(gtk_widget_get_visible(try settingsWidget("settings-general-error", in: window)), 0)
     }
 
     func testSandboxExternalFolderRefusalPreservesGraphAndLiveWatcher() throws {

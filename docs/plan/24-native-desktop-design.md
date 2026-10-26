@@ -275,7 +275,8 @@ size is unchanged.
   ignored, as are repeats of the Escape that cancelled the take. Hiding, dismissal, rebind, root replacement or destruction revokes
   queued frames; macOS also cancels on loss of key status. Fieldless prompts
   take the thumbnail directly.
-  The Creepy setting (on by default) turns the paw off and delivers immediately.
+  Turning the Creepy setting off (it is on by default) skips the take and
+  delivers immediately.
 - **Delivery.** The take preserves §6's clipboard write, hide, focus restore
   and paste order and §2's keystroke budget. Incomplete or obsolete choice
   blanks nudge and take focus, with the reason in the gloss. Return while

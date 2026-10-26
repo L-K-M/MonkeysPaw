@@ -186,6 +186,8 @@ final class SettingsViewState: ObservableObject {
     func setCreepy(_ enabled: Bool) {
         guard canEditCreepy else { return }
         generalModel.setCreepy(enabled ? .enabled : .disabled)
+        // A repeated failed save leaves the state unchanged and publishes
+        // nothing; republish so the toggle snaps back to the saved value.
         general = generalModel.state
     }
     func requestForgetAll() { rememberedValuesModel.requestForgetAll() }
@@ -294,7 +296,6 @@ struct SettingsView: View {
                 get: { presentation.general.creepy == .enabled },
                 set: presentation.setCreepy))
                 .disabled(!presentation.canEditCreepy)
-                .help(GeneralSettingsStrings.creepyHelp)
                 .accessibilityLabel(GeneralSettingsStrings.creepy)
                 .accessibilityIdentifier("settings-creepy")
         } footer: {
