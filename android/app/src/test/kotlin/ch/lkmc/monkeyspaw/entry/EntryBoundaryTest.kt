@@ -15,7 +15,7 @@ internal class EntryBoundaryTest {
     fun `only launcher join links capture entries and protected tile and IME are exported`() {
         val manifest = xml("AndroidManifest.xml")
         val expected = mapOf(
-            ".MainActivity" to "true", ".entry.FillActivity" to "false",
+            ".MainActivity" to "true", ".LicensesActivity" to "false", ".entry.FillActivity" to "false",
             ".entry.ProcessTextActivity" to "true",
             ".entry.ShareReceiverActivity" to "true",
             ".entry.PromptShortcutActivity" to "false", ".entry.PromptTileService" to "true",
