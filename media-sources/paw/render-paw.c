@@ -534,7 +534,8 @@ static inline float tonemap(float x) {
 // ------------------------------------------------------------------- fur --
 
 typedef struct { int bone; float t, ang, length, lean; } Strand;
-#define MAX_STRANDS 4000
+// Room for every rule below: arm fur, hand hair and sparse finger hairs.
+#define MAX_STRANDS 8000
 static Strand strands[MAX_STRANDS];
 static int strandCount;
 
@@ -561,6 +562,8 @@ static void plant_strands(const Scene *s) {
             st->lean = lean;
         }
     }
+    // A full budget silently drops the hair of later bones.
+    if (strandCount == MAX_STRANDS) fprintf(stderr, "render-paw: strand budget exhausted; raise MAX_STRANDS\n");
 }
 
 static void draw_strands(cairo_t *cr, const Scene *s, const Job *job, const unsigned char *pixels, int stride, uint32_t seed) {

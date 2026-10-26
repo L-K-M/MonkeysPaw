@@ -43,9 +43,11 @@ static void card(cairo_t *cr, double w, double h) {
 }
 
 int main(int argc, char **argv) {
+    if (argc != 3) { fprintf(stderr, "usage: preview <frames dir> <out.png>\n"); return 2; }
     const char *dir = argv[1];
     char tablePath[1024]; snprintf(tablePath, sizeof tablePath, "%s/take.txt", dir);
     FILE *table = fopen(tablePath, "r"); double iw, ih;
+    if (!table) { fprintf(stderr, "preview: cannot read %s\n", tablePath); return 1; }
     if (fscanf(table, "%lf %lf %lf %lf", &iw, &ih, &anchorX, &anchorY) != 4) return 1;
     char word[32]; double a, b;
     while (fscanf(table, "%31s %lf %lf", word, &a, &b) == 3) {
@@ -63,6 +65,7 @@ int main(int argc, char **argv) {
         char path[1024];
         snprintf(path, sizeof path, "%s/wish-paw-%02d@2x.png", dir, frames[f].image);
         cairo_surface_t *paw = cairo_image_surface_create_from_png(path);
+        if (cairo_surface_status(paw) != CAIRO_STATUS_SUCCESS) { fprintf(stderr, "preview: cannot read %s\n", path); return 1; }
 
         cairo_save(out);
         cairo_scale(out, scale, scale);
@@ -126,6 +129,8 @@ int main(int argc, char **argv) {
         cairo_surface_destroy(paw);
     }
     cairo_destroy(out);
-    cairo_surface_write_to_png(sheet, argv[2]);
+    cairo_status_t written = cairo_surface_write_to_png(sheet, argv[2]);
+    cairo_surface_destroy(sheet);
+    if (written != CAIRO_STATUS_SUCCESS) { fprintf(stderr, "preview: cannot write %s\n", argv[2]); return 1; }
     return 0;
 }
