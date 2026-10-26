@@ -18,6 +18,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.aboutlibraries.android)
 }
 
 @CacheableTask
@@ -183,6 +184,25 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+// Third-party notices (res/raw/aboutlibraries.json, shown by LicensesActivity): offline and
+// reproducible, from each variant's resolved graph plus config/libraries and config/licenses.
+// The build fails on a dependency without a license or with one outside the allow-list.
+aboutLibraries {
+    offlineMode = true
+    collect {
+        configPath = file("config")
+        fetchRemoteLicense = false
+        fetchRemoteFunding = false
+    }
+    library {
+        requireLicense = true
+    }
+    license {
+        strictMode = com.mikepenz.aboutlibraries.plugin.StrictMode.FAIL
+        allowedLicenses.addAll("Apache-2.0", "MPL-2.0", "Unicode-3.0")
     }
 }
 

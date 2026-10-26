@@ -1,0 +1,13 @@
+{
+  "_comment": "OkHttp's okhttp-android 5.5.0 AAR ships assets/PublicSuffixDatabase.list (132,737 bytes, identical in the APK); its POM lists only Apache-2.0. OkHttp's NOTICE at tag parent-5.5.0 states the MPL-2.0 terms. Text: https://www.mozilla.org/MPL/2.0/ (plain-text form).",
+  "uniqueId": "monkeyspaw:public-suffix-list",
+  "licenses": [
+    "MPL-2.0-public-suffix-list"
+  ],
+  "name": "Public Suffix List (bundled in OkHttp)",
+  "artifactVersion": "2024-11-26_09-06-27_UTC",
+  "website": "https://publicsuffix.org",
+  "description": "Mozilla's Public Suffix List, which OkHttp 5.5.0 compiles from the unmodified list into assets/PublicSuffixDatabase.list. It is subject to the Mozilla Public License 2.0. Source Code Form: public_suffix_list.dat version 2024-11-26_09-06-27_UTC at https://github.com/lysine-dev/okhttp/blob/parent-5.5.0/okhttp/src/jvmTest/resources/okhttp3/internal/publicsuffix/public_suffix_list.dat (upstream: https://github.com/publicsuffix/list).",
+  "developers": [],
+  "tag": "bundled"
+}

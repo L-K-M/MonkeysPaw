@@ -165,6 +165,8 @@ class MainActivity : ComponentActivity() {
                             onCancelForget = rememberedValues::cancel,
                             onAccount = { setup.closeSettings(); openAccount() },
                             onAssistantSettings = { setup.closeSettings(); assistantSettings.open() },
+                            // Bundled components keep their own licenses; show their notices.
+                            onOpenSourceLicenses = { startActivity(Intent(this@MainActivity, LicensesActivity::class.java)) },
                             modifier = Modifier.padding(padding).consumeWindowInsets(padding))
                     } else if (destination == MainDestination.RESOLVE) {
                         ResolveScreen(state = checkNotNull(resolving),

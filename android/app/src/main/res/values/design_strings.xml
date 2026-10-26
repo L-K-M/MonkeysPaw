@@ -19,6 +19,9 @@
     <string name="design_account_subtitle">Your server, devices and shared libraries</string>
     <string name="design_assistant_subtitle">Provider, model and API key</string>
     <string name="design_assistant_section">Assistant</string>
+    <string name="design_about_section">About</string>
+    <string name="open_source_licenses">Open-source licenses</string>
+    <string name="open_source_licenses_subtitle">Licenses and notices of the bundled libraries</string>
     <string name="design_keyboard_subtitle">Enable the picker and set up quick access</string>
     <string name="design_library_group">Your workspace</string>
     <string name="design_prompt_options">Options for %1$s</string>
