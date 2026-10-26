@@ -256,7 +256,16 @@ jobs:
           grep -Fxq 'MimeType=x-scheme-handler/monkeyspaw;' "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
           cmp packaging/linux/ch.lkmc.monkeyspaw.service \
             "$payload/usr/share/dbus-1/services/ch.lkmc.monkeyspaw.service"
-          cmp packaging/debian/copyright "$payload/usr/share/doc/monkeyspaw/copyright"
+          # Generated notices for the statically linked third-party code.
+          doc="$payload/usr/share/doc/monkeyspaw"
+          test -s "$doc/copyright"
+          test -s "$doc/Third-Party-Notices.txt"
+          grep -q '^Files: usr/bin/monkeyspaw$' "$doc/copyright"
+          for marker in 'Kirill Simonov' 'Unicode, Inc. and others' 'UNICODE LICENSE V3'; do
+            grep -q "$marker" "$doc/copyright"
+            grep -q "$marker" "$doc/Third-Party-Notices.txt"
+          done
+          grep -q '^Yams ' "$doc/Third-Party-Notices.txt"
           test -s "$payload/usr/share/doc/monkeyspaw/changelog.gz"
           for size in 16 24 32 48 64 128 256 512; do
             icon="icons/hicolor/${size}x${size}/apps/ch.lkmc.monkeyspaw.png"
@@ -386,7 +395,9 @@ jobs:
           deployment=$(flatpak info --user --show-location "$APP_ID")
           test "$(flatpak info --user --show-runtime "$APP_ID")" = org.gnome.Platform/x86_64/50
           cmp "$payload/usr/bin/monkeyspaw" "$deployment/files/bin/monkeyspaw"
-          cmp "$payload/usr/share/doc/monkeyspaw/copyright" "$deployment/files/share/doc/monkeyspaw/copyright"
+          for notice in copyright Third-Party-Notices.txt; do
+            cmp "$payload/usr/share/doc/monkeyspaw/$notice" "$deployment/files/share/doc/monkeyspaw/$notice"
+          done
           export_root="$XDG_DATA_HOME/flatpak/exports/share"
           desktop-file-validate "$export_root/applications/$APP_ID.desktop"
           grep -Fxq 'Exec=/app/bin/monkeyspaw --gapplication-service' \

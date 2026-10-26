@@ -55,8 +55,9 @@ link="$(find "$WORK/debroot" -type l -print -quit)"
 [[ -z "$link" ]] || die 'Deb payload contains an unsupported symbolic link'
 [[ -f "$WORK/debroot/usr/bin/monkeyspaw" && -x "$WORK/debroot/usr/bin/monkeyspaw" ]] || \
     die 'Deb has no executable at /usr/bin/monkeyspaw'
+# The license notices travel with the payload into /app/share/doc/monkeyspaw.
 for path in "share/applications/$APP_ID.desktop" "share/dbus-1/services/$APP_ID.service" \
-    share/doc/monkeyspaw/copyright; do
+    share/doc/monkeyspaw/copyright share/doc/monkeyspaw/Third-Party-Notices.txt; do
     [[ -f "$WORK/debroot/usr/$path" && -s "$WORK/debroot/usr/$path" ]] || die "Deb is missing /usr/$path"
 done
 for size in 16 24 32 48 64 128 256 512; do

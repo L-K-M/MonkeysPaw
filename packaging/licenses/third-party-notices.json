@@ -1,0 +1,40 @@
+{
+  "comment": "Overrides for swiftpm-notices.py when packaging/build-deb.sh writes /usr/share/doc/monkeyspaw/Third-Party-Notices.txt for the deb and Flatpak, whose binary is built with --static-swift-stdlib. Paths are relative to this file; $SWIFT_LICENSE is the toolchain's share/swift/LICENSE.txt, located by the build. The macOS app uses scripts/third-party-notices.json, the server image server/licenses/third-party-notices.json.",
+  "preamble": [
+    "Monkey's Paw's own code is released under the Unlicense (see LICENSE in",
+    "https://github.com/L-K-M/MonkeysPaw). The components below are statically",
+    "linked into this program and keep their own licenses."
+  ],
+  "packages": {
+    "yams": {
+      "add_files": ["../../scripts/licenses/libyaml-acd6f6f-License"],
+      "reason": "Yams vendors libyaml's C sources (Sources/CYaml, libyaml commit acd6f6f per Yams' 4.0.5 changelog) without libyaml's license file; this is libyaml's License at that commit."
+    }
+  },
+  "components": [
+    {
+      "name": "ICU",
+      "version": "76.1",
+      "license": "Unicode-3.0",
+      "source": "https://github.com/swiftlang/swift-foundation-icu/tree/swift-6.4.0-RELEASE",
+      "files": ["ICU-76.1-LICENSE.txt"],
+      "reason": "--static-swift-stdlib links Foundation's lib_FoundationICU (ICU 76.1 in swift-foundation-icu for Swift 6.4, data icudt76l). That repository ships only its Apache-2.0 LICENSE.md, while its ICU sources point to Unicode's terms, so this is unicode-org/icu's LICENSE at release-76-1 (SHA-256 01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed), including ICU's third-party data terms. static-runtime-notices.py fails when the binary's ICU data version differs."
+    },
+    {
+      "name": "Swift standard library, Foundation and libdispatch",
+      "version": "6.4",
+      "license": "Apache-2.0 WITH Swift-exception",
+      "source": "https://github.com/swiftlang/swift",
+      "files": ["$SWIFT_LICENSE"],
+      "reason": "Statically linked by --static-swift-stdlib. The Runtime Library Exception waives attribution; listed for completeness with the toolchain's own LICENSE.txt."
+    },
+    {
+      "name": "Unicode Character Database tables",
+      "version": "17.0.0 (with 15.0.0 data)",
+      "license": "Unicode-3.0",
+      "source": "https://www.unicode.org/Public/17.0.0/ucd/",
+      "files": ["../../docs/licenses/UNICODE.txt"],
+      "reason": "Sources/MonkeysPawCore/Domain/Library/SearchUnicodeData.swift and Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift are generated from the UCD and compiled into Core."
+    }
+  ]
+}

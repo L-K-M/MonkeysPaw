@@ -143,6 +143,13 @@ jobs:
           test "$(dpkg-deb --field "dist/$deb_file" Version)" = "$deb_version"
           apt-get install -y --no-install-recommends "./dist/$deb_file"
           test "$(/usr/bin/monkeyspaw --version)" = "monkeyspaw ${RELEASE_TAG#v}"
+          # Check the deb itself: minimized images may skip /usr/share/doc on install.
+          payload="$RUNNER_TEMP/release-deb-payload"
+          dpkg-deb --extract "dist/$deb_file" "$payload"
+          test -s "$payload/usr/share/doc/monkeyspaw/copyright"
+          test -s "$payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt"
+          grep -q 'Kirill Simonov' "$payload/usr/share/doc/monkeyspaw/copyright"
+          grep -q 'Unicode, Inc. and others' "$payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt"
           echo "deb_file=$deb_file" >> "$GITHUB_OUTPUT"
       - name: Upload deb and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -225,6 +232,11 @@ jobs:
           deployment=$(flatpak info --user --show-location "$APP_ID")
           test "$(flatpak info --user --show-runtime "$APP_ID")" = org.gnome.Platform/x86_64/50
           cmp "$payload/usr/bin/monkeyspaw" "$deployment/files/bin/monkeyspaw"
+          # The bundle keeps the deb's third-party notices verbatim.
+          for notice in copyright Third-Party-Notices.txt; do
+            test -s "$deployment/files/share/doc/monkeyspaw/$notice"
+            cmp "$payload/usr/share/doc/monkeyspaw/$notice" "$deployment/files/share/doc/monkeyspaw/$notice"
+          done
           test "$(timeout 15s dbus-run-session -- flatpak run --user "$APP_ID" --version)" = "monkeyspaw $VERSION"
           echo "bundle_file=$bundle_file" >> "$GITHUB_OUTPUT"
       - name: Upload the verified bundle and checksum

@@ -72,6 +72,7 @@ Name=ch.lkmc.monkeyspaw
 Exec=/usr/bin/monkeyspaw --gapplication-service
 SERVICE
 printf 'Keep /usr/share copyright bytes\n' > "$fixture/payload/usr/share/doc/monkeyspaw/copyright"
+printf 'Keep /usr/share notice bytes\n' > "$fixture/payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt"
 for size in 16 24 32 48 64 128 256 512; do
     icon="usr/share/icons/hicolor/${size}x${size}/apps/$app_id.png"
     mkdir -p "$fixture/payload/$(dirname "$icon")"
@@ -115,7 +116,9 @@ if command -v desktop-file-validate >/dev/null; then
 fi
 grep -Fxq 'Exec=/app/bin/monkeyspaw --gapplication-service' \
     "$build/files/share/dbus-1/services/ch.lkmc.monkeyspaw.service"
-cmp "$FAKE_FIXTURE/payload/usr/share/doc/monkeyspaw/copyright" "$build/files/share/doc/monkeyspaw/copyright"
+for notice in copyright Third-Party-Notices.txt; do
+    cmp "$FAKE_FIXTURE/payload/usr/share/doc/monkeyspaw/$notice" "$build/files/share/doc/monkeyspaw/$notice"
+done
 diff -r "$FAKE_FIXTURE/payload/usr/share/icons" "$build/files/share/icons"
 if [[ "${FAKE_FAILURE:-}" == changed-binary ]]; then
     printf 'changed\n' >> "$build/files/bin/monkeyspaw"
@@ -214,6 +217,10 @@ mv "$fixture/payload/usr/bin/monkeyspaw" "$fixture/binary"
 make_deb "$fixture/input/missing-binary.deb"
 mv "$fixture/binary" "$fixture/payload/usr/bin/monkeyspaw"
 expect_failure 'wrong binary path' bash "$builder" "$fixture/input/missing-binary.deb" "$version"
+mv "$fixture/payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt" "$fixture/notices"
+make_deb "$fixture/input/missing-notices.deb"
+mv "$fixture/notices" "$fixture/payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt"
+expect_failure 'missing third-party notices' bash "$builder" "$fixture/input/missing-notices.deb" "$version"
 cp "$fixture/payload/usr/share/applications/$app_id.desktop" "$fixture/original.desktop"
 sed -i '/^MimeType=/d' "$fixture/payload/usr/share/applications/$app_id.desktop"
 make_deb "$fixture/input/missing-mime.deb"
