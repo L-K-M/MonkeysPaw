@@ -1,0 +1,39 @@
+# Overrides for scripts/android_notices.py, which verify-android-release.py runs on
+# the APK: the AboutLibraries definitions (res/raw/aboutlibraries.json, from the
+# resolved graph plus app/config) must cover every component, and every native
+# library or data file below must be tied to its notice entry. Each entry needs a reason.
+
+# Components the notices must always list.
+require = [
+  "org.jetbrains.kotlin:kotlin-stdlib",
+  "org.jetbrains.kotlinx:kotlinx-coroutines-core",
+  "com.squareup.okhttp3:okhttp",
+  "com.ibm.icu:icu4j",
+  "monkeyspaw:public-suffix-list",
+  "monkeyspaw:unicode-ucd-tables",
+]
+
+# Data files outside the built-in watch list.
+watch = ["assets/PublicSuffixDatabase.list", "com/ibm/icu/**"]
+
+[[claim]]
+paths = ["lib/*/libandroidx.graphics.path.so"]
+requires = ["androidx.graphics:graphics-path"]
+reason = "Native part of the AndroidX graphics-path AAR"
+
+[[claim]]
+paths = ["lib/*/libdatastore_shared_counter.so"]
+requires = ["androidx.datastore:datastore-core"]
+reason = "Native part of the AndroidX DataStore core AAR"
+
+[[claim]]
+paths = ["assets/PublicSuffixDatabase.list"]
+requires = ["com.squareup.okhttp3:okhttp", "monkeyspaw:public-suffix-list"]
+requires_text = ["Mozilla Public License Version 2.0"]
+reason = "OkHttp's compiled Public Suffix List (MPL-2.0); its entry names the Source Code Form"
+
+[[claim]]
+paths = ["com/ibm/icu/**"]
+requires = ["com.ibm.icu:icu4j"]
+requires_text = ["UNICODE LICENSE V3"]
+reason = "ICU4J's data files, kept as Java resources; ICU's LICENSE covers them"

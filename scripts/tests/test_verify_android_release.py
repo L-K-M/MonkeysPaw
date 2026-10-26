@@ -45,6 +45,19 @@ print(os.environ['{variable}'], end='')
 sys.exit(int(os.environ.get('FAKE_{tool.upper()}_EXIT', '0')))
 ''')
             script.chmod(0o755)
+        # The notices checker has its own tests; this fake records the verifier's calls.
+        self.notices_log = self.root / "notices.log"
+        notices = self.root / "scripts/android_notices.py"
+        notices.write_text(f'''import os
+from pathlib import Path
+import sys
+mode = sys.argv[1]
+assert mode in ("check", "scan") and Path(sys.argv[2]).is_absolute()
+assert sys.argv[3:] == ["--config", {str(self.root / "android/android-notices.toml")!r}]
+with open({str(self.notices_log)!r}, "a") as log:
+    log.write(mode + "\\n")
+sys.exit(int(os.environ.get("FAKE_NOTICES_" + mode.upper() + "_EXIT", "0")))
+''')
         self.env = {key: value for key, value in os.environ.items() if not key.startswith("ANDROID_")}
         self.env.update(ANDROID_HOME=str(self.tools.parents[1]), FAKE_BADGING=self.badging,
                         FAKE_SIGNATURE=self.signature, PYTHONDONTWRITEBYTECODE="1", GITHUB_RUN_NUMBER="99999")
@@ -75,6 +88,15 @@ sys.exit(int(os.environ.get('FAKE_{tool.upper()}_EXIT', '0')))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn(f"{version} (code 7)", result.stdout)
                 self.assertIn(f"signer {FINGERPRINT}", result.stdout)
+                self.assertIn("notices checked", result.stdout)
+        self.assertEqual(self.notices_log.read_text(), "check\nscan\n" * 2)
+
+    def test_third_party_notices_check_and_scan_must_pass(self):
+        for mode in ("CHECK", "SCAN"):
+            with self.subTest(mode=mode):
+                self.assert_rejected(**{f"FAKE_NOTICES_{mode}_EXIT": "1"})
+        (self.root / "scripts/android_notices.py").unlink()
+        self.assert_rejected()
 
     def test_help_does_not_load_the_version_checker(self):
         checker = self.root / "scripts/check-version.py"

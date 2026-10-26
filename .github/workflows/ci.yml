@@ -568,6 +568,9 @@ jobs:
           apk_file="monkeyspaw-v$version.apk"
           python3 ../scripts/verify-android-release.py "../dist/$apk_file" "$version"
           echo "apk_file=$apk_file" >> "$GITHUB_OUTPUT"
+      # The uploaded debug APK must carry the same third-party notices.
+      - name: Check third-party notices in the debug APK
+        run: python3 -I ../scripts/android_notices.py check app/build/outputs/apk/debug/app-debug.apk --config android-notices.toml
       - name: Upload debug APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
