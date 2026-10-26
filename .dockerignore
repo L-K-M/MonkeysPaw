@@ -12,6 +12,15 @@
 !server/Tests/
 !server/Tests/**
 !server/Dockerfile
+!server/licenses/
+!server/licenses/**
+# Third-party notices: generator, runtime check, our license and the texts.
+!LICENSE
+!scripts/swiftpm-notices.py
+!scripts/static-runtime-notices.py
+!scripts/licenses/
+!scripts/licenses/**
+!packaging/licenses/ICU-76.1-LICENSE.txt
 
 # Keep host build state, repository metadata, docs, and artwork out of images.
 .git/
@@ -20,6 +29,8 @@
 server/.build/
 .idea/
 docs/
+# The Unicode tables' license, after the docs/ exclusion above.
+!docs/licenses/UNICODE.txt
 media-sources/
 **/.DS_Store
 **/.env

@@ -286,7 +286,7 @@ Run on GNOME and KDE with GTK 4.8 or newer, light/dark themes and Orca.
 | Validation and conflict bars | The editor status bar expands validation issues. Read-only reasons appear above the editor. Sync conflicts reveal resolution actions and an expandable comparison. | NOT RUN |
 | Settings pages | A header stack switcher selects General, Shortcuts, Delivery, Assistant and Account in that order. Each page scrolls a centered column of grouped setting rows; reopening reuses the window and preserves all sensitivity rules. | NOT RUN |
 | Picker and fill | The rounded panel has large search, icon/title/subtitle results and preview. Footer key hints perform Use, Copy, Edit and Library; its menu offers Forget values, Setup and Settings. Fill fields retain labels and descriptions; Deliver is suggested, Copy flat, and Escape returns to picker. | NOT RUN |
-| Tray and About | The tray orders Show Picker, Repeat Last Prompt, Library, Settings, Setup, About and Quit in separated groups. The shared About dialog shows the app version, repository and Unlicense text. | NOT RUN |
+| Tray and About | The tray orders Show Picker, Repeat Last Prompt, Library, Settings, Setup, About and Quit in separated groups. The shared About dialog shows the app version, repository and Unlicense text, followed by where the bundled third-party notices ship. | NOT RUN |
 
 ## Library browser shell (M3L1, NOT RUN)
 

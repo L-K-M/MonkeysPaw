@@ -18,9 +18,10 @@ final class LinuxAboutWindow {
         gtk_about_dialog_set_comments(dialog, LinuxAboutStrings.comments)
         gtk_about_dialog_set_logo_icon_name(dialog, AppIdentity.linuxAppID)
         gtk_about_dialog_set_website(dialog, LinuxAboutStrings.repository)
-        // GTK 4.8 has no Unlicense enum; display the repository's exact license.
+        // GTK 4.8 has no Unlicense enum; display the repository's exact license,
+        // then where the bundled components' notices are.
         gtk_about_dialog_set_license_type(dialog, GTK_LICENSE_CUSTOM)
-        gtk_about_dialog_set_license(dialog, LinuxAboutStrings.license)
+        gtk_about_dialog_set_license(dialog, LinuxAboutStrings.license + "\n\n" + LinuxAboutStrings.thirdPartyNotices)
         GTK.onSignal(widget, "destroy") { [weak self] in self?.destroyed = true }
     }
 

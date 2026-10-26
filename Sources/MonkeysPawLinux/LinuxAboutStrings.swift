@@ -26,6 +26,13 @@ enum LinuxAboutStrings {
 
         For more information, please refer to <https://unlicense.org>
         """
+    /// The Unlicense covers only our code; the packages ship the bundled code's notices.
+    static let thirdPartyNotices = """
+        The Unlicense covers Monkey's Paw's own code. Bundled third-party
+        components keep their own licenses. Their notices ship in
+        /usr/share/doc/monkeyspaw/ (Flatpak: /app/share/doc/monkeyspaw/)
+        as Third-Party-Notices.txt and copyright.
+        """
     static let title = "About Monkey's Paw"
     static let comments = "Keep your prompts together. Find, fill and use them from your desktop."
     static let repository = "https://github.com/L-K-M/MonkeysPaw"

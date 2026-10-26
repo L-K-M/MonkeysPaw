@@ -1,0 +1,13 @@
+{
+  "_comment": "android/core/src/main/kotlin/ch/lkmc/monkeyspaw/core/domain/paths/SyncPathCaseFold.kt is generated from the Unicode 17.0.0 UCD; text from docs/licenses/UNICODE.txt.",
+  "uniqueId": "monkeyspaw:unicode-ucd-tables",
+  "licenses": [
+    "Unicode-3.0-unicode-ucd-tables"
+  ],
+  "name": "Unicode Character Database tables",
+  "artifactVersion": "17.0.0",
+  "website": "https://www.unicode.org/Public/17.0.0/ucd/",
+  "description": "Case folding data generated from CaseFolding.txt into the sync path code (core SyncPathCaseFold.kt).",
+  "developers": [],
+  "tag": "bundled"
+}

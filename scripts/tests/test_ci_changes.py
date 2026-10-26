@@ -25,6 +25,7 @@ SWIFT = ALL - {"android", "android-sync"}
 LINUX = frozenset({"linux-app", "deb"})
 MACOS = frozenset({"macos-app", "macos-artifacts"})
 SERVER = frozenset({"server", "server-image", "compose-smoke", "android-sync"})
+IMAGE = frozenset({"server-image", "compose-smoke", "android-sync"})
 
 
 def with_flatpak(jobs):
@@ -69,7 +70,7 @@ class SelectionTests(unittest.TestCase):
             "Tests/MonkeysPawLinuxTests/AppTests.swift": LINUX,
             "packaging/build-deb.sh": LINUX,
             "packaging/linux/ch.lkmc.monkeyspaw.desktop": LINUX,
-            "packaging/debian/copyright": LINUX,
+            "packaging/licenses/components.json": LINUX,
             "packaging/icons/hicolor/16x16/apps/ch.lkmc.monkeyspaw.png": LINUX,
             "packaging/macos/background.png": MACOS,
             "MonkeysPaw/AppDelegate.swift": MACOS,
@@ -99,6 +100,19 @@ class SelectionTests(unittest.TestCase):
             "scripts/check-version.py": frozenset({"core-linux", "deb", "android"}),
             "scripts/linux-delivery-smoke.sh": frozenset({"linux-app"}),
             "scripts/package-macos.sh": frozenset({"macos-artifacts"}),
+            "scripts/bundle-notices.sh": MACOS,
+            "scripts/swiftpm-notices.py": MACOS | IMAGE | {"deb"},
+            "scripts/third-party-notices.json": MACOS,
+            "scripts/licenses/libyaml-acd6f6f-License": MACOS | IMAGE | {"deb"},
+            "scripts/deb-copyright.py": frozenset({"deb"}),
+            "scripts/static-runtime-notices.py": IMAGE | {"deb"},
+            "scripts/oci-licenses.py": frozenset({"server-image"}),
+            "scripts/check-image-notices.sh": frozenset({"server-image"}),
+            "scripts/android_notices.py": frozenset({"android"}),
+            "packaging/licenses/ICU-76.1-LICENSE.txt": LINUX | IMAGE,
+            "server/licenses/third-party-notices.json": SERVER,
+            "docs/licenses/UNICODE.txt": MACOS | IMAGE | {"deb"},
+            "LICENSE": IMAGE | {"deb"},
             "scripts/make-icons.sh": MACOS,
             "scripts/generate-paw-icon.py": MACOS | {"android", "android-sync"},
             "scripts/make-linux-icons.sh": frozenset({"deb"}),
@@ -136,7 +150,6 @@ class SelectionTests(unittest.TestCase):
             "README.android.md": frozenset(),
             "AGENTS.md": frozenset(),
             "CHANGELOG.md": frozenset(),
-            "LICENSE": frozenset(),
             "docs/plan/14-repository-packaging-ci-release.md": frozenset(),
             "docs/platform/macos.md": frozenset(),
             "docs/decisions/0001-android-zero-secret-signing.md": frozenset({"core-linux"}),

@@ -169,9 +169,9 @@ internal class AppGraphTest {
         assertEquals(".MonkeysPawApplication", application.getAttributeNS(androidNamespace, "name"))
         assertFalse(application.hasAttributeNS(androidNamespace, "fullBackupContent"))
         assertFalse(application.hasAttributeNS(androidNamespace, "dataExtractionRules"))
-        val allowed = setOf(".MainActivity", ".entry.FillActivity", ".ime.MonkeysPawImeService", ".entry.PromptTileService",
-            ".entry.PromptWidgetProvider", ".entry.PromptShortcutActivity", ".entry.ProcessTextActivity",
-            ".entry.ShareReceiverActivity", "androidx.startup.InitializationProvider")
+        val allowed = setOf(".MainActivity", ".LicensesActivity", ".entry.FillActivity", ".ime.MonkeysPawImeService",
+            ".entry.PromptTileService", ".entry.PromptWidgetProvider", ".entry.PromptShortcutActivity",
+            ".entry.ProcessTextActivity", ".entry.ShareReceiverActivity", "androidx.startup.InitializationProvider")
         val elements = document.getElementsByTagName("*")
         for (index in 0 until elements.length) {
             val element = elements.item(index) as org.w3c.dom.Element

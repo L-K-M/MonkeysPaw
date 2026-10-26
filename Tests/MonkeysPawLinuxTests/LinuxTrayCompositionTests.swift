@@ -279,7 +279,12 @@ final class LinuxTrayCompositionTests: XCTestCase {
         XCTAssertEqual(String(cString: gtk_about_dialog_get_version(mp_about_dialog(about))), LinuxEnvironment.packagedVersion ?? AppIdentity.fallbackVersion)
         XCTAssertEqual(String(cString: gtk_about_dialog_get_website(mp_about_dialog(about))), LinuxAboutStrings.repository)
         XCTAssertEqual(gtk_about_dialog_get_license_type(mp_about_dialog(about)), GTK_LICENSE_CUSTOM)
-        XCTAssertEqual(String(cString: gtk_about_dialog_get_license(mp_about_dialog(about))), LinuxAboutStrings.license)
+        // The Unlicense covers only our code; the dialog must point to the bundled notices.
+        let license = String(cString: gtk_about_dialog_get_license(mp_about_dialog(about)))
+        XCTAssertTrue(license.hasPrefix(LinuxAboutStrings.license))
+        for pointer in ["Third-Party-Notices.txt", "/usr/share/doc/monkeyspaw/", "/app/share/doc/monkeyspaw/"] {
+            XCTAssertTrue(license.contains(pointer), "About license text does not name \(pointer)")
+        }
         gtk_window_close(mp_window(about))
         try click(2)
         let library = try visibleWindow(titled: LinuxStrings.library)

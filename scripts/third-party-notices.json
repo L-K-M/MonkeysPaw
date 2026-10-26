@@ -1,0 +1,25 @@
+{
+  "comment": "Overrides for swiftpm-notices.py when it writes MonkeysPaw.app's Third-Party-Notices.txt (bundle-notices.sh). Paths are relative to this file. The Linux packages use packaging/licenses/third-party-notices.json, which adds the statically linked Swift runtime and ICU.",
+  "preamble": [
+    "Monkey's Paw's own code is released under the Unlicense (see LICENSE in",
+    "https://github.com/L-K-M/MonkeysPaw). The components below are compiled",
+    "into MonkeysPaw.app and keep their own licenses. The Swift runtime and the",
+    "system frameworks ship with macOS."
+  ],
+  "packages": {
+    "yams": {
+      "add_files": ["licenses/libyaml-acd6f6f-License"],
+      "reason": "Yams vendors libyaml's C sources (Sources/CYaml, libyaml commit acd6f6f per Yams' 4.0.5 changelog) without libyaml's license file; this is libyaml's License at that commit."
+    }
+  },
+  "components": [
+    {
+      "name": "Unicode Character Database tables",
+      "version": "17.0.0 (with 15.0.0 data)",
+      "license": "Unicode-3.0",
+      "source": "https://www.unicode.org/Public/17.0.0/ucd/",
+      "files": ["../docs/licenses/UNICODE.txt"],
+      "reason": "Sources/MonkeysPawCore/Domain/Library/SearchUnicodeData.swift and Sources/MonkeysPawCore/Sync/SyncPathCaseFold.swift are generated from the UCD and compiled into Core."
+    }
+  ]
+}

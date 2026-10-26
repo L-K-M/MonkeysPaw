@@ -90,6 +90,10 @@
                 android:name="android.app.shortcuts"
                 android:resource="@xml/shortcuts" />
         </activity>
+        <!-- Settings > Open-source licenses: the generated third-party notices. -->
+        <activity
+            android:name=".LicensesActivity"
+            android:exported="false" />
         <service
             android:name=".ime.MonkeysPawImeService"
             android:exported="true"

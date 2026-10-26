@@ -103,6 +103,24 @@ The Core portability job compiles Core and
 its tests without GTK; the Linux app job runs both suites. `swift test --filter`
 still builds all test targets, so filtering alone cannot isolate Core from GTK.
 
+## Licensing
+
+- Monkey's Paw's own code is Unlicense (`LICENSE`). Keep license statements
+  (Info.plist settings, `packaging/licenses/components.json`, the image label,
+  the README) consistent with it.
+- Before adding a dependency, vendored file or bundled asset, confirm its
+  license allows redistribution in our artifacts. Never vendor third-party
+  code without its license file.
+- Every artifact carries notices generated from the real dependency set; the
+  generators fail on a component without license text. `swiftpm-notices.py`
+  writes them for the macOS app (build phase `scripts/bundle-notices.sh`), the
+  deb (`packaging/build-deb.sh`, with `deb-copyright.py` for `copyright`) and
+  the server image; AboutLibraries writes the APK's, which
+  `verify-android-release.py` checks with `android_notices.py`. Record gaps
+  as explicit overrides with reasons (`scripts/third-party-notices.json`,
+  `packaging/licenses/`, `server/licenses/`, `android/app/config/`,
+  `android/android-notices.toml`) and keep the CI notice checks passing.
+
 ## CI job selection
 
 On pull requests, `.github/workflows/ci.yml` first runs `changes` with a full

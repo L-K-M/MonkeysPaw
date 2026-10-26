@@ -79,6 +79,11 @@ plist="$app/Contents/Info.plist"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :MonkeysPawReleaseVersion' "$plist")" == "$version" ]] || fail 'Raw release version mismatch'
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" == "$marketing_version" ]] || fail 'Marketing version mismatch'
 
+# The "Bundle license notices" build phase writes these; signing seals them in.
+notices="$app/Contents/Resources/Third-Party-Notices.txt"
+[[ -s "$notices" ]] || fail 'Release build lacks Contents/Resources/Third-Party-Notices.txt'
+grep -q '^Yams ' "$notices" || fail 'Third-party notices do not list Yams'
+
 signing_identity="${MACOS_SIGNING_IDENTITY:--}"
 # Xcode signing is disabled above, so explicitly retain the paste entitlement
 # and Hardened Runtime when signing the staged app, including ad-hoc builds.
