@@ -13,6 +13,12 @@ extension AppDelegate {
             .link: URL(string: "https://github.com/L-K-M/MonkeysPaw")!
         ])
         credits.append(link)
+        // Bundled components keep their own licenses; link their notices,
+        // which the "Bundle license notices" build phase copies into Resources.
+        if let notices = bundle.url(forResource: "Third-Party-Notices", withExtension: "txt") {
+            credits.append(NSAttributedString(string: "\n"))
+            credits.append(NSAttributedString(string: Strings.thirdPartyNotices, attributes: [.link: notices]))
+        }
         return [
             .applicationName: AppIdentity.displayName,
             .applicationVersion: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",

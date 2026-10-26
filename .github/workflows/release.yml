@@ -303,6 +303,10 @@ jobs:
           fi
           /bin/bash scripts/package-macos.sh "$VERSION" "$GITHUB_RUN_NUMBER"
           (cd dist && shasum -a 256 -c "MonkeysPaw-$VERSION.sha256")
+          # The published zip must carry the bundled third-party notices.
+          notices=$(unzip -p "dist/MonkeysPaw-$VERSION.zip" MonkeysPaw.app/Contents/Resources/Third-Party-Notices.txt)
+          grep -q '^Yams ' <<< "$notices"
+          grep -q 'Kirill Simonov' <<< "$notices"
       - name: Upload dmg, zip and checksum manifest
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

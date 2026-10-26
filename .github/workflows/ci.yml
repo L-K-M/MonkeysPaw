@@ -782,6 +782,12 @@ jobs:
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" == "$ARTIFACT_BUILD_NUMBER" ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" == true ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$app/Contents/Info.plist")" == monkeyspaw ]]
+            # Third-party notices from the "Bundle license notices" build phase.
+            local notices="$app/Contents/Resources/Third-Party-Notices.txt"
+            [[ -s "$notices" ]]
+            grep -q '^Yams ' "$notices"
+            grep -q 'Kirill Simonov' "$notices"
+            grep -q 'UNICODE LICENSE V3' "$notices"
           }
 
           smoke_launch() {

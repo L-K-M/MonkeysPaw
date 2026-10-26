@@ -47,6 +47,10 @@ FILES = {
     "scripts/check-version.py": frozenset({"core-linux", "deb", "android"}),
     "scripts/linux-delivery-smoke.sh": frozenset({"linux-app"}),
     "scripts/package-macos.sh": frozenset({"macos-artifacts"}),
+    # The macOS app's "Bundle license notices" build phase runs these.
+    "scripts/bundle-notices.sh": MACOS_JOBS,
+    "scripts/swiftpm-notices.py": MACOS_JOBS,
+    "scripts/third-party-notices.json": MACOS_JOBS,
     "scripts/make-icons.sh": MACOS_JOBS,
     "scripts/make-linux-icons.sh": frozenset({"deb"}),
     "scripts/build.sh": frozenset({"core-linux", "deb", "macos-artifacts", "android"}),
@@ -103,6 +107,8 @@ PREFIXES = (
     ("deploy/nginx-proxy-manager/", SERVER_JOBS),
     ("android/", frozenset({"android", "android-sync"})),
     ("flatpak/", frozenset({"deb", "flatpak"})),
+    # Upstream license texts for the bundled notices.
+    ("scripts/licenses/", MACOS_JOBS),
     ("docs/", frozenset()),
 )
 
