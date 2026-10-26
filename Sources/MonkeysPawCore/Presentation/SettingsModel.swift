@@ -15,6 +15,7 @@ public final class SettingsModel {
     public var firstRun: FirstRunProgress { state.document.firstRun }
     public var deliveryPreferences: DeliveryPreferences { state.document.delivery }
     public var automaticUpdateChecks: AutomaticUpdateChecks { state.document.automaticUpdateChecks }
+    public var creepy: CreepyMode { state.document.creepy }
     public var allowsAutomaticUpdateChecks: Bool { state.allowsAutomaticUpdateChecks }
     public var isReadOnly: Bool { state.isReadOnly }
     public var needsSetupPresentation: Bool { !isReadOnly && !firstRun.setupPresented }
@@ -73,6 +74,10 @@ public final class SettingsModel {
 
     public func setAutomaticUpdateChecks(_ mode: AutomaticUpdateChecks) {
         perform { try settings.setAutomaticUpdateChecks(mode) }
+    }
+
+    public func setCreepy(_ mode: CreepyMode) {
+        perform { try settings.setCreepy(mode) }
     }
 
     public func markSetupPresented() {

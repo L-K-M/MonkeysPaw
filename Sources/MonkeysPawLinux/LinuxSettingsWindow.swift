@@ -26,6 +26,8 @@ final class LinuxSettingsWindow {
     private var libraryDefault: GTK.Widget!
     private var libraryMessage: GTK.Widget!
     private var settingsError: GTK.Widget!
+    private var creepyToggle: GTK.Widget!
+    private var isRenderingGeneral = false
     private var chooseButton: GTK.Widget!
     private var defaultButton: GTK.Widget!
     private var forgetAllButton: GTK.Widget!
@@ -221,6 +223,19 @@ final class LinuxSettingsWindow {
             settingsError = LinuxSettingsLayout.caption(name: "settings-general-error", in: library)
             gtk_widget_add_css_class(settingsError, "error")
 
+            let creepy = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6)!
+            gtk_box_append(mp_box(column), creepy)
+            let creepyList = LinuxSettingsLayout.list(in: creepy)
+            let creepyRow = LinuxSettingsLayout.row(in: creepyList)
+            LinuxSettingsLayout.rowText(GeneralSettingsStrings.creepy, in: creepyRow)
+            creepyToggle = gtk_check_button_new()!
+            gtk_widget_set_name(creepyToggle, "settings-creepy")
+            mp_accessible_label(creepyToggle, GeneralSettingsStrings.creepy)
+            gtk_widget_set_valign(creepyToggle, GTK_ALIGN_CENTER)
+            gtk_box_append(mp_box(creepyRow), creepyToggle)
+            LinuxSettingsLayout.caption(GeneralSettingsStrings.creepyHelp,
+                name: "settings-creepy-help", in: creepy)
+
             let remembered = LinuxSettingsLayout.group(LinuxSettingsStrings.rememberedValues, in: column)
             let rememberedList = LinuxSettingsLayout.list(in: remembered)
             let forgetRow = LinuxSettingsLayout.row(in: rememberedList)
@@ -263,6 +278,13 @@ final class LinuxSettingsWindow {
             forgetMessage = LinuxSettingsLayout.caption(name: "settings-forget-message", in: remembered)
 
             gtk_box_append(mp_box(column), updates.widget)
+        }
+        GTK.onSignal(creepyToggle, "toggled") { [weak self] in
+            guard let self, self.isVisible, !self.isRenderingGeneral,
+                  !self.general.state.isReadOnly else { return }
+            self.general.setCreepy(gtk_check_button_get_active(mp_check_button(self.creepyToggle)) != 0 ? .enabled : .disabled)
+            // Repeated save errors emit no change; redraw after GTK settles.
+            GTK.onMainLoop { [weak self] in self?.renderGeneral() }
         }
         return page
     }
@@ -317,6 +339,8 @@ final class LinuxSettingsWindow {
 
     private func renderGeneral() {
         guard !isDestroyed else { return }
+        isRenderingGeneral = true
+        defer { isRenderingGeneral = false }
         let state = general.state
         gtk_label_set_text(mp_label(libraryPath), state.activeLibraryPath)
         gtk_label_set_text(mp_label(libraryDefault), state.isDefaultLibrary
@@ -329,6 +353,8 @@ final class LinuxSettingsWindow {
         setMessage(settingsError, state.settingsError.map(GeneralSettingsStrings.settingsError))
         gtk_widget_set_sensitive(defaultButton, state.isDefaultLibrary && state.settingsError == nil ? 0 : 1)
         gtk_widget_set_sensitive(chooseButton, isChoosing ? 0 : 1)
+        gtk_check_button_set_active(mp_check_button(creepyToggle), state.creepy == .enabled ? 1 : 0)
+        gtk_widget_set_sensitive(creepyToggle, state.isReadOnly ? 0 : 1)
     }
 
     private func renderShortcuts() {

@@ -116,7 +116,8 @@ final class SettingsModelTests: XCTestCase {
                             { model.markSeedsOffered() }, { model.completeTour() },
                             { model.setLinuxDefaultPasteChord(.terminal) },
                             { model.setClipboardRestore(.previousText) },
-                            { model.setAutomaticUpdateChecks(.disabled) }, { model.refresh() } ]
+                            { model.setAutomaticUpdateChecks(.disabled) },
+                            { model.setCreepy(.disabled) }, { model.refresh() } ]
             for intent in intents {
                 intent()
                 XCTAssertEqual(model.error, expected)
@@ -252,10 +253,11 @@ final class SettingsModelTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with:
             files.read(at: "settings.json")) as? [String: Any])
         XCTAssertEqual(Set(object.keys),
-            ["version", "libraryFolderPath", "firstRun", "delivery", "automaticUpdateChecks", "carbonShortcuts"])
+            ["version", "libraryFolderPath", "firstRun", "delivery", "automaticUpdateChecks", "creepy", "carbonShortcuts"])
         XCTAssertEqual(object["delivery"] as? [String: String],
             ["linuxDefaultPasteChord": "standard", "clipboardRestore": "off"])
         XCTAssertEqual(object["automaticUpdateChecks"] as? String, "enabled")
+        XCTAssertEqual(object["creepy"] as? String, "enabled")
         let shortcuts = try XCTUnwrap(object["carbonShortcuts"] as? [String: Any])
         XCTAssertEqual(Set(shortcuts.keys), ["togglePicker", "repeatLast"])
         XCTAssertEqual(shortcuts["togglePicker"] as? String, "Ctrl+Alt+p")

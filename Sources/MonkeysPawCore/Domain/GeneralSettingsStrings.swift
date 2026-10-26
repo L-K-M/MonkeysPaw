@@ -1,6 +1,10 @@
 /// Shared General copy, following SetupStrings. Never interpolate paths or
 /// underlying error bodies into diagnostics; the folder has its own UI row.
 public enum GeneralSettingsStrings {
+    public static let creepy = "Creepy"
+    public static let creepyHelp = "The monkey's paw takes the card before delivery, with cracking fingers and a claw scratch. "
+        + "Turn off to deliver right away."
+
     public static func message(for outcome: LibrarySwitchOutcome) -> String? {
         switch outcome {
         case .switched: return nil

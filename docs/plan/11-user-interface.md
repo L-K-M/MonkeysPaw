@@ -34,6 +34,10 @@ Views call `GeneralSettingsModel`; its `LibraryLocationControl` port delegates
 graph replacement and folder reveal to the platform composition root.
 General also offers **Forget all values** with confirmation through
 `RememberedValuesSettingsModel`, including while the picker panel is closed.
+On macOS and Linux, **Creepy** is on by default; turn it off to skip the paw
+take, claw scratch and cracking fingers and deliver immediately (§24.7).
+Changes apply to the next delivery without restarting; reduced motion still
+skips the take when Creepy is on.
 
 M7 Settings → Delivery uses `DeliverySettingsModel` for the saved Linux
 default chord and clipboard-restore mode. Both desktops show the restore
@@ -53,14 +57,16 @@ each desktop's current settings location, without a version bump:
 ```json
 "delivery": {"linuxDefaultPasteChord": "standard", "clipboardRestore": "off"},
 "automaticUpdateChecks": "enabled",
+"creepy": "enabled",
 "carbonShortcuts": {"togglePicker": "Ctrl+Alt+P", "repeatLast": null}
 ```
 
 `linuxDefaultPasteChord` accepts `standard`/`terminal`; `clipboardRestore`
 accepts `off`/`previousText`; `automaticUpdateChecks` accepts
-`enabled`/`disabled` (§17 Q11). A missing delivery object or member uses its
-default; only a missing update-check field defaults to enabled. A present
-null, wrong type or unknown enum value follows the corrupt/read-only rule.
+`enabled`/`disabled` (§17 Q11), as does `creepy`. A missing delivery object or
+member uses its default; missing update-check and Creepy fields default to
+enabled. A present null, wrong type or unknown enum value follows the
+corrupt/read-only rule.
 Loading an older version-1 file does not rewrite it just to add defaults.
 Every folder, first-run and preference change preserves all other fields
 and unknown JSON keys, including keys inside `delivery`. Failed saves

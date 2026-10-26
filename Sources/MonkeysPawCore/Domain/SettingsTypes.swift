@@ -10,6 +10,7 @@ public struct SettingsDocument: Equatable, Sendable {
     public let firstRun: FirstRunProgress
     public let delivery: DeliveryPreferences
     public let automaticUpdateChecks: AutomaticUpdateChecks
+    public let creepy: CreepyMode
     public let carbonShortcuts: CarbonShortcutChoices
 
     public init() {
@@ -17,12 +18,14 @@ public struct SettingsDocument: Equatable, Sendable {
         firstRun = FirstRunProgress()
         delivery = DeliveryPreferences()
         automaticUpdateChecks = .enabled
+        creepy = .enabled
         carbonShortcuts = CarbonShortcutChoices()
     }
 
     public init(libraryFolderPath: String?, firstRun: FirstRunProgress = FirstRunProgress(),
                 delivery: DeliveryPreferences = DeliveryPreferences(),
                 automaticUpdateChecks: AutomaticUpdateChecks = .enabled,
+                creepy: CreepyMode = .enabled,
                 carbonShortcuts: CarbonShortcutChoices = CarbonShortcutChoices()) throws {
         if let path = libraryFolderPath {
             // A combining scalar can join the slash's grapheme; POSIX paths
@@ -36,6 +39,7 @@ public struct SettingsDocument: Equatable, Sendable {
         self.firstRun = firstRun
         self.delivery = delivery
         self.automaticUpdateChecks = automaticUpdateChecks
+        self.creepy = creepy
         self.carbonShortcuts = carbonShortcuts
     }
 
@@ -45,12 +49,18 @@ public struct SettingsDocument: Equatable, Sendable {
             && lhs.firstRun == rhs.firstRun
             && lhs.delivery == rhs.delivery
             && lhs.automaticUpdateChecks == rhs.automaticUpdateChecks
+            && lhs.creepy == rhs.creepy
             && lhs.carbonShortcuts == rhs.carbonShortcuts
     }
 }
 
 /// General owns update controls; the preference shares settings.json (§17 Q11).
 public enum AutomaticUpdateChecks: String, Codable, CaseIterable, Sendable {
+    case enabled
+    case disabled
+}
+
+public enum CreepyMode: String, Codable, CaseIterable, Sendable {
     case enabled
     case disabled
 }

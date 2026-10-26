@@ -3,7 +3,64 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class SettingsStoreTests: XCTestCase {
-    private let defaultsJSON = #"{"automaticUpdateChecks":"enabled","carbonShortcuts":{"repeatLast":null,"togglePicker":"Ctrl+Alt+p"},"delivery":{"clipboardRestore":"off","linuxDefaultPasteChord":"standard"},"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false,"tourCompleted":false},"libraryFolderPath":null,"version":1}"#
+    private let defaultsJSON = #"{"automaticUpdateChecks":"enabled","carbonShortcuts":{"repeatLast":null,"togglePicker":"Ctrl+Alt+p"},"creepy":"enabled","delivery":{"clipboardRestore":"off","linuxDefaultPasteChord":"standard"},"firstRun":{"libraryFolderCompleted":false,"seedsOffered":false,"setupPresented":false,"tourCompleted":false},"libraryFolderPath":null,"version":1}"#
+
+    func testCreepyDefaultsEnabledAndMissingKeyLoadsWithoutRewriting() throws {
+        XCTAssertEqual(SettingsDocument().creepy, .enabled)
+        XCTAssertEqual(try SettingsDocument(libraryFolderPath: nil).creepy, .enabled)
+        let files = MemoryFileStore()
+        let original = #"{"version":1,"firstRun":{"setupPresented":true,"libraryFolderCompleted":true,"seedsOffered":true}}"#
+        try files.put(original, at: "settings.json")
+
+        let settings = SettingsService(store: SettingsStore(files: files))
+
+        XCTAssertEqual(settings.snapshot.document.creepy, .enabled)
+        XCTAssertFalse(settings.snapshot.isReadOnly)
+        try settings.markSetupPresented()
+        XCTAssertEqual(try files.text(at: "settings.json"), original)
+    }
+
+    func testDisabledCreepyRoundTripsAndSurvivesOtherSettingsChanges() throws {
+        let files = MemoryFileStore()
+        let settings = SettingsService(store: SettingsStore(files: files))
+        try settings.setCreepy(.disabled)
+
+        for operation in allChanges(settings) {
+            try operation()
+            XCTAssertEqual(settings.snapshot.document.creepy, .disabled)
+            XCTAssertEqual(try json(files)["creepy"] as? String, "disabled")
+            XCTAssertEqual(SettingsService(store: SettingsStore(files: files)).snapshot, settings.snapshot)
+        }
+        try settings.setCarbonShortcut(.togglePicker, accelerator: nil)
+        XCTAssertEqual(settings.snapshot.document.creepy, .disabled)
+        let previous = settings.snapshot.document
+        try settings.setCreepy(.enabled)
+        XCTAssertEqual(settings.snapshot.document.creepy, .enabled)
+        XCTAssertNotEqual(settings.snapshot.document, previous)
+        XCTAssertEqual(settings.snapshot.document.firstRun, previous.firstRun)
+        XCTAssertEqual(settings.snapshot.document.libraryFolderPath, previous.libraryFolderPath)
+        XCTAssertEqual(settings.snapshot.document.delivery, previous.delivery)
+        XCTAssertEqual(settings.snapshot.document.automaticUpdateChecks, previous.automaticUpdateChecks)
+        XCTAssertEqual(settings.snapshot.document.carbonShortcuts, previous.carbonShortcuts)
+    }
+
+    func testInvalidCreepyValuesFailClosedAndCannotBeOverwritten() throws {
+        for value in [#""unknown""#, "null", "true", "7", "{}"] {
+            let files = MemoryFileStore()
+            let original = """
+                {"version":1,"creepy":\(value),"firstRun":{"setupPresented":true,
+                "libraryFolderCompleted":true,"seedsOffered":true}}
+                """
+            try files.put(original, at: "settings.json")
+            let settings = SettingsService(store: SettingsStore(files: files))
+
+            XCTAssertEqual(settings.snapshot.readOnlyError, .corruptFile)
+            XCTAssertThrowsError(try settings.setCreepy(.disabled)) {
+                XCTAssertEqual($0 as? SettingsError, .corruptFile)
+            }
+            XCTAssertEqual(try files.text(at: "settings.json"), original)
+        }
+    }
 
     func testPreTourSettingsInferCompletionFromSetupWhileFreshDefaultsStayPending() throws {
         for setupPresented in [false, true] {
@@ -457,6 +514,7 @@ final class SettingsStoreTests: XCTestCase {
           { try settings.markSeedsOffered() }, { try settings.completeTour() },
           { try settings.setLinuxDefaultPasteChord(.terminal) },
           { try settings.setClipboardRestore(.previousText) },
-          { try settings.setAutomaticUpdateChecks(.disabled) } ]
+          { try settings.setAutomaticUpdateChecks(.disabled) },
+          { try settings.setCreepy(.disabled) } ]
     }
 }
