@@ -78,6 +78,10 @@ for size in 16 24 32 48 64 128 256 512; do
     mkdir -p "$fixture/payload/$(dirname "$icon")"
     printf 'icon %s\n' "$size" > "$fixture/payload/$icon"
 done
+mkdir -p "$fixture/payload/usr/share/monkeyspaw/wish-paw"
+for frame in 00 01 02 03 04 05 06 07 08; do
+    printf 'paw %s\n' "$frame" > "$fixture/payload/usr/share/monkeyspaw/wish-paw/wish-paw-$frame@2x.png"
+done
 make_deb() {
     cat > "$fixture/payload/DEBIAN/control" <<CONTROL
 Package: ${4:-monkeyspaw}
@@ -120,6 +124,7 @@ for notice in copyright Third-Party-Notices.txt; do
     cmp "$FAKE_FIXTURE/payload/usr/share/doc/monkeyspaw/$notice" "$build/files/share/doc/monkeyspaw/$notice"
 done
 diff -r "$FAKE_FIXTURE/payload/usr/share/icons" "$build/files/share/icons"
+diff -r "$FAKE_FIXTURE/payload/usr/share/monkeyspaw" "$build/files/share/monkeyspaw"
 if [[ "${FAKE_FAILURE:-}" == changed-binary ]]; then
     printf 'changed\n' >> "$build/files/bin/monkeyspaw"
 fi
@@ -230,6 +235,15 @@ sed -i 's|^Exec=/usr/bin/monkeyspaw %u$|Exec=/usr/bin/monkeyspaw|' "$fixture/pay
 make_deb "$fixture/input/missing-uri.deb"
 expect_failure 'missing URI forwarding' bash "$builder" "$fixture/input/missing-uri.deb" "$version"
 cp "$fixture/original.desktop" "$fixture/payload/usr/share/applications/$app_id.desktop"
+
+frame_dir="$fixture/payload/usr/share/monkeyspaw/wish-paw"
+mv "$frame_dir/wish-paw-05@2x.png" "$fixture/frame"
+make_deb "$fixture/input/missing-frame.deb"
+expect_failure 'missing WishPaw frame' bash "$builder" "$fixture/input/missing-frame.deb" "$version"
+: > "$frame_dir/wish-paw-05@2x.png"
+make_deb "$fixture/input/empty-frame.deb"
+expect_failure 'empty WishPaw frame' bash "$builder" "$fixture/input/empty-frame.deb" "$version"
+mv "$fixture/frame" "$frame_dir/wish-paw-05@2x.png"
 
 for failure in extract builder changed-binary missing-library ldd bundle checksum signal; do
     case "$failure" in

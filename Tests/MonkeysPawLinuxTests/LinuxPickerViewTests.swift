@@ -436,7 +436,7 @@ final class LinuxPickerViewTests: XCTestCase {
         XCTAssertTrue(environment.panel.isVisible)
     }
 
-    func testFieldDescriptionsAppearBelowControlsOnlyWhenNonempty() throws {
+    func testFocusedFieldGlossCarriesItsDescriptionOnlyWhenNonempty() throws {
         let source = """
         ---
         fields:
@@ -452,18 +452,17 @@ final class LinuxPickerViewTests: XCTestCase {
         try open()
         environment.pickerModel.use(mode: .copyOnly)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.builtinsResolved == true })
-        for (name, text) in [("topic", "Describe the topic"), ("detail", "Add details"),
-                             ("language", "Choose a language")] {
-            let description = try widget("fill-description-" + name)
-            XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(description))), text)
-            XCTAssertNotEqual(gtk_widget_is_visible(description), 0)
-            let control = try widget("fill-field-" + name)
-            let preceding = name == "detail" ? gtk_widget_get_parent(control) : control
-            XCTAssertEqual(gtk_widget_get_next_sibling(preceding), description)
+        let gloss = try widget("fill-gloss")
+        for (position, (name, text)) in [("topic", "TOPIC  —  Describe the topic"), ("detail", "DETAIL  —  Add details"),
+                                         ("language", "LANGUAGE  —  Choose a language"),
+                                         ("plain", "PLAIN"), ("empty", "EMPTY")].enumerated() {
+            gtk_widget_grab_focus(try widget("fill-field-" + name))
+            XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.focusIndex == position })
+            XCTAssertEqual(String(cString: gtk_label_get_text(mp_label(gloss))), text)
+            XCTAssertNotEqual(gtk_widget_is_visible(gloss), 0)
         }
-        for name in ["plain", "empty"] {
-            XCTAssertNil(findWidget { String(cString: gtk_widget_get_name($0)) == "fill-description-" + name })
-        }
+        // Descriptions never sit inside the sentence's flow.
+        XCTAssertNil(findWidget { String(cString: gtk_widget_get_name($0)).hasPrefix("fill-description-") })
     }
 
     func testNoMatchCreationPreservesTitleAfterFilenameSanitizing() throws {
@@ -679,10 +678,12 @@ final class LinuxPickerViewTests: XCTestCase {
         environment.pickerModel.use(mode: .copyOnly)
         XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.fillModel?.builtinsResolved == true })
         let choice = try widget("fill-field-language")
-        XCTAssertNil(gtk_combo_box_get_active_id(mp_combo_box(choice)))
+        XCTAssertEqual(String(cString: gtk_stack_get_visible_child_name(mp_stack(try widget("fill-options-language")))), "Java")
+        XCTAssertEqual(gtk_widget_has_css_class(choice, "mp-slot-invalid"), 1)
         XCTAssertEqual(environment.pickerModel.fillModel?.deliverEnabled, false)
         XCTAssertEqual(text(in: try widget("picker-preview")), PromptRenderError.invalidChoiceValue("language").description)
-        gtk_combo_box_set_active_id(mp_combo_box(choice), "Swift")
+        gtk_widget_grab_focus(choice)
+        XCTAssertTrue(sendKey(GDK_KEY_Up))
         XCTAssertEqual(environment.pickerModel.fillModel?.values["language"], "Swift")
         XCTAssertEqual(text(in: try widget("picker-preview")), "Swift")
     }
@@ -719,7 +720,8 @@ final class LinuxPickerViewTests: XCTestCase {
         let language = try widget("fill-field-language")
         mp_entry_set_text(topic, "Rust")
         gtk_text_buffer_set_text(gtk_text_view_get_buffer(mp_text_view(detail)), "Line one\nLine two", -1)
-        gtk_combo_box_set_active_id(mp_combo_box(language), "fr")
+        gtk_widget_grab_focus(language)
+        XCTAssertTrue(sendKey(GDK_KEY_Down))
         XCTAssertEqual(fill.values, ["topic": "Rust", "detail": "Line one\nLine two", "language": "fr"])
         XCTAssertEqual(text(in: try widget("picker-preview")), "Rust: Line one\nLine two (fr)")
         XCTAssertEqual(topic, try widget("fill-field-topic"))

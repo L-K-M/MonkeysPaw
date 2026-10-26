@@ -93,6 +93,7 @@ FILES = {
     # The Flatpak job repacks the deb job's tested artifact.
     "scripts/build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
     "scripts/tests/test-build-flatpak.sh": frozenset({"core-linux", "deb", "flatpak"}),
+    "scripts/tests/test-build-deb.sh": frozenset({"core-linux", "deb"}),
     "scripts/flatpak-smoke.py": frozenset({"core-linux", "deb", "flatpak"}),
     "scripts/ci-changes.py": ALL_JOBS,
     "scripts/tests/test_ci_changes.py": ALL_JOBS,
@@ -112,6 +113,8 @@ PREFIXES = (
     # Keep the macOS exception before the general packaging rule.
     ("packaging/macos/", MACOS_JOBS),
     ("packaging/", LINUX_JOBS),
+    # The Wish Card frames also ship in the Linux deb; keep before MonkeysPaw/.
+    ("MonkeysPaw/Resources/WishPaw/", LINUX_JOBS | MACOS_JOBS),
     ("MonkeysPaw/", MACOS_JOBS),
     ("MonkeysPawTests/", MACOS_JOBS),
     ("MonkeysPaw.xcodeproj/", MACOS_JOBS | {"core-linux", "deb"}),
@@ -122,6 +125,8 @@ PREFIXES = (
     # Upstream license texts for the bundled notices.
     ("scripts/licenses/", MACOS_JOBS | IMAGE_JOBS | {"deb"}),
     ("docs/", frozenset()),
+    # The paw frame generator; its rendered output lives under MonkeysPaw/.
+    ("media-sources/paw/", frozenset()),
 )
 
 

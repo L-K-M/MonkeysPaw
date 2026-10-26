@@ -73,6 +73,9 @@ public final class PickerModel: @unchecked Sendable {
     public private(set) var results: [PickerResultRow] = []
     public private(set) var selectionIndex: Int?
     public private(set) var selectedPreview = PickerPreview.none
+    /// Card projection of the selected renderable prompt; built from document
+    /// structure only. Selection never reads clipboard or remembered values.
+    public private(set) var selectedCard: PromptCard?
     public private(set) var state = State.closed
     public private(set) var fillModel: FillModel?
     public var preferredMode: DeliveryMode { .paste(delivery.preferredChord) }
@@ -165,6 +168,7 @@ public final class PickerModel: @unchecked Sendable {
         guard state == .picker, !isResolvingBuiltins, let entry = selectedEntry else { return }
         guard entry.document.canRender else {
             selectedPreview = .issues(entry.issues)
+            selectedCard = nil
             onChange?()
             return
         }
@@ -358,10 +362,12 @@ public final class PickerModel: @unchecked Sendable {
         do { text = try fill.render(entry.document, values: [:], builtins: builtins) }
         catch PromptRenderError.outputTooLarge {
             selectedPreview = .renderFailure(.outputTooLarge)
+            selectedCard = nil
             onChange?()
             return
         } catch {
             selectedPreview = .body(entry.document.body)
+            selectedCard = entry.document.canRender ? PromptCard(document: entry.document) : nil
             onChange?()
             return
         }
@@ -432,12 +438,15 @@ public final class PickerModel: @unchecked Sendable {
     private func updateSelectedPreview() {
         guard let entry = selectedEntry else {
             selectedPreview = .none
+            selectedCard = nil
             return
         }
         guard entry.document.canRender else {
             selectedPreview = .issues(entry.issues)
+            selectedCard = nil
             return
         }
+        selectedCard = PromptCard(document: entry.document)
         switch fill.preview(entry.document, values: [:], builtins: PromptBuiltinValues()) {
         case .rendered(let text): selectedPreview = .body(text)
         case .blocked: selectedPreview = .body(entry.document.body)

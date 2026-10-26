@@ -64,6 +64,10 @@ for size in 16 24 32 48 64 128 256 512; do
     path="share/icons/hicolor/${size}x${size}/apps/$APP_ID.png"
     [[ -f "$WORK/debroot/usr/$path" && -s "$WORK/debroot/usr/$path" ]] || die "Deb is missing /usr/$path"
 done
+for frame in 00 01 02 03 04 05 06 07 08; do
+    path="share/monkeyspaw/wish-paw/wish-paw-$frame@2x.png"
+    [[ -f "$WORK/debroot/usr/$path" && -s "$WORK/debroot/usr/$path" ]] || die "Deb is missing /usr/$path"
+done
 
 mkdir "$WORK/stage"
 cp -a "$WORK/debroot/usr/." "$WORK/stage/"

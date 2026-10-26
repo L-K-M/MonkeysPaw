@@ -11,6 +11,7 @@ final class PanelController: PanelWindow {
             rootGeneration &+= 1
             presentationGeneration &+= 1
             runForCurrentRoot { controller in
+                controller.onRootChange?()
                 controller.stopObservingActivation()
                 guard let content = controller.hostingView else { return }
                 Self.deactivateFocus(in: content)
@@ -24,6 +25,9 @@ final class PanelController: PanelWindow {
     var onShow: (() -> Void)?
     var onEscape: (() -> Void)?
     var onKey: ((NSEvent, FieldKind?) -> Bool)?
+    var onInterceptKey: ((NSEvent) -> Bool)?
+    var onLoseKey: (() -> Void)?
+    var onRootChange: (() -> Void)?
 
     private let mainThread: MainThread
     private let scheduler: MonkeysPawCore.Scheduler
@@ -176,6 +180,7 @@ final class PanelController: PanelWindow {
             forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
         ) { [weak self] _ in
             guard let self, self.rootGeneration == rootGeneration else { return }
+            self.onLoseKey?()
             let generation = self.presentationGeneration
             self.scheduler.after(Limits.blurHideDelay) { [weak self] in
                 self?.mainThread.run { [weak self] in
@@ -195,6 +200,8 @@ final class PanelController: PanelWindow {
         // key panel. Scope it to this visible key window and remove it on hide.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
             guard let self, let panel, event.window === panel, panel.isKeyWindow else { return event }
+            if self.onInterceptKey?(event) == true { return nil }
+            if (panel.firstResponder as? WishCardTumbler)?.isMenuOpen == true { return event }
             // The monitor runs before the input method. Let the shared field
             // editor and multiline text view confirm/cancel their composition.
             if let client = panel.firstResponder as? NSTextInputClient, client.hasMarkedText() { return event }

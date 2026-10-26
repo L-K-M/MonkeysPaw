@@ -1,3 +1,11 @@
+/// How the field's current value was produced, for card provenance display.
+public enum FieldProvenance: Equatable, Sendable {
+    case defaultValue
+    case remembered
+    case draft
+    case typed
+}
+
 /// View state for a control. Metadata is immutable; views change values only
 /// through FillModel intents. id/name and Tab order follow body first use.
 public struct FillFieldState: Equatable, Sendable {
@@ -11,10 +19,18 @@ public struct FillFieldState: Equatable, Sendable {
     public var optional: Bool { field.optional }
     public var remember: Bool { field.remember }
     public fileprivate(set) var value: String
+    public private(set) var provenance: FieldProvenance
 
-    init(_ field: FillFormField, value: String) {
+    init(_ field: FillFormField, value: String, provenance: FieldProvenance) {
         self.field = field
         self.value = value
+        self.provenance = provenance
+    }
+
+    /// Value and provenance move together so card badges cannot drift.
+    mutating func update(value: String, provenance: FieldProvenance) {
+        self.value = value
+        self.provenance = provenance
     }
 }
 
@@ -45,6 +61,10 @@ public final class FillModel: @unchecked Sendable {
     public let issues: [PromptIssue]
     public let canRender: Bool
     public let isReadOnly: Bool
+    public let card: PromptCard
+    /// Card header metadata only; the view must not reach the document.
+    public var title: String { entry.document.frontMatter.title }
+    public var folder: String { entry.folder }
 
     public var deliverEnabled: Bool {
         guard state == .editing, builtinsResolved, canRender else { return false }
@@ -54,6 +74,34 @@ public final class FillModel: @unchecked Sendable {
     public var canCopyOnly: Bool { deliverEnabled }
     public var values: [String: String] {
         Dictionary(fields.map { ($0.name, $0.value) }, uniquingKeysWith: { _, new in new })
+    }
+
+    /// First required field still empty, for card attention display.
+    public var missingRequiredFieldIndex: Int? {
+        fields.firstIndex { !$0.optional && $0.value.isEmpty }
+    }
+
+    /// Share of required fields holding a value; 1 when nothing is required.
+    public var warmth: Double {
+        let required = fields.filter { !$0.optional }
+        guard !required.isEmpty else { return 1 }
+        return Double(required.count { !$0.value.isEmpty }) / Double(required.count)
+    }
+
+    /// Card display of a resolved builtin snapshot field; nil until resolved.
+    public func builtinText(_ name: BuiltinName) -> String? {
+        guard builtinsResolved else { return nil }
+        switch name {
+        case .clipboard: return builtins.clipboard
+        case .date: return builtins.date
+        case .time: return builtins.time
+        }
+    }
+
+    /// Card header summary of the clipboard snapshot; nil until resolved and
+    /// only when this template uses the clipboard builtin.
+    public var clipboardSummary: ClipboardSummary? {
+        resolvedClipboardSummary
     }
 
     private let entry: LibraryEntry
@@ -68,6 +116,7 @@ public final class FillModel: @unchecked Sendable {
     private let onCancel: () -> Void
     private let onDelivered: (DeliveryOutcome, [PromptPersistenceWarning]) -> Void
     private var builtins = PromptBuiltinValues()
+    private var resolvedClipboardSummary: ClipboardSummary?
     private var retainsDraft = true
 
     /// The held form can outlive an index refresh that selects another prompt.
@@ -92,8 +141,15 @@ public final class FillModel: @unchecked Sendable {
         self.onCancel = onCancel
         self.onDelivered = onDelivered
         self.preferredMode = preferredMode
-        fields = form.fields.map { FillFieldState($0, value: draft?[$0.name] ?? $0.prefill) }
+        fields = form.fields.map { field in
+            if let held = draft?[field.name] {
+                return FillFieldState(field, value: held, provenance: .draft)
+            }
+            return FillFieldState(field, value: field.prefill,
+                                  provenance: field.prefillSource == .remembered ? .remembered : .defaultValue)
+        }
         focusIndex = fields.isEmpty ? nil : 0
+        card = PromptCard(document: entry.document)
         issues = form.issues
         canRender = form.canRender
         isReadOnly = form.isReadOnly
@@ -110,6 +166,9 @@ public final class FillModel: @unchecked Sendable {
             self.main.run { [weak self] in
                 guard let self, self.state == .editing else { return }
                 self.builtins = snapshot
+                if self.entry.document.template.builtins.contains(.clipboard) {
+                    self.resolvedClipboardSummary = ClipboardSummary(snapshot.clipboard ?? "")
+                }
                 self.builtinsResolved = true
                 self.updatePreview()
                 self.onChange?()
@@ -119,7 +178,7 @@ public final class FillModel: @unchecked Sendable {
 
     public func setValue(_ value: String, name: String) {
         guard state == .editing, let position = fields.firstIndex(where: { $0.name == name }) else { return }
-        fields[position].value = value
+        fields[position].update(value: value, provenance: .typed)
         updatePreview()
         // Keep the draft current even if a platform blur hides the panel.
         retainsDraft = true
@@ -219,7 +278,7 @@ public final class FillModel: @unchecked Sendable {
         let defaults = Dictionary(entry.document.effectiveFields.map { ($0.name, $0.defaultValue) },
                                   uniquingKeysWith: { _, new in new })
         for position in fields.indices {
-            fields[position].value = defaults[fields[position].name] ?? ""
+            fields[position].update(value: defaults[fields[position].name] ?? "", provenance: .defaultValue)
         }
         retainsDraft = false
         persistenceWarnings = []

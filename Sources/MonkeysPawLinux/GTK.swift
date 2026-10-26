@@ -10,6 +10,75 @@ import Foundation
 enum GTK {
     typealias Widget = UnsafeMutablePointer<GtkWidget>
 
+    private final class DrawBox {
+        let call: (OpaquePointer, Int32, Int32) -> Void
+        init(_ call: @escaping (OpaquePointer, Int32, Int32) -> Void) { self.call = call }
+    }
+
+    /// GTK owns the closure until a new draw function replaces it or the area dies.
+    static func draw(_ area: Widget, _ handler: @escaping (OpaquePointer, Int32, Int32) -> Void) {
+        let data = Unmanaged.passRetained(DrawBox(handler)).toOpaque()
+        gtk_drawing_area_set_draw_func(mp_drawing_area(area), { _, cr, width, height, data in
+            guard let cr, let data else { return }
+            Unmanaged<DrawBox>.fromOpaque(data).takeUnretainedValue().call(cr, width, height)
+        }, data, { data in
+            if let data { Unmanaged<DrawBox>.fromOpaque(data).release() }
+        })
+    }
+
+    private final class TickBox {
+        let call: (Int64) -> Bool
+        init(_ call: @escaping (Int64) -> Bool) { self.call = call }
+    }
+
+    /// Frame-clock callbacks run on GLib's UI thread. False removes the callback.
+    @discardableResult
+    static func tick(_ widget: Widget, _ handler: @escaping (Int64) -> Bool) -> guint {
+        let data = Unmanaged.passRetained(TickBox(handler)).toOpaque()
+        return gtk_widget_add_tick_callback(widget, { _, clock, data in
+            guard let clock, let data else { return 0 }
+            return Unmanaged<TickBox>.fromOpaque(data).takeUnretainedValue().call(
+                Int64(gdk_frame_clock_get_frame_time(clock))) ? 1 : 0
+        }, data, { data in
+            if let data { Unmanaged<TickBox>.fromOpaque(data).release() }
+        })
+    }
+
+    static func removeTick(_ widget: Widget, _ id: guint) {
+        gtk_widget_remove_tick_callback(widget, id)
+    }
+
+    private final class ResizeBox {
+        let call: (Int32, Int32) -> Void
+        init(_ call: @escaping (Int32, Int32) -> Void) { self.call = call }
+    }
+
+    static func onResize(_ area: Widget, _ handler: @escaping (Int32, Int32) -> Void) {
+        let data = Unmanaged.passRetained(ResizeBox(handler)).toOpaque()
+        let callback: @convention(c) (UnsafeMutableRawPointer?, gint, gint, UnsafeMutableRawPointer?) -> Void = { _, width, height, data in
+            guard let data else { return }
+            Unmanaged<ResizeBox>.fromOpaque(data).takeUnretainedValue().call(width, height)
+        }
+        let release: GClosureNotify = { data, _ in
+            if let data { Unmanaged<ResizeBox>.fromOpaque(data).release() }
+        }
+        mp_connect(area, "resize", unsafeBitCast(callback, to: GCallback.self), data, release)
+    }
+
+    static func onClick(_ widget: Widget, _ handler: @escaping () -> Void) {
+        let gesture = gtk_gesture_click_new()!
+        let data = Unmanaged.passRetained(ClickBox { _, _ in handler() }).toOpaque()
+        let pressed: @convention(c) (UnsafeMutableRawPointer?, gint, Double, Double, UnsafeMutableRawPointer?) -> Void = { _, _, x, y, data in
+            guard let data else { return }
+            Unmanaged<ClickBox>.fromOpaque(data).takeUnretainedValue().call(x, y)
+        }
+        let release: GClosureNotify = { data, _ in
+            if let data { Unmanaged<ClickBox>.fromOpaque(data).release() }
+        }
+        mp_connect(UnsafeMutableRawPointer(gesture), "released", unsafeBitCast(pressed, to: GCallback.self), data, release)
+        gtk_widget_add_controller(widget, mp_gesture_controller(gesture))
+    }
+
     private static let millisecondsPerSecond: TimeInterval = 1_000
     private static let maximumDelayMilliseconds = TimeInterval(guint.max)
 
@@ -33,8 +102,9 @@ enum GTK {
     }
 
     private final class KeyBox {
-        let call: (UInt32, UInt32) -> Bool
-        init(_ call: @escaping (UInt32, UInt32) -> Bool) { self.call = call }
+        let call: (UInt32, UInt32, Bool) -> Bool
+        var pressed = Set<UInt32>()
+        init(_ call: @escaping (UInt32, UInt32, Bool) -> Bool) { self.call = call }
     }
 
     private final class PreeditBox {
@@ -197,12 +267,25 @@ enum GTK {
 
     /// Vervellum's exact-arity key trampoline. Controllers own their closures.
     static func observeKeys(_ widget: Widget, _ handler: @escaping (UInt32, UInt32) -> Bool) {
+        observeKeys(widget) { key, modifiers, _ in handler(key, modifiers) }
+    }
+
+    /// GTK supplies no repeat flag: pair presses with hardware-key releases.
+    static func observeKeys(_ widget: Widget, _ handler: @escaping (UInt32, UInt32, Bool) -> Bool) {
         let controller = gtk_event_controller_key_new()!
-        let box = Unmanaged.passRetained(KeyBox(handler)).toOpaque()
+        let keys = KeyBox(handler)
+        let box = Unmanaged.passRetained(keys).toOpaque()
         let trampoline: @convention(c) (UnsafeMutableRawPointer?, guint, guint, GdkModifierType,
-                                        UnsafeMutableRawPointer?) -> gboolean = { _, key, _, modifiers, data in
+                                        UnsafeMutableRawPointer?) -> gboolean = { _, key, code, modifiers, data in
             guard let data else { return 0 }
-            return Unmanaged<KeyBox>.fromOpaque(data).takeUnretainedValue().call(key, modifiers.rawValue) ? 1 : 0
+            let keys = Unmanaged<KeyBox>.fromOpaque(data).takeUnretainedValue()
+            let isRepeat = !keys.pressed.insert(code == 0 ? key : code).inserted
+            return keys.call(key, modifiers.rawValue, isRepeat) ? 1 : 0
+        }
+        let released: @convention(c) (UnsafeMutableRawPointer?, guint, guint, GdkModifierType,
+                                      UnsafeMutableRawPointer?) -> Void = { _, key, code, _, data in
+            guard let data else { return }
+            Unmanaged<KeyBox>.fromOpaque(data).takeUnretainedValue().pressed.remove(code == 0 ? key : code)
         }
         let release: GClosureNotify = { data, _ in
             guard let data else { return }
@@ -211,6 +294,13 @@ enum GTK {
         gtk_event_controller_set_propagation_phase(controller, GTK_PHASE_CAPTURE)
         mp_connect(UnsafeMutableRawPointer(controller), "key-pressed",
                    unsafeBitCast(trampoline, to: GCallback.self), box, release)
+        mp_connect(UnsafeMutableRawPointer(controller), "key-released",
+                   unsafeBitCast(released, to: GCallback.self), Unmanaged.passRetained(keys).toOpaque(), release)
+        onSignal(UnsafeMutableRawPointer(widget), "unmap") { [weak keys] in keys?.pressed.removeAll() }
+        if mp_is_window(widget) != 0 {
+            // Releases may go to another window while this one is inactive.
+            onNotify(UnsafeMutableRawPointer(widget), "is-active") { [weak keys] in keys?.pressed.removeAll() }
+        }
         gtk_widget_add_controller(widget, controller)
     }
 
@@ -345,6 +435,42 @@ enum GTK {
         let milliseconds = min(maximumDelayMilliseconds, max(0, interval * millisecondsPerSecond))
         return g_timeout_add_full(G_PRIORITY_DEFAULT, guint(milliseconds),
                                   trampoline, box, release)
+    }
+
+    private final class PaintBox {
+        let call: () -> Void
+        var clock: OpaquePointer?
+        var handler: gulong = 0
+        init(_ call: @escaping () -> Void) { self.call = call }
+    }
+
+    /// Runs `work` once, after the widget's next paint, when every allocation
+    /// in the window is current. Snapshotting a widget whose layout is still
+    /// queued is a GTK warning (fatal in tests).
+    static func afterNextPaint(_ widget: Widget, _ work: @escaping () -> Void) {
+        guard let clock = gtk_widget_get_frame_clock(widget) else { return }
+        let box = PaintBox(work)
+        let trampoline: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void = { _, data in
+            guard let data else { return }
+            let box = Unmanaged<PaintBox>.fromOpaque(data).takeUnretainedValue()
+            guard box.handler != 0, let clock = box.clock else { return }
+            let handler = box.handler
+            let work = box.call
+            box.handler = 0
+            // Disconnect first (its destroy notify releases the box): the work
+            // may tear down the widget and, with it, the frame clock.
+            g_signal_handler_disconnect(UnsafeMutableRawPointer(clock), handler)
+            work()
+        }
+        let release: GClosureNotify = { data, _ in
+            guard let data else { return }
+            Unmanaged<PaintBox>.fromOpaque(data).release()
+        }
+        box.clock = clock
+        box.handler = mp_connect(UnsafeMutableRawPointer(clock), "after-paint",
+                                 unsafeBitCast(trampoline, to: GCallback.self),
+                                 Unmanaged.passRetained(box).toOpaque(), release)
+        gtk_widget_queue_draw(widget)
     }
 
     /// Keep borrowed widget pointers valid when the window manager closes the panel.

@@ -623,6 +623,13 @@ lipo() {
         self.assertNotEqual(result.returncode, 0)
 
 
+class DebPackageTests(unittest.TestCase):
+    def test_fake_toolchain_suite(self):
+        result = subprocess.run(["/bin/bash", str(ROOT / "scripts/tests/test-build-deb.sh")],
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 class FlatpakRepackTests(unittest.TestCase):
     def test_fake_command_suite(self):
         result = subprocess.run(["/bin/bash", str(ROOT / "scripts/tests/test-build-flatpak.sh")],

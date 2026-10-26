@@ -84,8 +84,10 @@ final class MacUITourTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
         try copySeeds(to: root)
+        let clipboard = MacRepeatClipboard()
+        clipboard.text = "diff --git a/Cart.swift b/Cart.swift\n--- a/Cart.swift\n+++ b/Cart.swift\n@@ -1,2 +1,3 @@\n-old\n+new\n+more\n context\n+done"
         delegate = AppDelegate(libraryRoot: root, dataRoot: data,
-            launchURI: { _ in }, revealLibrary: { _ in },
+            launchURI: { _ in }, clipboard: clipboard, revealLibrary: { _ in },
             makeFocusTracker: { main, scheduler in
                 WorkspaceFocusTracker(source: .init(frontmost: { nil }, activate: { _ in true }),
                     mainThread: main, scheduler: scheduler, isTrusted: { false }, deactivateIfUnused: {})
@@ -274,20 +276,93 @@ final class MacUITourTests: XCTestCase {
         settle()
     }
 
+    /// Picker states on the real hosted panel. The take is driven manually
+    /// through the same stepper as the hosted card tests and cancelled after
+    /// capture, so the tour never delivers or writes the clipboard.
     private func tourPicker(appearance: String) {
         guard let picker = delegate.pickerModel else { return }
+        let presentation = delegate.pickerPresentation
+        let stepper = WishCardStepper()
+        presentation?.take.scheduler = stepper
+        // Forced off so the tour plays the take instead of instant delivery.
+        presentation?.reduceMotion = { false }
+
         picker.open()
+        presentation?.setQuery("")
         settle()
-        capturePanel(as: "picker-\(appearance)-open")
-        delegate.pickerPresentation?.setQuery("rev")
+        capturePanel(as: "picker-\(appearance)-thumbnail")
+        presentation?.setQuery("rev")
         settle()
         capturePanel(as: "picker-\(appearance)-query")
         picker.use(mode: .paste(.standard))
         settle()
         capturePanel(as: "picker-\(appearance)-fill")
+
+        guard let fill = picker.fillModel else {
+            windowNotes.append("picker-\(appearance): fill did not open")
+            XCTFail("The picker tour requires a fill card")
+            picker.dismiss()
+            settle()
+            return
+        }
+
+        // Nudge: an empty required blank blocks delivery through the real
+        // intent path and shakes its slot.
+        if let blocked = fill.fields.firstIndex(where: { !$0.optional }) {
+            let name = fill.fields[blocked].name
+            let original = fill.values[name] ?? ""
+            fill.setValue("", name: name)
+            presentation?.use(mode: .copyOnly)
+            settle(0.05)
+            capturePanel(as: "picker-\(appearance)-nudge")
+            fill.setValue(original.isEmpty ? "A guided answer." : original, name: name)
+        }
+
+        let readyDeadline = Date().addingTimeInterval(3)
+        while !fill.deliverEnabled && Date() < readyDeadline { settle(0.1) }
+        guard fill.deliverEnabled else {
+            XCTFail("The picker tour requires a ready card")
+            picker.dismiss()
+            return
+        }
+        settle()
+        capturePanel(as: "picker-\(appearance)-ready")
+
+        presentation?.toggleProof()
+        settle()
+        capturePanel(as: "picker-\(appearance)-proof")
+        presentation?.toggleProof()
+        settle()
+
+        if presentation?.take.surface != nil, presentation?.take.stage != nil {
+            presentation?.use(mode: .copyOnly)
+            settle(0.2)
+            if let take = presentation?.take, take.isPlaying {
+                capturePanel(as: "picker-\(appearance)-take-0")
+                for frame in [3, 5, 7] {
+                    guard let current = take.frameIndex, current <= frame else {
+                        XCTFail("The take skipped a requested tour frame")
+                        break
+                    }
+                    for _ in current..<frame { XCTAssertTrue(stepper.advance()) }
+                    XCTAssertEqual(take.frameIndex, frame)
+                    settle(0.2)
+                    capturePanel(as: "picker-\(appearance)-take-\(frame)")
+                }
+                presentation?.cancelTake()
+                settle()
+            } else {
+                windowNotes.append("picker-\(appearance): take did not start")
+                XCTFail("The picker tour requires a running take")
+            }
+        } else {
+            windowNotes.append("picker-\(appearance): take surface or stage unavailable")
+            XCTFail("The picker tour requires a native take surface and stage")
+        }
+
         picker.escape()
         settle()
-        delegate.pickerPresentation?.setQuery("zzzz-no-match")
+        presentation?.setQuery("zzzz-no-match")
         settle()
         capturePanel(as: "picker-\(appearance)-no-match")
         picker.dismiss()

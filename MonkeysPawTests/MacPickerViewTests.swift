@@ -546,14 +546,20 @@ final class MacPickerViewTests: XCTestCase {
         let picker = try open()
         picker.use(mode: .copyOnly)
         let fill = try XCTUnwrap(picker.fillModel)
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
         XCTAssertTrue(spin { self.find("fill-field-language") != nil })
-        for (name, text) in [("topic", "Describe the topic"), ("detail", "Add details"), ("language", "Choose a language")] {
-            let label = try XCTUnwrap(find("fill-description-" + name) as? NSTextField)
-            XCTAssertEqual(label.stringValue, text)
-            XCTAssertFalse(label.isHiddenOrHasHiddenAncestor)
+        // The card replaces per-field caption labels with control help and a
+        // single gloss line naming the focused blank.
+        for field in fill.fields {
+            let control = try XCTUnwrap(find("fill-field-" + field.name))
+            XCTAssertEqual(control.accessibilityHelp() ?? "", field.description ?? "", field.name)
         }
-        XCTAssertNil(find("fill-description-plain"))
-        XCTAssertNil(find("fill-description-empty"))
+        for (index, gloss) in [(0, "TOPIC  —  Describe the topic"), (1, "DETAIL  —  Add details"),
+            (2, "LANGUAGE  —  Choose a language"), (3, "PLAIN  —  Optional."), (4, "EMPTY  —  Optional.")] {
+            fill.focusField(at: index)
+            XCTAssertEqual(presentation.gloss, gloss)
+        }
+        fill.focusField(at: 0)
         let topic = try XCTUnwrap(find("fill-field-topic") as? PickerTextField)
         let detail = try XCTUnwrap(find("fill-field-detail") as? PickerMultilineTextView)
         let language = try XCTUnwrap(find("fill-field-language") as? PickerChoiceButton)
@@ -569,6 +575,13 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(fill.values["detail"], "Line one\nLine two")
         XCTAssertEqual(fill.values["language"], "fr")
         XCTAssertEqual(fill.preview, .rendered("Rust: Line one\nLine two (fr)"))
+        // Proof is the exact rendered text behind the card, toggled via ⌘P.
+        XCTAssertEqual(presentation.preview, "Rust: Line one\nLine two (fr)")
+        presentation.toggleProof()
+        XCTAssertTrue(presentation.proofShown)
+        XCTAssertEqual(presentation.preview, "Rust: Line one\nLine two (fr)")
+        presentation.toggleProof()
+        XCTAssertFalse(presentation.proofShown)
         XCTAssertTrue(spin { self.find("fill-field-topic") === topic })
         panel.makeFirstResponder(language)
         XCTAssertEqual(fill.focusIndex, 2)
@@ -590,7 +603,7 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertEqual(picker.fillModel?.values, fill.values)
     }
 
-    func testLongDescriptionsWrapToFormWidthAndRemainScrollable() throws {
+    func testLongDescriptionsReachAssistiveTechUnclipped() throws {
         let description = String(repeating: "Explain this field with enough detail to guide the answer. ", count: 24)
         let source = """
         ---
@@ -612,32 +625,26 @@ final class MacPickerViewTests: XCTestCase {
         try files.write(Data(source.utf8), at: "descriptions.md")
         let picker = try open()
         picker.use(mode: .copyOnly)
-        XCTAssertTrue(spin { self.find("fill-description-language") != nil })
+        let fill = try XCTUnwrap(picker.fillModel)
+        let presentation = try XCTUnwrap(delegate.pickerPresentation)
+        XCTAssertTrue(spin { self.find("fill-field-language") != nil })
 
-        for name in ["topic", "detail", "language"] {
-            let label = try XCTUnwrap(find("fill-description-" + name) as? NSTextField)
-            XCTAssertTrue(spin { label.bounds.width > 0 })
-            let cell = try XCTUnwrap(label.cell)
-            let requiredHeight = cell.cellSize(forBounds: NSRect(x: 0, y: 0,
-                width: label.bounds.width, height: .greatestFiniteMagnitude)).height
-            XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(requiredHeight), name + " help is clipped")
-            let viewport = try XCTUnwrap(label.enclosingScrollView).contentView
-            XCTAssertGreaterThan(requiredHeight, viewport.bounds.height)
-            // Native text insets extend the frame beyond its layout alignment rect.
-            XCTAssertLessThanOrEqual(label.alignmentRect(forFrame: label.frame).width, viewport.bounds.width)
-
-            let text = NSAttributedString(string: label.stringValue, attributes: [.font: try XCTUnwrap(label.font)])
-            let textBounds = text.boundingRect(with: NSSize(width: cell.drawingRect(forBounds: label.bounds).width,
-                height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin)
-            XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(textBounds.height), name + " text is clipped")
-
-            // Both ends must be reachable when the help is taller than the viewport.
-            for edge in [label.bounds.minY, label.bounds.maxY - 1] {
-                let end = NSRect(x: label.bounds.midX, y: edge, width: 1, height: 1)
-                label.scrollToVisible(end)
-                XCTAssertTrue(spin { label.visibleRect.contains(end) }, name + " help cannot be scrolled")
-            }
+        // The card no longer prints one caption per control: the complete
+        // description reaches assistive technology through each control's help
+        // and the single gloss line, which exposes the full text even where the
+        // printed line truncates. Blanks below the fold are revealed by native
+        // focus (see the Tab/Shift+Tab wraparound test).
+        for (index, name) in ["topic", "detail", "language"].enumerated() {
+            let control = try XCTUnwrap(find("fill-field-" + name))
+            let field = fill.fields[index]
+            XCTAssertEqual(control.accessibilityHelp(), field.description, name)
+            fill.focusField(at: index)
+            XCTAssertEqual(presentation.gloss,
+                field.label.uppercased() + "  —  " + (field.description ?? ""), name)
         }
+        fill.focusField(at: 1)
+        XCTAssertTrue(presentation.gloss.contains("This final line must also remain visible."),
+            "The gloss must carry the description complete to its last line")
     }
 
     func testLocalKeyMonitorRoutesFieldEditorAndCommandWClosesFill() throws {
@@ -704,7 +711,7 @@ final class MacPickerViewTests: XCTestCase {
                 let control = (field as? PickerMultilineTextView)?.enclosingScrollView ?? field
                 XCTAssertTrue(spin {
                     control.visibleRect.contains(control.bounds.insetBy(dx: 1, dy: 1))
-                }, "Focused field is clipped: " + names[position])
+                }, "Focused field is clipped: " + names[position] + " " + control.placementDescription())
             }
         }
     }

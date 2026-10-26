@@ -184,12 +184,14 @@ use the full-color paw app icon for contrast on light and dark menus.
   borderless search field with a magnifying-glass symbol, result rows with
   a symbol, title and folder/tags, the preview, and a footer bar with the
   paste target, sync state and key caps for Return, ⌥Return, ⌘Return and
-  ⌘L. The fill form uses labelled rows and a default Deliver button.
+  ⌘L. The picker and fill form use the Wish Card (§24.7), with a default
+  Deliver button.
 - **Setup, onboarding and Repeat** use the welcome-window pattern: symbol,
   title, short explanation, status rows with symbols, a default button.
 - **Visual rules.** System fonts and semantic colours only; SF Symbols for
   state (never colour alone); standard spacing; light, dark and increased
-  contrast checked; Reduce Motion disables animated transitions.
+  contrast checked; Reduce Motion disables animated transitions. The desktop
+  picker panel's Wish Card (§24.7) is the deliberate visual exception.
 
 ### 24.6 Linux
 
@@ -211,3 +213,81 @@ libadwaita dependency):
   panes; each pane is a clamped column of `boxed-list` rows.
 - **Picker.** An undecorated rounded window with a search entry, result
   rows with icons, the preview and a footer of key hints; no button row.
+
+### 24.7 Wish Card (macOS and Linux)
+
+The desktop picker treats the prompt as a wish written on paper. A serif card
+on a night-indigo panel opens each placeholder into a blank in the sentence,
+so you fill the wish where its words belong. This is an art-directed panel
+design; Library, Android, the grammar and delivery contract stay as specified
+elsewhere. macOS uses Palatino at 15 pt, native AppKit controls in a SwiftUI
+sentence layout, and a cached native-view image for the take. Both appearances
+use the same paper and night palette. Results stay 232 pt wide; the panel's
+size is unchanged.
+
+- **Pick.** The selected card is a read-only thumbnail with field labels,
+  date/time stamps and a placeholder clipboard slip. Selection reads neither
+  remembered values nor the clipboard. Invalid entries show their issues.
+- **Fill.** Search and results give way at once: animating their width
+  would reflow the sentence every frame. The paper stays put while its text
+  scrolls, keeping the focused blank in view. Text blanks grow with their
+  contents; multiline blanks are paper wells; choice tumblers roll with
+  Up/Down, jump by initial letter and open their option list with Space or
+  a click. Repeated names echo the first blank and focus it when clicked.
+  One gloss line under the text names the focused blank with its
+  description, so help never splits the sentence; descriptions stay
+  accessible descriptions and tooltips. Accessible labels, composition,
+  field order, held drafts and the existing Return variants retain their
+  behaviour (§2, §5.3).
+- **Ink and warmth.** Suggestions look like pencil, remembered values and
+  drafts like dry ink, and fresh typing dries from bright amber. A wick and
+  the card's glow track filled required blanks. Ready cards receive one
+  sheen with sparks. A blocked delivery nudges and focuses the missing or
+  invalid blank without delivering.
+- **Builtins.** Date and time are stamps. The clipboard is a torn-paper
+  slip showing at most six lines, with a local line-count/type summary and
+  explicit pending/empty states. It resolves once when the form opens;
+  typing never reads it again. The exact expanded text remains available
+  through **⌘P Proof** on macOS and **Ctrl+P Proof** on Linux in picker and
+  fill, including blocking reasons. Fill also has a Proof footer button. Proof
+  is selectable monospace and changes no expanded whitespace or text.
+- **Take.** A ready Return or Deliver freezes the paper, including its native
+  editors, so the same card moves through every exposure. macOS uses
+  `bitmapImageRepForCachingDisplay` and `cacheDisplay`; Linux captures with
+  `mp_widget_capture` after the next paint and hides the live card by opacity.
+  Core's `PawTake` supplies nine discrete 83 ms exposures (12 fps,
+  stop-motion on twos), geometry, the claw's gouge and cue timing. A withered
+  monkey's paw lurches in, curls its index finger into a hook over four dry
+  knuckle cracks while the claw gouges the paper, holds a beat, then carries
+  the card off. The frames are rendered puppet photographs, not vector
+  drawings: `media-sources/paw/render-paw.c` raymarches a hairy, clawed paw
+  underlit by the card and re-seeds its fur per exposure so it boils like a
+  handled puppet. Each @2x PNG in `MonkeysPaw/Resources/WishPaw/` is loaded
+  by `PawTake.imageName`. Linux installs the frames in
+  `share/monkeyspaw/wish-paw/`, searching `XDG_DATA_DIRS` before the source tree,
+  and validates the complete set before drawing it. Missing or invalid art
+  leaves the paper motion and delivery intact.
+  No interpolation or implicit animation runs between exposures. After the
+  ninth exposure has shown for a full interval, the existing delivery path
+  runs with the delivery mode chosen at the start of the take.
+  Escape cancels the take, restores the live paper and keeps the draft; a fresh
+  non-repeat Return skips directly to delivery. Repeats and other input are
+  ignored, as are repeats of the Escape that cancelled the take. Hiding, dismissal, rebind, root replacement or destruction revokes
+  queued frames; macOS also cancels on loss of key status. Fieldless prompts
+  take the thumbnail directly.
+- **Delivery.** The take preserves §6's clipboard write, hide, focus restore
+  and paste order and §2's keystroke budget. Incomplete or obsolete choice
+  blanks nudge and take focus, with the reason in the gloss. Return while
+  builtins resolve does nothing.
+- **Preferences.** Increased Contrast on macOS and HighContrast themes on
+  Linux retain native panel colours while the card remains paper. macOS Reduce
+  Motion disables ink-in, drying, tumbler rolls, sheen, nudge shake and the
+  take; delivery is immediate. Disabling GTK animations does the same on
+  Linux. Quiet synthesized tick, ready, take, nudge and crack WAV cues live in
+  Core's `WishCardCue`. On macOS the ready cue and sheen mark becoming ready,
+  not opening an already-ready card. macOS plays retained `NSSound(data:)` instances and
+  respects “Play user interface sound effects” (`com.apple.sound.uiaudio.enabled`
+  in `com.apple.systemsound`, with the global domain as a legacy fallback;
+  unset means on). Linux respects GTK input/event preferences, playing private
+  runtime files because GStreamer's stream-backed media aborts. Tests and
+  `MONKEYSPAW_SOUNDS=0` silence playback. Missing media support stays silent.

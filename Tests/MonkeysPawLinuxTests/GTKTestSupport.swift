@@ -8,7 +8,12 @@ import XCTest
 enum GTKTestSupport {
     // GTK initialization is one-shot even when opening the display fails.
     // Rechecking can report initialized with no display and crash widget creation.
-    private static let hasDisplay = gtk_init_check() != 0 && gdk_display_get_default() != nil
+    private static let hasDisplay: Bool = {
+        // Use GTK's local test context so accessibility assertions inspect
+        // real properties without requiring the host's AT-SPI service.
+        g_setenv("GTK_A11Y", "test", 1)
+        return gtk_init_check() != 0 && gdk_display_get_default() != nil
+    }()
 
     static func requireDisplay() throws {
         guard hasDisplay else {
