@@ -99,7 +99,26 @@ for size in 16 24 32 48 64 128 256 512; do
 done
 install -D -m 0644 -t "$STAGE/usr/share/monkeyspaw/wish-paw" \
     "$ROOT"/MonkeysPaw/Resources/WishPaw/wish-paw-0{0..8}@2x.png
-install -m 0644 "$ROOT/packaging/debian/copyright" "$STAGE/usr/share/doc/monkeyspaw/"
+# Notices for what --static-swift-stdlib links into the binary: the SwiftPM
+# pins with libyaml and the Unicode tables, ICU and the Swift runtime. Both
+# generators fail on a missing text, and the runtime check fails when the
+# binary links an ICU version or runtime that the notices do not name.
+DOC="$STAGE/usr/share/doc/monkeyspaw"
+SWIFT_RESOURCES="$("${SWIFT:-swift}" -print-target-info 2>/dev/null | python3 -c \
+    'import json, sys; print(json.load(sys.stdin)["paths"]["runtimeResourcePath"])')"
+# runtimeResourcePath is <prefix>/usr/lib/swift; the license is in <prefix>/usr/share/swift.
+export SWIFT_LICENSE="$SWIFT_RESOURCES/../../share/swift/LICENSE.txt"
+python3 -I "$ROOT/scripts/swiftpm-notices.py" --title monkeyspaw \
+    --resolved "$ROOT/Package.resolved" --checkouts "$ROOT/build/deb-swift/checkouts" \
+    --overrides "$ROOT/packaging/licenses/third-party-notices.json" \
+    --output "$DOC/Third-Party-Notices.txt"
+python3 -I "$ROOT/scripts/deb-copyright.py" generate "$ROOT/packaging/licenses/components.json" \
+    --copyright-out "$DOC/copyright"
+python3 -I "$ROOT/scripts/deb-copyright.py" check "$DOC/copyright" --no-common-licenses
+for notices in "$DOC/Third-Party-Notices.txt" "$DOC/copyright"; do
+    python3 -I "$ROOT/scripts/static-runtime-notices.py" check "$STAGE/usr/bin/monkeyspaw" --notices "$notices"
+done
+chmod 0644 "$DOC/Third-Party-Notices.txt" "$DOC/copyright"
 printf 'monkeyspaw (%s) unstable; urgency=low\n\n  * Release %s.\n\n -- L-K-M <noreply@lkmc.ch>  %s\n' \
     "$DEB_VERSION" "$VERSION" "$(date -R)" \
     | gzip -9n > "$STAGE/usr/share/doc/monkeyspaw/changelog.gz"

@@ -120,6 +120,7 @@ internal class EntryManifestTest {
             ".MainActivity" to Component("activity", true, action = "android.intent.action.MAIN",
                 category = "android.intent.category.LAUNCHER"),
             ".entry.FillActivity" to Component("activity", false),
+            ".LicensesActivity" to Component("activity", false),
             ".entry.PromptShortcutActivity" to Component("activity", false),
             ".entry.ProcessTextActivity" to Component("activity", true, action = "android.intent.action.PROCESS_TEXT",
                 category = "android.intent.category.DEFAULT", mime = "text/plain"),

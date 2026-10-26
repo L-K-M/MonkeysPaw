@@ -21,6 +21,19 @@ on:
       - scripts/package-macos.sh
       - scripts/package-android.sh
       - scripts/verify-android-release.py
+      # Third-party notices generators, checks and texts.
+      - scripts/swiftpm-notices.py
+      - scripts/bundle-notices.sh
+      - scripts/third-party-notices.json
+      - scripts/deb-copyright.py
+      - scripts/static-runtime-notices.py
+      - scripts/android_notices.py
+      - scripts/oci-licenses.py
+      - scripts/check-image-notices.sh
+      - scripts/licenses/**
+      - server/licenses/**
+      - docs/licenses/UNICODE.txt
+      - LICENSE
       - scripts/build.sh
       - scripts/check-version.py
       - scripts/sync-android-version.sh
@@ -143,6 +156,13 @@ jobs:
           test "$(dpkg-deb --field "dist/$deb_file" Version)" = "$deb_version"
           apt-get install -y --no-install-recommends "./dist/$deb_file"
           test "$(/usr/bin/monkeyspaw --version)" = "monkeyspaw ${RELEASE_TAG#v}"
+          # Check the deb itself: minimized images may skip /usr/share/doc on install.
+          payload="$RUNNER_TEMP/release-deb-payload"
+          dpkg-deb --extract "dist/$deb_file" "$payload"
+          test -s "$payload/usr/share/doc/monkeyspaw/copyright"
+          test -s "$payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt"
+          grep -q 'Kirill Simonov' "$payload/usr/share/doc/monkeyspaw/copyright"
+          grep -q 'Unicode, Inc. and others' "$payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt"
           echo "deb_file=$deb_file" >> "$GITHUB_OUTPUT"
       - name: Upload deb and checksum
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -225,6 +245,11 @@ jobs:
           deployment=$(flatpak info --user --show-location "$APP_ID")
           test "$(flatpak info --user --show-runtime "$APP_ID")" = org.gnome.Platform/x86_64/50
           cmp "$payload/usr/bin/monkeyspaw" "$deployment/files/bin/monkeyspaw"
+          # The bundle keeps the deb's third-party notices verbatim.
+          for notice in copyright Third-Party-Notices.txt; do
+            test -s "$deployment/files/share/doc/monkeyspaw/$notice"
+            cmp "$payload/usr/share/doc/monkeyspaw/$notice" "$deployment/files/share/doc/monkeyspaw/$notice"
+          done
           test "$(timeout 15s dbus-run-session -- flatpak run --user "$APP_ID" --version)" = "monkeyspaw $VERSION"
           echo "bundle_file=$bundle_file" >> "$GITHUB_OUTPUT"
       - name: Upload the verified bundle and checksum
@@ -303,6 +328,10 @@ jobs:
           fi
           /bin/bash scripts/package-macos.sh "$VERSION" "$GITHUB_RUN_NUMBER"
           (cd dist && shasum -a 256 -c "MonkeysPaw-$VERSION.sha256")
+          # The published zip must carry the bundled third-party notices.
+          notices=$(unzip -p "dist/MonkeysPaw-$VERSION.zip" MonkeysPaw.app/Contents/Resources/Third-Party-Notices.txt)
+          grep -q '^Yams ' <<< "$notices"
+          grep -q 'Kirill Simonov' <<< "$notices"
       - name: Upload dmg, zip and checksum manifest
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -495,6 +524,9 @@ jobs:
             -f server/Dockerfile .
           skopeo inspect --raw "oci-archive:$archive" > "$RUNNER_TEMP/server-manifest.json"
           skopeo inspect --config "oci-archive:$archive" > "$RUNNER_TEMP/server-config.json"
+          # The licenses label must stay as the Dockerfile states it.
+          IMAGE_LICENSES=$(python3 scripts/oci-licenses.py dockerfile server/Dockerfile)
+          export IMAGE_LICENSES
           python3 - "$RUNNER_TEMP/server-manifest.json" "$RUNNER_TEMP/server-config.json" <<'PY'
           import json
           import os
@@ -512,7 +544,7 @@ jobs:
               "version": os.environ["VERSION"],
               "revision": os.environ["REVISION"],
               "created": os.environ["CREATED"],
-              "licenses": "Unlicense",
+              "licenses": os.environ["IMAGE_LICENSES"],
           }
           for key, value in expected.items():
               assert labels["org.opencontainers.image." + key] == value, key
@@ -520,6 +552,13 @@ jobs:
           skopeo manifest-digest "$RUNNER_TEMP/server-manifest.json" \
             > "$RUNNER_TEMP/server-image/server-$ARCH.digest"
           skopeo copy "oci-archive:$archive" docker-daemon:monkeyspaw-server:release
+          # Notices for the statically linked code ship in the image, and the
+          # label names every term they and the installed packages carry.
+          # Installed packages (server/Dockerfile): tini MIT; ca-certificates
+          # GPL-2.0-or-later scripts and MPL-2.0 CA data; libcurl4t64 curl.
+          sh scripts/check-image-notices.sh monkeyspaw-server:release /usr/share/doc/monkeyspaw-server \
+            Third-Party-Notices.txt LICENSE \
+            -- --own Unlicense --add MIT --add GPL-2.0-or-later --add MPL-2.0 --add curl
       - name: Wait for container health and require API status 200
         run: |
           set -euo pipefail

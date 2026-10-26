@@ -7,7 +7,7 @@ fixture="$(mktemp -d "${TMPDIR:-/tmp}/monkeyspaw-deb-test.XXXXXX")"
 trap 'rm -rf -- "$fixture"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-mkdir -p "$fixture/repo/packaging/linux" "$fixture/repo/packaging/debian" \
+mkdir -p "$fixture/repo/packaging/linux" \
     "$fixture/repo/scripts" "$fixture/repo/Sources/MonkeysPawLinux" \
     "$fixture/repo/MonkeysPaw/Resources" "$fixture/repo/MonkeysPaw.xcodeproj" \
     "$fixture/repo/android/app" "$fixture/bin"
@@ -15,7 +15,6 @@ cp "$checkout/packaging/build-deb.sh" "$fixture/repo/packaging/"
 cp "$checkout/scripts/check-version.py" "$fixture/repo/scripts/"
 cp "$checkout/packaging/linux/ch.lkmc.monkeyspaw.desktop" \
     "$checkout/packaging/linux/ch.lkmc.monkeyspaw.service" "$fixture/repo/packaging/linux/"
-cp "$checkout/packaging/debian/copyright" "$fixture/repo/packaging/debian/"
 cp -R "$checkout/MonkeysPaw/Resources/WishPaw" "$fixture/repo/MonkeysPaw/Resources/"
 builder="$fixture/repo/packaging/build-deb.sh"
 app_id=ch.lkmc.monkeyspaw
@@ -37,6 +36,10 @@ export SWIFT="$fixture/bin/swift" PATH="$fixture/bin:$PATH"
 cat > "$fixture/bin/swift" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == -print-target-info ]]; then
+    printf '{"paths": {"runtimeResourcePath": "%s/toolchain/usr/lib/swift"}}\n' "$FAKE_FIXTURE"
+    exit 0
+fi
 if [[ "${!#}" == --show-bin-path ]]; then
     printf '%s\n' "$FAKE_BIN_PATH"
     exit 0
@@ -62,6 +65,19 @@ cat > "$fixture/bin/dpkg-shlibdeps" <<'SH'
 printf 'shlibs:Depends=libgtk-4-1 (>= 4.14.2), libglib2.0-0t64 (>= 2.80.0)\n'
 SH
 chmod +x "$fixture/bin/"*
+
+# License notices have their own tests; here they only need to land where
+# the builder stages them.
+cat > "$fixture/repo/scripts/swiftpm-notices.py" <<'PY'
+import sys
+open(sys.argv[sys.argv.index("--output") + 1], "w").write("notices\n")
+PY
+cat > "$fixture/repo/scripts/deb-copyright.py" <<'PY'
+import sys
+if sys.argv[1] == "generate":
+    open(sys.argv[sys.argv.index("--copyright-out") + 1], "w").write("copyright\n")
+PY
+printf 'pass\n' > "$fixture/repo/scripts/static-runtime-notices.py"
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_clean() {

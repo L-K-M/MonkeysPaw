@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "Spec for scripts/deb-copyright.py, which packaging/build-deb.sh runs to write",
+    "/usr/share/doc/monkeyspaw/copyright. Paths are relative to this file;",
+    "$SWIFT_LICENSE is the toolchain's share/swift/LICENSE.txt, located by the build.",
+    "Keep the components in step with third-party-notices.json next to this file."
+  ],
+  "package": "monkeyspaw",
+  "upstream_name": "MonkeysPaw",
+  "upstream_contact": "L-K-M <noreply@lkmc.ch>",
+  "source": "https://github.com/L-K-M/MonkeysPaw",
+  "own": {
+    "copyright": ["2026 L-K-M"],
+    "license": "Unlicense",
+    "license_files": ["../../LICENSE"]
+  },
+  "components": [
+    {
+      "name": "Swift packages",
+      "version": "as pinned in Package.resolved",
+      "license": "LicenseRef-Bundled-SwiftPM",
+      "license_text": "Yams and any other Swift package pinned in Package.resolved keep their own licenses (Yams: MIT). Their full license texts, copyright notices and source links are in Third-Party-Notices.txt, next to this file.",
+      "copyright": ["The authors of each package, as listed in Third-Party-Notices.txt"],
+      "embedded_in": ["usr/bin/monkeyspaw"]
+    },
+    {
+      "name": "libyaml",
+      "version": "0.2.5 (commit acd6f6f)",
+      "license": "MIT",
+      "copyright": ["2006-2016 Kirill Simonov", "2017-2020 Ingy döt Net"],
+      "source_url": "https://github.com/yaml/libyaml/tree/acd6f6f014c25e46363e718381e0b35205df2d83",
+      "license_files": ["../../scripts/licenses/libyaml-acd6f6f-License"],
+      "embedded_in": ["usr/bin/monkeyspaw"],
+      "comment": "Vendored by Yams as Sources/CYaml."
+    },
+    {
+      "name": "Unicode Character Database tables",
+      "version": "17.0.0 (with 15.0.0 data)",
+      "license": "Unicode-3.0",
+      "copyright": ["1991-2026 Unicode, Inc."],
+      "source_url": "https://www.unicode.org/Public/17.0.0/ucd/",
+      "license_files": ["../../docs/licenses/UNICODE.txt"],
+      "embedded_in": ["usr/bin/monkeyspaw"],
+      "comment": "Generated into Core's SearchUnicodeData.swift and SyncPathCaseFold.swift."
+    },
+    {
+      "name": "ICU",
+      "version": "76.1",
+      "license": "Unicode-3.0",
+      "copyright": ["2016 and later Unicode, Inc. and others", "1995-2016 International Business Machines Corporation and others"],
+      "source_url": "https://github.com/swiftlang/swift-foundation-icu/tree/swift-6.4.0-RELEASE",
+      "license_files": ["ICU-76.1-LICENSE.txt"],
+      "embedded_in": ["usr/bin/monkeyspaw"],
+      "comment": "Foundation's lib_FoundationICU and its icudt76l data; the license text includes ICU's third-party data terms."
+    },
+    {
+      "name": "Swift standard library, Foundation and libdispatch",
+      "version": "6.4",
+      "license": "Apache-2.0 WITH Swift-exception",
+      "copyright": ["Apple Inc. and the Swift project authors"],
+      "source_url": "https://github.com/swiftlang/swift",
+      "license_files": ["$SWIFT_LICENSE"],
+      "embedded_in": ["usr/bin/monkeyspaw"],
+      "comment": "Linked by --static-swift-stdlib. The Runtime Library Exception waives attribution; listed for completeness."
+    }
+  ]
+}

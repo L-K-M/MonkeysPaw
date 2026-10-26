@@ -15,7 +15,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   Escape cancels, Return skips, and Reduce Motion delivers immediately.
 - Shared deterministic Wish Card sound cues, including dry finger cracks,
   with macOS system sound preference support.
-- Linux picker Wish Card prototype: fill blanks inside the prompt, with
+- Linux picker Wish Card: fill blanks inside the prompt, with
   choice tumblers, clipboard slips, ink provenance, a warming wick and a
   shared nine-frame stop-motion paw take before delivery. Escape restores the
   card and draft; a fresh Return skips, held Return is ignored, and disabling

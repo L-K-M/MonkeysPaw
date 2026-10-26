@@ -1,0 +1,65 @@
+{
+  "comment": "Overrides for swiftpm-notices.py when server/Dockerfile writes /usr/share/doc/monkeyspaw-server/Third-Party-Notices.txt for monkeyspaw-server, built with --static-swift-stdlib from server/Package.resolved. Paths are relative to this file; $SWIFT_LICENSE is the toolchain's share/swift/LICENSE.txt, located by the build. The deb's notices use packaging/licenses/third-party-notices.json.",
+  "preamble": [
+    "Monkey's Paw's own code is released under the Unlicense (see LICENSE next to",
+    "this file). The components below are statically linked into monkeyspaw-server",
+    "and keep their own licenses. System packages from the image keep their",
+    "notices in /usr/share/doc/<package>/copyright."
+  ],
+  "packages": {
+    "yams": {
+      "add_files": ["../../scripts/licenses/libyaml-acd6f6f-License"],
+      "reason": "Yams vendors libyaml's C sources (Sources/CYaml, libyaml commit acd6f6f per Yams' 4.0.5 changelog) without libyaml's license file; this is libyaml's License at that commit."
+    }
+  },
+  "components": [
+    {
+      "name": "BoringSSL (in swift-crypto)",
+      "version": "0226f30467f540a3f62ef48d453f93927da199b6",
+      "license": "Apache-2.0",
+      "source": "https://github.com/google/boringssl/tree/0226f30467f540a3f62ef48d453f93927da199b6",
+      "files": ["boringssl-0226f304-LICENSE"],
+      "verify_version": {
+        "file": "checkout:swift-crypto/Sources/CCryptoBoringSSL/hash.txt",
+        "regex": "at revision ([0-9a-f]{40})"
+      },
+      "reason": "swift-crypto vendors BoringSSL as Sources/CCryptoBoringSSL without BoringSSL's LICENSE; this is BoringSSL's LICENSE at the revision its hash.txt names (SHA-256 827c8d8fc207c2392794eef9e00fe246f9f61fdcc132556c275be3dd8c3cd97f). The Go and Chromium sections cover test and build code that is not compiled in."
+    },
+    {
+      "name": "BoringSSL (in swift-nio-ssl)",
+      "version": "817ab07ebb53da35afea409ab9328f578492832d",
+      "license": "OpenSSL AND ISC AND MIT",
+      "source": "https://github.com/google/boringssl/tree/817ab07ebb53da35afea409ab9328f578492832d",
+      "files": ["boringssl-817ab07e-LICENSE"],
+      "verify_version": {
+        "file": "checkout:swift-nio-ssl/Sources/CNIOBoringSSL/hash.txt",
+        "regex": "at revision ([0-9a-f]{40})"
+      },
+      "reason": "swift-nio-ssl vendors BoringSSL as Sources/CNIOBoringSSL without BoringSSL's LICENSE, and its files point to the OpenSSL and ISC licenses; this is BoringSSL's LICENSE at the revision its hash.txt names (SHA-256 756a61a8300d105ae68e7f2993e27d41a765c946f3400422e2403b01e7ded527): the OpenSSL and SSLeay licenses, ISC, and MIT for third_party/fiat."
+    },
+    {
+      "name": "ICU",
+      "version": "76.1",
+      "license": "Unicode-3.0",
+      "source": "https://github.com/swiftlang/swift-foundation-icu/tree/swift-6.4.0-RELEASE",
+      "files": ["../../packaging/licenses/ICU-76.1-LICENSE.txt"],
+      "reason": "--static-swift-stdlib links Foundation's lib_FoundationICU (ICU 76.1 for Swift 6.4, data icudt76l); see packaging/licenses/third-party-notices.json for the text's provenance. static-runtime-notices.py fails when the binary's ICU data version differs."
+    },
+    {
+      "name": "Swift standard library, Foundation and libdispatch",
+      "version": "6.4",
+      "license": "Apache-2.0 WITH Swift-exception",
+      "source": "https://github.com/swiftlang/swift",
+      "files": ["$SWIFT_LICENSE"],
+      "reason": "Statically linked by --static-swift-stdlib. The Runtime Library Exception waives attribution; listed for completeness with the toolchain's own LICENSE.txt."
+    },
+    {
+      "name": "Unicode Character Database tables",
+      "version": "17.0.0 (with 15.0.0 data)",
+      "license": "Unicode-3.0",
+      "source": "https://www.unicode.org/Public/17.0.0/ucd/",
+      "files": ["../../docs/licenses/UNICODE.txt"],
+      "reason": "Core's SearchUnicodeData.swift and SyncPathCaseFold.swift, linked into the server, are generated from the UCD."
+    }
+  ]
+}

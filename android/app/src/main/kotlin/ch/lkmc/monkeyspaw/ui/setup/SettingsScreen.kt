@@ -9,6 +9,7 @@ import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Keyboard
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -22,7 +23,8 @@ import ch.lkmc.monkeyspaw.ui.theme.PawLayout
 @Composable
 internal fun SettingsScreen(onKeyboardTileSetup: () -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier,
     rememberedValues: RememberedValuesState, onRequestForget: () -> Unit, onForget: () -> Unit, onCancelForget: () -> Unit,
-    onAccount: (() -> Unit)? = null, onAssistantSettings: (() -> Unit)? = null) {
+    onAccount: (() -> Unit)? = null, onAssistantSettings: (() -> Unit)? = null,
+    onOpenSourceLicenses: (() -> Unit)? = null) {
     BackHandler(onBack = onBack)
     DisposableEffect(Unit) { onDispose(onCancelForget) }
     PawScreen(stringResource(R.string.settings_title), modifier, onBack = onBack, style = PawScreenStyle.OVERVIEW) {
@@ -65,6 +67,15 @@ internal fun SettingsScreen(onKeyboardTileSetup: () -> Unit, onBack: () -> Unit,
                 }
                 if (rememberedValues == RememberedValuesState.CLEARING) {
                     PawLoading(stringResource(R.string.design_forgetting_values))
+                }
+            }
+            onOpenSourceLicenses?.let { licenses ->
+                Column(verticalArrangement = Arrangement.spacedBy(PawSpacing.small)) {
+                    PawSectionHeading(stringResource(R.string.design_about_section))
+                    Surface(shape = MaterialTheme.shapes.large) {
+                        PawSettingRow(stringResource(R.string.open_source_licenses),
+                            stringResource(R.string.open_source_licenses_subtitle), Icons.Rounded.Info, licenses)
+                    }
                 }
             }
         }

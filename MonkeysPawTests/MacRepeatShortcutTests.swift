@@ -225,6 +225,13 @@ final class MacRepeatShortcutTests: XCTestCase {
         guard link.location != NSNotFound else { return }
         XCTAssertEqual((credits.attribute(.link, at: link.location, effectiveRange: nil) as? URL)?.absoluteString,
             "https://github.com/L-K-M/MonkeysPaw")
+        // Bundled components keep their own licenses; the credits open their notices.
+        let notices = (credits.string as NSString).range(of: "Third-party notices")
+        XCTAssertNotEqual(notices.location, NSNotFound)
+        guard notices.location != NSNotFound else { return }
+        let url = try XCTUnwrap(credits.attribute(.link, at: notices.location, effectiveRange: nil) as? URL)
+        XCTAssertEqual(url.lastPathComponent, "Third-Party-Notices.txt")
+        XCTAssertGreaterThan(try XCTUnwrap(try url.resourceValues(forKeys: [.fileSizeKey]).fileSize), 0)
     }
 
     func testSettingsCloseReopenKeepsLiveRowsAndRetiredCallbacksCannotActivate() throws {

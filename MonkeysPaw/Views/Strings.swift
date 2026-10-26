@@ -7,6 +7,7 @@ enum Strings {
     static let quit = "Quit Monkey's Paw"
     static let aboutDescription = "Keep your prompts ready to fill, copy and paste."
     static let projectLink = "Monkey's Paw on GitHub"
+    static let thirdPartyNotices = "Third-party notices"
     static let setup = "Setup…"
     static let setupTitle = "Monkey's Paw Setup"
     static let settings = "Settings…"

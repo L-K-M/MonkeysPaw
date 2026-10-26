@@ -80,6 +80,11 @@ jobs:
         run: python3 scripts/check-pbxproj.py
       - name: Check committed versions and Debian version mapping
         run: python3 scripts/check-version.py
+      # The README scopes the Unlicense to our code and names the shipped notices.
+      - name: Check README license section
+        run: |
+          grep -q '^## License$' README.md
+          grep -q 'Third-Party-Notices.txt' README.md
       - name: Check compiled assistant prompt catalogs
         run: python3 scripts/generate-assistant-prompts.py --check
       - name: Test packaging scripts
@@ -251,7 +256,16 @@ jobs:
           grep -Fxq 'MimeType=x-scheme-handler/monkeyspaw;' "$payload/usr/share/applications/ch.lkmc.monkeyspaw.desktop"
           cmp packaging/linux/ch.lkmc.monkeyspaw.service \
             "$payload/usr/share/dbus-1/services/ch.lkmc.monkeyspaw.service"
-          cmp packaging/debian/copyright "$payload/usr/share/doc/monkeyspaw/copyright"
+          # Generated notices for the statically linked third-party code.
+          doc="$payload/usr/share/doc/monkeyspaw"
+          test -s "$doc/copyright"
+          test -s "$doc/Third-Party-Notices.txt"
+          grep -q '^Files: usr/bin/monkeyspaw$' "$doc/copyright"
+          for marker in 'Kirill Simonov' 'Unicode, Inc. and others' 'UNICODE LICENSE V3'; do
+            grep -q "$marker" "$doc/copyright"
+            grep -q "$marker" "$doc/Third-Party-Notices.txt"
+          done
+          grep -q '^Yams ' "$doc/Third-Party-Notices.txt"
           test -s "$payload/usr/share/doc/monkeyspaw/changelog.gz"
           for size in 16 24 32 48 64 128 256 512; do
             icon="icons/hicolor/${size}x${size}/apps/ch.lkmc.monkeyspaw.png"
@@ -381,7 +395,9 @@ jobs:
           deployment=$(flatpak info --user --show-location "$APP_ID")
           test "$(flatpak info --user --show-runtime "$APP_ID")" = org.gnome.Platform/x86_64/50
           cmp "$payload/usr/bin/monkeyspaw" "$deployment/files/bin/monkeyspaw"
-          cmp "$payload/usr/share/doc/monkeyspaw/copyright" "$deployment/files/share/doc/monkeyspaw/copyright"
+          for notice in copyright Third-Party-Notices.txt; do
+            cmp "$payload/usr/share/doc/monkeyspaw/$notice" "$deployment/files/share/doc/monkeyspaw/$notice"
+          done
           export_root="$XDG_DATA_HOME/flatpak/exports/share"
           desktop-file-validate "$export_root/applications/$APP_ID.desktop"
           grep -Fxq 'Exec=/app/bin/monkeyspaw --gapplication-service' \
@@ -552,6 +568,9 @@ jobs:
           apk_file="monkeyspaw-v$version.apk"
           python3 ../scripts/verify-android-release.py "../dist/$apk_file" "$version"
           echo "apk_file=$apk_file" >> "$GITHUB_OUTPUT"
+      # The uploaded debug APK must carry the same third-party notices.
+      - name: Check third-party notices in the debug APK
+        run: python3 -I ../scripts/android_notices.py check app/build/outputs/apk/debug/app-debug.apk --config android-notices.toml
       - name: Upload debug APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -777,6 +796,12 @@ jobs:
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" == "$ARTIFACT_BUILD_NUMBER" ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist")" == true ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$app/Contents/Info.plist")" == monkeyspaw ]]
+            # Third-party notices from the "Bundle license notices" build phase.
+            local notices="$app/Contents/Resources/Third-Party-Notices.txt"
+            [[ -s "$notices" ]]
+            grep -q '^Yams ' "$notices"
+            grep -q 'Kirill Simonov' "$notices"
+            grep -q 'UNICODE LICENSE V3' "$notices"
           }
 
           smoke_launch() {
@@ -877,6 +902,20 @@ jobs:
           persist-credentials: false
       - name: Build image
         run: docker build --tag monkeyspaw-server:ci -f server/Dockerfile .
+      # Notices for the statically linked code ship in the image, and the
+      # licenses label names every term they and the installed packages carry.
+      - name: Check third-party notices in the image
+        run: |
+          set -euo pipefail
+          # Installed packages (server/Dockerfile): tini MIT; ca-certificates
+          # GPL-2.0-or-later scripts and MPL-2.0 CA data; libcurl4t64 curl.
+          sh scripts/check-image-notices.sh monkeyspaw-server:ci /usr/share/doc/monkeyspaw-server \
+            Third-Party-Notices.txt LICENSE \
+            -- --own Unlicense --add MIT --add GPL-2.0-or-later --add MPL-2.0 --add curl
+          for marker in BoringSSL 'Kirill Simonov' 'UNICODE LICENSE V3'; do
+            docker run --rm --entrypoint grep monkeyspaw-server:ci -q "$marker" \
+              /usr/share/doc/monkeyspaw-server/Third-Party-Notices.txt
+          done
       - name: Wait for container health and check the API
         run: |
           set -euo pipefail

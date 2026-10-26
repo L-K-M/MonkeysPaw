@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Verify a staged APK/checksum against committed versions and the public signer.
+"""Verify a staged APK/checksum against committed versions, the public signer and notices.
 
 Usage: python3 scripts/verify-android-release.py APK X.Y.Z[-prerelease]
 Set ANDROID_HOME (or ANDROID_SDK_ROOT) to the SDK with build-tools 36.0.0,
-and put the JDK's bin directory on PATH for apksigner.
+and put the JDK's bin directory on PATH for apksigner. Run it in the job that
+built the APK: the notices scan reads the resolved jars and AARs from the
+Gradle cache. Needs Python 3.11+ for the notices checker.
 """
 
 import argparse
@@ -18,6 +20,9 @@ import sys
 
 # Fixed by docs/decisions/0001-android-zero-secret-signing.md, not the build's key.
 SIGNER_SHA256 = "76a19df68d562789f6ea990b23232875b70a98c9996ba81e794ccab063edd765"
+# The notices scan downloads jars and AARs that a restored CI Gradle cache lacks
+# from the repositories android/settings.gradle.kts resolves dependencies from.
+MAVEN_REPOSITORIES = ("https://dl.google.com/dl/android/maven2", "https://repo.maven.apache.org/maven2")
 
 
 def tool_output(tool, arguments):
@@ -26,6 +31,18 @@ def tool_output(tool, arguments):
     if result.returncode != 0:
         raise ValueError(f"{tool.name} rejected the APK")
     return result.stdout
+
+
+def verify_notices(apk, root):
+    """Require complete third-party notices in the APK (android/android-notices.toml)."""
+    fetch = [argument for url in MAVEN_REPOSITORIES for argument in ("--fetch-from", url)]
+    for mode, extra in (("check", []), ("scan", fetch)):
+        result = subprocess.run([sys.executable, "-I", str(root / "scripts/android_notices.py"), mode,
+                                 str(apk.resolve()), "--config", str(root / "android/android-notices.toml"), *extra],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=900)
+        if result.returncode != 0:
+            sys.stderr.write(result.stdout)
+            raise ValueError(f"APK third-party notices fail android_notices.py {mode}")
 
 
 def verify(apk, version, root, tools):
@@ -62,7 +79,8 @@ def verify(apk, version, root, tools):
                               signature, re.MULTILINE)
     if [value.lower() for value in fingerprints] != [SIGNER_SHA256]:
         raise ValueError("APK must have exactly the recorded public signer")
-    return f"{version} (code {code[0]}), SHA-256 {digest.hexdigest()}, signer {SIGNER_SHA256}"
+    verify_notices(apk, root)
+    return f"{version} (code {code[0]}), SHA-256 {digest.hexdigest()}, signer {SIGNER_SHA256}, notices checked"
 
 
 def main():
