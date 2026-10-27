@@ -1330,40 +1330,89 @@ private final class MacLibraryAssistantHarness {
             control = Self.accessibilityElement(identifier, in: window)
             return control != nil
         }, file: file, line: line)
-        guard let control else { return }
+        guard let control else {
+            return XCTFail(Self.describeAccessibility(in: window), file: file, line: line)
+        }
 
         let press = Selector(("accessibilityPerformPress"))
         XCTAssertTrue(control.responds(to: press), file: file, line: line)
         guard let imp = control.method(for: press) else {
             return XCTFail("Control does not implement accessibilityPerformPress", file: file, line: line)
         }
-        let performPress = unsafeBitCast(imp, to: (@convention(c) (NSObject, Selector) -> Bool).self)
-        XCTAssertTrue(performPress(control, press), "Control did not accept the press", file: file, line: line)
+        // method(for:) returns the forward trampoline on proxy-style nodes; those
+        // only resolve accessibilityPerformPress through real message dispatch.
+        let forward = class_getMethodImplementation(object_getClass(control), Selector(("__mp_unimplemented_selector")))
+        guard imp != forward else {
+            _ = control.perform(press)
+            return
+        }
+        let performPress = unsafeBitCast(imp, to: (@convention(c) (NSObject, Selector) -> ObjCBool).self)
+        XCTAssertTrue(performPress(control, press).boolValue, "Control did not accept the press", file: file, line: line)
     }
 
     // SwiftUI nodes expose these selectors without protocol conformance.
+    private static func accessibilityRoots(in window: NSWindow) -> [NSObject] {
+        // Window chrome can expose a partial tree; the content view holds the
+        // rest, and sheet-modal state can nest controls under another window.
+        ([window] + NSApp.windows.filter { $0 !== window })
+            .flatMap { root -> [NSObject] in
+                var roots: [NSObject] = [root]
+                if let content = root.contentView { roots.append(content) }
+                return roots
+            }
+    }
+
     private static func accessibilityElement(_ identifier: String, in window: NSWindow) -> NSObject? {
-        // Window chrome can expose a partial tree; the content view holds the rest.
-        var roots: [NSObject] = [window]
-        if let content = window.contentView { roots.append(content) }
-        return roots.lazy.compactMap { accessibilityElement(identifier, under: $0, depth: Self.maxAccessibilityDepth) }.first
+        let identifierSelector = Selector(("accessibilityIdentifier"))
+        for root in accessibilityRoots(in: window) {
+            let match = accessibilityElements(under: root, depth: Self.maxAccessibilityDepth)
+                .first {
+                    $0.responds(to: identifierSelector)
+                        && $0.perform(identifierSelector)?.takeUnretainedValue() as? String == identifier
+                }
+            if let match { return match }
+        }
+        return nil
+    }
+
+    /// Compact element listing so a failed lookup's message shows what the
+    /// windows actually exposed; CI grants no other view into the AX tree.
+    private static func describeAccessibility(in window: NSWindow) -> String {
+        var lines = ["window visible=\(window.isVisible) key=\(window.isKeyWindow) sheets=\(window.sheets.count)"]
+        for root in accessibilityRoots(in: window) {
+            let elements = accessibilityElements(under: root, depth: Self.maxAccessibilityDepth)
+            let name = (root as? NSWindow)?.title ?? String(describing: type(of: root))
+            lines.append("\(name): \(elements.count) elements")
+            for element in elements.prefix(20) {
+                let id = accessibility(element, Selector(("accessibilityIdentifier"))) ?? "-"
+                let role = accessibility(element, Selector(("accessibilityRole"))) ?? "-"
+                let label = accessibility(element, #selector(NSAccessibilityProtocol.accessibilityLabel)) ?? "-"
+                lines.append("  id=\(id) role=\(role) label=\(label)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func accessibility(_ element: NSObject, _ selector: Selector) -> String? {
+        guard element.responds(to: selector),
+              let value = element.perform(selector)?.takeUnretainedValue() else { return nil }
+        if let string = value as? String { return string.isEmpty ? nil : string }
+        if let string = value as? NSAttributedString { return string.string.isEmpty ? nil : string.string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
     }
 
     /// Bounds the accessibility-tree walk; SwiftUI hierarchies stay well below this.
     private static let maxAccessibilityDepth = 14
 
-    private static func accessibilityElement(_ identifier: String, under root: NSObject, depth: Int) -> NSObject? {
+    private static func accessibilityElements(under root: NSObject, depth: Int) -> [NSObject] {
         let children = #selector(NSAccessibilityProtocol.accessibilityChildren)
         guard depth > 0, root.responds(to: children),
-              let nodes = root.perform(children)?.takeUnretainedValue() as? [Any] else { return nil }
-
-        let identifierSelector = Selector(("accessibilityIdentifier"))
-        for case let node as NSObject in nodes {
-            if node.responds(to: identifierSelector),
-               node.perform(identifierSelector)?.takeUnretainedValue() as? String == identifier { return node }
-            if let match = accessibilityElement(identifier, under: node, depth: depth - 1) { return match }
+              let nodes = root.perform(children)?.takeUnretainedValue() as? [Any] else { return [] }
+        return nodes.flatMap { node -> [NSObject] in
+            guard let element = node as? NSObject else { return [] }
+            return [element] + accessibilityElements(under: element, depth: depth - 1)
         }
-        return nil
     }
 
     func request(_ start: () -> Void, file: StaticString = #filePath, line: UInt = #line) throws {
