@@ -994,7 +994,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == false }
 
         // The window's own Cancel must withdraw only the queued acceptance.
-        h.press("library-assistant-cancel", in: window)
+        h.press("library-assistant-cancel", labeled: "Cancel", in: window)
         h.waitUntil { view.improvementStage == .failed }
         guard case .failed(.cancelled) = view.state.acceptanceOutcome else {
             return XCTFail("Withdrawing the queued acceptance must report cancellation")
@@ -1324,10 +1324,14 @@ private final class MacLibraryAssistantHarness {
 
     /// Presses a SwiftUI control through in-process accessibility, as MacUITourTests does;
     /// AXPress runs the control's real action.
-    func press(_ identifier: String, in window: NSWindow, file: StaticString = #filePath, line: UInt = #line) {
+    func press(_ identifier: String, labeled label: String, in window: NSWindow,
+               file: StaticString = #filePath, line: UInt = #line) {
         var control: NSObject?
         waitUntil({
             control = Self.accessibilityElement(identifier, in: window)
+                // Under an ancestor identifier, SwiftUI can report the leaf's
+                // identifier as the ancestor's; the button is still there.
+                ?? Self.accessibilityButton(labeled: label, in: window)
             return control != nil
         }, file: file, line: line)
         guard let control else {
@@ -1369,6 +1373,24 @@ private final class MacLibraryAssistantHarness {
                 .first {
                     $0.responds(to: identifierSelector)
                         && $0.perform(identifierSelector)?.takeUnretainedValue() as? String == identifier
+                }
+            if let match { return match }
+        }
+        return nil
+    }
+
+    /// Role+label fallback stays inside the pressed window: another window's
+    /// sheet may offer the same label (a decision alert's Cancel, for one).
+    private static func accessibilityButton(labeled label: String, in window: NSWindow) -> NSObject? {
+        let roleSelector = Selector(("accessibilityRole"))
+        var roots: [NSObject] = [window]
+        if let content = window.contentView { roots.append(content) }
+        for root in roots {
+            let match = accessibilityElements(under: root, depth: Self.maxAccessibilityDepth)
+                .first {
+                    accessibility($0, roleSelector) == "AXButton"
+                        && (accessibility($0, #selector(NSAccessibilityProtocol.accessibilityLabel)) == label
+                            || accessibility($0, #selector(NSAccessibilityProtocol.accessibilityTitle)) == label)
                 }
             if let match { return match }
         }
