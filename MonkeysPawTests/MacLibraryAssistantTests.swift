@@ -1383,7 +1383,9 @@ private final class MacLibraryAssistantHarness {
             let elements = accessibilityElements(under: root, depth: Self.maxAccessibilityDepth)
             let name = (root as? NSWindow)?.title ?? String(describing: type(of: root))
             lines.append("\(name): \(elements.count) elements")
-            for element in elements.prefix(20) {
+            // The pressed window gets a full listing; siblings stay bounded.
+            let limit = (root === window || root === window.contentView) ? 80 : 12
+            for element in elements.prefix(limit) {
                 let id = accessibility(element, Selector(("accessibilityIdentifier"))) ?? "-"
                 let role = accessibility(element, Selector(("accessibilityRole"))) ?? "-"
                 let label = accessibility(element, #selector(NSAccessibilityProtocol.accessibilityLabel)) ?? "-"
