@@ -10,6 +10,8 @@ macOS and Linux apps paste into your current field; Android offers a picker
 keyboard and Copy entry points. An optional Assistant writes/reviews prompts.
 You can host your own sync server.
 
+![macOS prompt picker with a prompt list and Wish Card preview](docs/screenshots/picker-macos.png)
+
 **Before desktop launch:** automatic stable-release checks default on. GitHub
 receives your IP and app version, without prompts or account details. Turn
 checks off in Settings → General; Check Now works while off. Updates open a
