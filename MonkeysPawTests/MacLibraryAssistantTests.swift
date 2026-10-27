@@ -994,7 +994,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == false }
 
         // The window's own Cancel must withdraw only the queued acceptance.
-        h.press("library-assistant-cancel", labeled: "Cancel", in: window)
+        h.press("library-assistant-cancel", labeled: LibraryAssistantStrings.cancel, in: window)
         h.waitUntil { view.improvementStage == .failed }
         guard case .failed(.cancelled) = view.state.acceptanceOutcome else {
             return XCTFail("Withdrawing the queued acceptance must report cancellation")
@@ -1382,7 +1382,7 @@ private final class MacLibraryAssistantHarness {
     /// Role+label fallback stays inside the pressed window: another window's
     /// sheet may offer the same label (a decision alert's Cancel, for one).
     private static func accessibilityButton(labeled label: String, in window: NSWindow) -> NSObject? {
-        let roleSelector = Selector(("accessibilityRole"))
+        let roleSelector = #selector(NSAccessibilityProtocol.accessibilityRole)
         var roots: [NSObject] = [window]
         if let content = window.contentView { roots.append(content) }
         for root in roots {
