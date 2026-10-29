@@ -3,7 +3,7 @@
 # no version numbers restated in docs. AGP + Gradle are the family-current pair
 # (matches the sibling repo Meltorama2000).
 
-agp = "9.3.1"
+agp = "9.5.0"
 kotlin = "2.4.21"
 ksp = "2.3.12"
 composeBom = "2026.08.00"
