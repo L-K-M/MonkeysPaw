@@ -18,7 +18,7 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird-fluent.git", exact: "2.0.0"),
         .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", exact: "4.9.0"),
         .package(url: "https://github.com/hummingbird-project/hummingbird-auth.git", exact: "2.5.0"),
-        .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.0.1"),
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "5.0.3"),
     ],
     targets: [
         .target(
