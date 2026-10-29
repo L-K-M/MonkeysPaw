@@ -21,7 +21,7 @@ datastore = "1.2.0"
 kotlinxSerialization = "1.11.0"
 kotlinxCoroutines = "1.11.0"
 junit = "4.13.2"
-icu4j = "78.3"
+icu4j = "79.1"
 snakeyamlEngine = "3.2"
 okhttp = "5.5.0"
 # Third-party notices (res/raw/aboutlibraries.json); see app/config.
