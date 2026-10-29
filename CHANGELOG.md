@@ -28,6 +28,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- macOS Improve Prompt shows invalid drafts and keeps improvements open when
+  you cancel a queued acceptance.
 - macOS Improve Prompt gains request context, centered progress and fixed
   retry and acceptance controls.
 - macOS Assistant separates Review & Improve from Improve Directly. New

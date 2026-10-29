@@ -105,13 +105,15 @@ The example shows Source; Edit opens the properties form and body editor.
   and selected findings. Generating and preparing the diff each show one
   centered status. A fixed bar keeps the provider footer, retry feedback,
   Reject and prominent Accept (⌘↩) visible; Show diff appears only for a stale
-  or missing diff.
+  or missing diff. Invalid results show the returned draft below their errors.
   **Open improvement…** in the inspector returns to that window. Diff columns
   share the available width and wrap long lines, including long tokens;
   wrapping preserves the source bytes, line numbers and newline markers.
-  Cancel, Reject, Close and a committed save end the improvement and close its
-  window; the save outcome remains in the Library status line. Failures and
-  conflicts keep it open; Escape leaves it open. Closing the window cancels
+  Cancel while generating or preparing, Reject, Close and a committed save end
+  the improvement and close its window; the save outcome remains in the Library
+  status line. Cancel while saving withdraws only a queued acceptance and keeps
+  the improvement open; an executing save reports its actual outcome. Failures
+  and conflicts keep it open; Escape leaves it open. Closing the window cancels
   its request/draft; editor-session or library retirement closes it. An
   acceptance must finish or be cancelled through its editor guard before the
   window closes; its close button is disabled meanwhile.

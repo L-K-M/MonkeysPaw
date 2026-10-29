@@ -968,6 +968,66 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertFalse(view.canShowImprovement)
     }
 
+    func testQueuedImprovementAcceptanceCanBeCancelledAndAcceptedAgain() throws {
+        let h = try MacLibraryAssistantHarness()
+        defer { h.close() }
+        h.presentation.edit("Unsaved source")
+        let view = try h.assistant()
+        let controller = try XCTUnwrap(h.delegate.libraryWindow)
+        view.editInstruction("Clarify")
+        try h.request { view.improve() }
+        try h.respond(MacLibraryAssistantHarness.artifact(body: "Improved"))
+        let artifact = try XCTUnwrap(view.state.artifact)
+        let transcript = view.state.transcript
+        let selection = try XCTUnwrap(h.presentation.editorState.prompt)
+        let improvement = try XCTUnwrap(controller.improvementWindow)
+        let window = try XCTUnwrap(improvement.window)
+
+        // Revert holds an editor decision without changing the preview.
+        h.presentation.editor.request(.revert)
+        let earlier = try XCTUnwrap(h.presentation.editorState.pendingDecision)
+        XCTAssertEqual(earlier.action, .revert)
+        XCTAssertTrue(view.canAccept)
+        view.accept()
+        XCTAssertEqual(view.improvementStage, .saving)
+        XCTAssertEqual(h.presentation.editorState.queuedActions, [.open(selection)])
+        h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == false }
+
+        // The window's own Cancel must withdraw only the queued acceptance.
+        h.press("library-assistant-cancel", labeled: LibraryAssistantStrings.cancel, in: window)
+        h.waitUntil { view.improvementStage == .failed }
+        guard case .failed(.cancelled) = view.state.acceptanceOutcome else {
+            return XCTFail("Withdrawing the queued acceptance must report cancellation")
+        }
+        XCTAssertNil(view.state.candidate)
+        XCTAssertNil(view.state.diff)
+        XCTAssertEqual(view.state.artifact, artifact)
+        XCTAssertEqual(view.state.transcript, transcript)
+        XCTAssertEqual(view.resultMessage, "Acceptance cancelled.")
+        XCTAssertEqual(h.presentation.editorState.pendingDecision, earlier)
+        XCTAssertTrue(h.presentation.editorState.queuedActions.isEmpty)
+        XCTAssertEqual(h.presentation.editorState.source, "Unsaved source")
+        XCTAssertTrue(h.presentation.editorState.isDirty)
+        XCTAssertEqual(try h.files.read(at: "one.md"), Data("Original".utf8))
+        // Let any cancellation bookkeeping on the main queue run; the window must stay open.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        XCTAssertTrue(controller.improvementWindow === improvement)
+        XCTAssertTrue(window.isVisible)
+
+        h.presentation.editor.resolveDecision(.cancel, id: earlier.id)
+        XCTAssertTrue(view.showsRefresh)
+        view.showDiff()
+        h.work.drain()
+        XCTAssertEqual(view.improvementStage, .ready)
+        XCTAssertTrue(view.canAccept)
+        let bytes = try XCTUnwrap(view.state.candidate?.content.canonicalBytes)
+        view.accept()
+        h.work.drain()
+        h.waitUntil { controller.improvementWindow == nil }
+        XCTAssertEqual(try h.files.read(at: "one.md"), bytes)
+        XCTAssertFalse(window.isVisible)
+    }
+
     func testOutdatedImprovementStaysOpenUntilFreshDiff() throws {
         let h = try MacLibraryAssistantHarness()
         defer { h.close() }
@@ -1017,6 +1077,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         try h.request { view.improve() }
         try h.respond(MacLibraryAssistantHarness.artifact(body: "{{clipboard}}", field: "clipboard"), phase: .draft)
         XCTAssertEqual(view.improvementStage, .invalid)
+        XCTAssertEqual(view.state.artifact?.body, "{{clipboard}}")
         XCTAssertFalse(view.canAccept)
         XCTAssertTrue(h.delegate.libraryWindow?.improvementWindow?.window?.isVisible == true)
     }
@@ -1259,6 +1320,123 @@ private final class MacLibraryAssistantHarness {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
         }
         XCTAssertTrue(predicate(), "Condition not met within \(timeout) s", file: file, line: line)
+    }
+
+    /// Presses a SwiftUI control through in-process accessibility, as MacUITourTests does;
+    /// AXPress runs the control's real action.
+    func press(_ identifier: String, labeled label: String, in window: NSWindow,
+               file: StaticString = #filePath, line: UInt = #line) {
+        var control: NSObject?
+        waitUntil({
+            control = Self.accessibilityElement(identifier, in: window)
+                // Under an ancestor identifier, SwiftUI can report the leaf's
+                // identifier as the ancestor's; the button is still there.
+                ?? Self.accessibilityButton(labeled: label, in: window)
+            return control != nil
+        }, file: file, line: line)
+        guard let control else {
+            return XCTFail(Self.describeAccessibility(in: window), file: file, line: line)
+        }
+
+        let press = Selector(("accessibilityPerformPress"))
+        XCTAssertTrue(control.responds(to: press), file: file, line: line)
+        guard let imp = control.method(for: press) else {
+            return XCTFail("Control does not implement accessibilityPerformPress", file: file, line: line)
+        }
+        // method(for:) returns the forward trampoline on proxy-style nodes; those
+        // only resolve accessibilityPerformPress through real message dispatch.
+        let forward = class_getMethodImplementation(object_getClass(control), Selector(("__mp_unimplemented_selector")))
+        guard imp != forward else {
+            _ = control.perform(press)
+            return
+        }
+        let performPress = unsafeBitCast(imp, to: (@convention(c) (NSObject, Selector) -> ObjCBool).self)
+        XCTAssertTrue(performPress(control, press).boolValue, "Control did not accept the press", file: file, line: line)
+    }
+
+    // SwiftUI nodes expose these selectors without protocol conformance.
+    private static func accessibilityRoots(in window: NSWindow) -> [NSObject] {
+        // Window chrome can expose a partial tree; the content view holds the
+        // rest, and sheet-modal state can nest controls under another window.
+        ([window] + NSApp.windows.filter { $0 !== window })
+            .flatMap { root -> [NSObject] in
+                var roots: [NSObject] = [root]
+                if let content = root.contentView { roots.append(content) }
+                return roots
+            }
+    }
+
+    private static func accessibilityElement(_ identifier: String, in window: NSWindow) -> NSObject? {
+        let identifierSelector = Selector(("accessibilityIdentifier"))
+        for root in accessibilityRoots(in: window) {
+            let match = accessibilityElements(under: root, depth: Self.maxAccessibilityDepth)
+                .first {
+                    $0.responds(to: identifierSelector)
+                        && $0.perform(identifierSelector)?.takeUnretainedValue() as? String == identifier
+                }
+            if let match { return match }
+        }
+        return nil
+    }
+
+    /// Role+label fallback stays inside the pressed window: another window's
+    /// sheet may offer the same label (a decision alert's Cancel, for one).
+    private static func accessibilityButton(labeled label: String, in window: NSWindow) -> NSObject? {
+        let roleSelector = #selector(NSAccessibilityProtocol.accessibilityRole)
+        var roots: [NSObject] = [window]
+        if let content = window.contentView { roots.append(content) }
+        for root in roots {
+            let match = accessibilityElements(under: root, depth: Self.maxAccessibilityDepth)
+                .first {
+                    accessibility($0, roleSelector) == "AXButton"
+                        && (accessibility($0, #selector(NSAccessibilityProtocol.accessibilityLabel)) == label
+                            || accessibility($0, #selector(NSAccessibilityProtocol.accessibilityTitle)) == label)
+                }
+            if let match { return match }
+        }
+        return nil
+    }
+
+    /// Compact element listing so a failed lookup's message shows what the
+    /// windows actually exposed; CI grants no other view into the AX tree.
+    private static func describeAccessibility(in window: NSWindow) -> String {
+        var lines = ["window visible=\(window.isVisible) key=\(window.isKeyWindow) sheets=\(window.sheets.count)"]
+        for root in accessibilityRoots(in: window) {
+            let elements = accessibilityElements(under: root, depth: Self.maxAccessibilityDepth)
+            let name = (root as? NSWindow)?.title ?? String(describing: type(of: root))
+            lines.append("\(name): \(elements.count) elements")
+            // The pressed window gets a full listing; siblings stay bounded.
+            let limit = (root === window || root === window.contentView) ? 80 : 12
+            for element in elements.prefix(limit) {
+                let id = accessibility(element, Selector(("accessibilityIdentifier"))) ?? "-"
+                let role = accessibility(element, Selector(("accessibilityRole"))) ?? "-"
+                let label = accessibility(element, #selector(NSAccessibilityProtocol.accessibilityLabel)) ?? "-"
+                lines.append("  id=\(id) role=\(role) label=\(label)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func accessibility(_ element: NSObject, _ selector: Selector) -> String? {
+        guard element.responds(to: selector),
+              let value = element.perform(selector)?.takeUnretainedValue() else { return nil }
+        if let string = value as? String { return string.isEmpty ? nil : string }
+        if let string = value as? NSAttributedString { return string.string.isEmpty ? nil : string.string }
+        if let number = value as? NSNumber { return number.stringValue }
+        return nil
+    }
+
+    /// Bounds the accessibility-tree walk; SwiftUI hierarchies stay well below this.
+    private static let maxAccessibilityDepth = 14
+
+    private static func accessibilityElements(under root: NSObject, depth: Int) -> [NSObject] {
+        let children = #selector(NSAccessibilityProtocol.accessibilityChildren)
+        guard depth > 0, root.responds(to: children),
+              let nodes = root.perform(children)?.takeUnretainedValue() as? [Any] else { return [] }
+        return nodes.flatMap { node -> [NSObject] in
+            guard let element = node as? NSObject else { return [] }
+            return [element] + accessibilityElements(under: element, depth: depth - 1)
+        }
     }
 
     func request(_ start: () -> Void, file: StaticString = #filePath, line: UInt = #line) throws {

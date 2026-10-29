@@ -45,7 +45,7 @@ struct LibraryAssistantView: View {
                             actions
                         }
                     } else {
-                        if let artifact = presentation.state.artifact { draft(artifact) }
+                        if let artifact = presentation.state.artifact { LibraryAssistantDraftView(artifact: artifact) }
                         LibraryAssistantIssueList(issues: presentation.state.issues)
                         if let diff = presentation.state.diff { LibraryDiffView(diff: diff) }
                         actions
@@ -153,25 +153,6 @@ struct LibraryAssistantView: View {
         }
     }
 
-    private func draft(_ artifact: LlmArtifact) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(LibraryAssistantStrings.draft).font(.headline)
-            Text(verbatim: artifact.title).font(.headline)
-            Text(verbatim: artifact.description)
-            Text(verbatim: artifact.tags.joined(separator: ", ")).font(.caption)
-            ForEach(Array(artifact.fields.enumerated()), id: \.offset) { item in
-                Text(verbatim: item.element.name + " · " + EditorStrings.fieldKind(item.element.type))
-                    .font(.caption)
-            }
-            Text(verbatim: artifact.body).font(.system(.body, design: .monospaced)).textSelection(.enabled)
-            if !artifact.notes.isEmpty {
-                Text(LibraryAssistantStrings.draftNotes).font(.caption)
-                Text(verbatim: artifact.notes).textSelection(.enabled)
-            }
-        }
-        .accessibilityIdentifier("library-assistant-draft")
-    }
-
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
             if presentation.isWorking || presentation.state.isAccepting {
@@ -194,6 +175,29 @@ struct LibraryAssistantView: View {
                 }
             }
         }
+    }
+}
+
+struct LibraryAssistantDraftView: View {
+    let artifact: LlmArtifact
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(LibraryAssistantStrings.draft).font(.headline)
+            Text(verbatim: artifact.title).font(.headline)
+            Text(verbatim: artifact.description)
+            Text(verbatim: artifact.tags.joined(separator: ", ")).font(.caption)
+            ForEach(Array(artifact.fields.enumerated()), id: \.offset) { item in
+                Text(verbatim: item.element.name + " · " + EditorStrings.fieldKind(item.element.type))
+                    .font(.caption)
+            }
+            Text(verbatim: artifact.body).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+            if !artifact.notes.isEmpty {
+                Text(LibraryAssistantStrings.draftNotes).font(.caption)
+                Text(verbatim: artifact.notes).textSelection(.enabled)
+            }
+        }
+        .accessibilityIdentifier("library-assistant-draft")
     }
 }
 
