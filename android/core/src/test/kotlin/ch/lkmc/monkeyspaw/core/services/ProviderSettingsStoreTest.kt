@@ -5,6 +5,7 @@ import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.StoreError
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.*
 import kotlin.test.*
 
@@ -106,12 +107,13 @@ class ProviderSettingsStoreTest {
     }
 
     @Test fun invalidUTF8TokensUnicodeAndExcessiveNestingFailClosed() = runTest {
+        val depth = Limits.providerSettingsJSONNestingCap
         val corrupt = listOf(byteArrayOf(-1), "{\"version\":1,\"profiles\":[],\"future\":NaN}".encodeToByteArray(),
             "{\"version\":1,\"profiles\":[],\"future\":01}".encodeToByteArray(),
             "{\"version\":1,\"profiles\":[],\"future\":1e999}".encodeToByteArray(),
             "{\"version\":1,\"profiles\":[],\"future\":\"\\ud800\"}".encodeToByteArray(),
             "{\"version\":1,\"profiles\":[],\"future\":\"raw\nnewline\"}".encodeToByteArray(),
-            ("{\"version\":1,\"profiles\":[],\"future\":" + "[".repeat(2000) + "0" + "]".repeat(2000) + "}").encodeToByteArray())
+            ("{\"version\":1,\"profiles\":[],\"future\":" + "[".repeat(depth) + "0" + "]".repeat(depth) + "}").encodeToByteArray())
         for (bytes in corrupt) {
             val files = ProviderRecordingState()
             files.memory.put(bytes, "provider-settings.json")
@@ -140,7 +142,9 @@ class ProviderSettingsStoreTest {
         }
     }
 
+    @OptIn(ExperimentalSerializationApi::class)
     @Test fun maximumFoundationDepthAndQuotedBracketsRemainValidUnknownMetadata() = runTest {
+        val json = Json { maxNestingDepth = Limits.providerSettingsJSONNestingCap }
         val depth = Limits.providerSettingsJSONNestingCap - 1
         val original = "{\"version\":1.0,\"profiles\":[],\"future\":" + "[".repeat(depth) + "0" + "]".repeat(depth) + "}"
         val files = ProviderRecordingState()
@@ -148,11 +152,12 @@ class ProviderSettingsStoreTest {
         val h = ProviderSettingsHarness(files)
         assertFalse(h.service.snapshot.isReadOnly)
         h.service.save(ProviderDraft())
-        assertEquals(Json.parseToJsonElement(original).jsonObject["future"], h.json()["future"])
+        val rewritten = json.parseToJsonElement(files.memory.text("provider-settings.json")).jsonObject
+        assertEquals(json.parseToJsonElement(original).jsonObject["future"], rewritten["future"])
         val brackets = JsonPrimitive("[\\\"".repeat(2000))
-        h.put(JsonObject(h.json() + ("quoted" to brackets)))
+        h.put(JsonObject(rewritten + ("quoted" to brackets)))
         h.service.selectProfile(null)
-        assertEquals(brackets, h.json()["quoted"])
+        assertEquals(brackets, json.parseToJsonElement(files.memory.text("provider-settings.json")).jsonObject["quoted"])
     }
 
     @Test fun unreadableStateIsSanitizedAndRequiresRecreationEvenAfterIORecovers() = runTest {

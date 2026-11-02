@@ -1,8 +1,10 @@
 package ch.lkmc.monkeyspaw.core.services
 
+import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.StateStore
 import ch.lkmc.monkeyspaw.core.ports.StoreError
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.*
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -462,7 +464,9 @@ class ProviderStateStoreTest {
     private fun payload(profiles: List<JsonObject>, unknown: Map<String, JsonElement> = emptyMap(), version: Int = 1) =
         JsonObject(unknown + mapOf("version" to JsonPrimitive(version), "profiles" to JsonArray(profiles))).toString()
 
-    private fun json(files: CapabilityFiles) = Json.parseToJsonElement(files.memory.text(path)).jsonObject
+    @OptIn(ExperimentalSerializationApi::class)
+    private val stateJson = Json { maxNestingDepth = Limits.providerStateJSONNestingCap }
+    private fun json(files: CapabilityFiles) = stateJson.parseToJsonElement(files.memory.text(path)).jsonObject
     private fun profiles(objectValue: JsonObject) = objectValue.getValue("profiles").jsonArray.map { it.jsonObject }
 
     private fun captureWarnings(work: () -> Unit): String {
