@@ -4,6 +4,7 @@ import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.*
 import ch.lkmc.monkeyspaw.core.ports.StateStore
 import ch.lkmc.monkeyspaw.core.ports.StoreError
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.*
 import java.math.BigDecimal
 import java.util.concurrent.locks.ReentrantLock
@@ -20,6 +21,8 @@ class ProviderStateStore(private val files: StateStore) {
     private val observedKeys = mutableMapOf<ProviderProfileID, ProviderCacheKey>()
     private val pendingResets = mutableMapOf<ProviderProfileID, ProviderCacheKey>()
     private val numberPattern = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
+    @OptIn(ExperimentalSerializationApi::class)
+    private val json = Json { maxNestingDepth = Limits.providerStateJSONNestingCap }
 
     internal fun format(connection: ProviderConnection): OpenAIResponseFormat = lock.withLock {
         val key = try { key(connection) } catch (_: Exception) {
@@ -83,7 +86,7 @@ class ProviderStateStore(private val files: StateStore) {
         val objectValue = try {
             val text = bytes.decodeToString(throwOnInvalidSequence = true).removePrefix("\uFEFF")
             checkDepth(text)
-            (Json.parseToJsonElement(text) as? JsonObject)?.also(::validateJson)
+            (json.parseToJsonElement(text) as? JsonObject)?.also(::validateJson)
         } catch (_: Exception) { null } ?: JsonObject(emptyMap())
         val entries = try {
             val version = objectValue["version"] as? JsonPrimitive ?: throw ProviderSettingsError.CorruptFile

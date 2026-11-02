@@ -2,6 +2,7 @@ package ch.lkmc.monkeyspaw.core.services
 
 import ch.lkmc.monkeyspaw.core.domain.Limits
 import ch.lkmc.monkeyspaw.core.domain.llm.ProviderSettingsError
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.encoding.*
@@ -10,7 +11,9 @@ import kotlinx.serialization.json.*
 /** Foundation's local-state JSON profile, distinct from the strict assistant output grammar. */
 internal object ProviderSettingsJson {
     private val numberPattern = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
-    private val firstFieldsJson = Json { ignoreUnknownKeys = true }
+    @OptIn(ExperimentalSerializationApi::class)
+    private val json = Json { maxNestingDepth = Limits.providerSettingsJSONNestingCap }
+    private val firstFieldsJson = Json(json) { ignoreUnknownKeys = true }
 
     fun read(bytes: ByteArray): JsonObject {
         val text = bytes.decodeToString(throwOnInvalidSequence = true).removePrefix("\uFEFF")
@@ -34,7 +37,7 @@ internal object ProviderSettingsJson {
                 '}', ']' -> if (--depth < 0) throw ProviderSettingsError.CorruptFile
             }
         }
-        return (Json.parseToJsonElement(text) as? JsonObject ?: throw ProviderSettingsError.CorruptFile)
+        return (json.parseToJsonElement(text) as? JsonObject ?: throw ProviderSettingsError.CorruptFile)
             .also(::validate)
     }
 
