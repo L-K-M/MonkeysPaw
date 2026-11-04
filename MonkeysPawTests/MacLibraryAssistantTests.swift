@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Carbon.HIToolbox
 import Combine
 import MonkeysPawCore
@@ -1326,6 +1327,8 @@ private final class MacLibraryAssistantHarness {
     /// AXPress runs the control's real action.
     func press(_ identifier: String, labeled label: String, in window: NSWindow,
                file: StaticString = #filePath, line: UInt = #line) {
+        guard activateAccessibilityTree(file: file, line: line) else { return }
+
         var control: NSObject?
         waitUntil({
             control = Self.accessibilityElement(identifier, in: window)
@@ -1377,6 +1380,31 @@ private final class MacLibraryAssistantHarness {
             if let match { return match }
         }
         return nil
+    }
+
+    /// A client query builds SwiftUI's otherwise lazy accessibility tree. Without
+    /// it, the lookup only works after an earlier suite made one, so this class
+    /// alone (`-only-testing`) finds no hosted controls. Query off-main so AppKit
+    /// answers on the main run loop that XCTWaiter pumps.
+    /// The status is asserted here, after the waiter, so a slow query cannot
+    /// report into a later test.
+    private func activateAccessibilityTree(file: StaticString, line: UInt) -> Bool {
+        let ready = XCTestExpectation(description: "Hosted accessibility client query completed")
+        var status = AXError.failure
+        DispatchQueue.global(qos: .userInitiated).async {
+            let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+            var children: CFTypeRef?
+            status = AXUIElementCopyAttributeValue(application, kAXChildrenAttribute as CFString, &children)
+            ready.fulfill()
+        }
+        guard XCTWaiter().wait(for: [ready], timeout: 5) == .completed else {
+            XCTFail("Hosted accessibility client query timed out", file: file, line: line)
+            return false
+        }
+
+        XCTAssertEqual(status, .success, "Hosted accessibility initialization failed: \(status.rawValue)",
+                       file: file, line: line)
+        return status == .success
     }
 
     /// Role+label fallback stays inside the pressed window: another window's
