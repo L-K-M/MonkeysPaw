@@ -1033,28 +1033,56 @@ final class MacPickerViewTests: XCTestCase {
         return panel.firstResponder === editor
     }
 
-    /// Run AX lookup and press off-main so wait(for:) can service the request
-    /// on AppKit's main run loop instead of blocking the target of the press.
+    /// Looks the row up off-main through the AX API, so wait(for:) can service
+    /// the query on AppKit's main run loop, then presses the row's node on the
+    /// main thread, where AppKit delivers real clients' actions. A same-process
+    /// AXUIElementPerformAction runs the action on the calling thread: off-main,
+    /// delivery's makeFirstResponder waited for the window lock while the main
+    /// thread held it, waiting for SwiftUI's graph lock, and the test hung.
     private func activatePickerResult(at position: Int) throws {
         let panel = try currentPanel()
         panel.contentView?.layoutSubtreeIfNeeded()
-        let activated = expectation(description: "Activate picker result through Accessibility")
+        let identifier = "picker-result-\(position)"
+        let found = expectation(description: "Picker result is accessible: " + identifier)
         DispatchQueue.global(qos: .userInitiated).async {
             let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
             let deadline = ProcessInfo.processInfo.systemUptime + 3
             var result: AXUIElement?
             repeat {
-                result = Self.accessibilityElement("picker-result-\(position)", in: application)
+                result = Self.accessibilityElement(identifier, in: application)
                 if result == nil { Thread.sleep(forTimeInterval: 0.05) }
             } while result == nil && ProcessInfo.processInfo.systemUptime < deadline
-            if let result {
-                XCTAssertEqual(AXUIElementPerformAction(result, kAXPressAction as CFString), .success)
-            } else {
-                XCTFail("Missing accessible picker result \(position)")
-            }
-            activated.fulfill()
+            XCTAssertNotNil(result, "Missing accessible picker result \(position)")
+            found.fulfill()
         }
-        wait(for: [activated], timeout: 5)
+        wait(for: [found], timeout: 5)
+
+        let roots: [NSObject] = [panel] + (panel.contentView.map { [$0] } ?? [])
+        let node = try XCTUnwrap(roots.lazy.compactMap { Self.accessibilityNode(identifier, under: $0) }.first,
+            "Missing in-process picker result \(position)")
+        let press = Selector(("accessibilityPerformPress"))
+        XCTAssertTrue(node.responds(to: press))
+        _ = node.perform(press)
+    }
+
+    /// Bounds the in-process walk; picker rows sit well within this depth.
+    private static let maxAccessibilityDepth = 16
+
+    /// Finds an in-process accessibility node by identifier. SwiftUI nodes
+    /// answer these selectors without NSAccessibilityProtocol conformance.
+    private static func accessibilityNode(_ identifier: String, under root: NSObject,
+                                          depth: Int = maxAccessibilityDepth) -> NSObject? {
+        let identifierSelector = Selector(("accessibilityIdentifier"))
+        if root.responds(to: identifierSelector),
+           root.perform(identifierSelector)?.takeUnretainedValue() as? String == identifier { return root }
+
+        let childrenSelector = Selector(("accessibilityChildren"))
+        guard depth > 0, root.responds(to: childrenSelector),
+              let children = root.perform(childrenSelector)?.takeUnretainedValue() as? [Any] else { return nil }
+        for case let child as NSObject in children {
+            if let match = accessibilityNode(identifier, under: child, depth: depth - 1) { return match }
+        }
+        return nil
     }
 
     /// Confirms the footer exposes the button to Accessibility, then performs
