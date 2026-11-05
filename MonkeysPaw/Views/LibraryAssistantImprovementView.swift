@@ -79,7 +79,9 @@ struct LibraryAssistantImprovementView: View {
                     Text(LibraryAssistantStrings.invalidImprovement)
                         .accessibilityIdentifier("library-assistant-result")
                     LibraryAssistantIssueList(issues: presentation.state.issues)
-                    notes
+                    if let artifact = presentation.state.artifact {
+                        LibraryAssistantDraftView(artifact: artifact)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(16)
             }
@@ -166,7 +168,9 @@ struct LibraryAssistantImprovementView: View {
             case .saving:
                 ProgressView().controlSize(.small)
                 Text(presentation.resultMessage).font(.caption)
-                cancelButton
+                // Withdraw only a queued acceptance; a running save reports its real outcome.
+                Button(LibraryAssistantStrings.cancel, action: presentation.cancelPendingAcceptance)
+                    .accessibilityIdentifier("library-assistant-cancel")
             case .failed:
                 Button(MainMenuStrings.close, action: presentation.cancel)
                     .accessibilityIdentifier("library-assistant-close")
