@@ -94,8 +94,8 @@ error HTTP status and Retry-After header values. Constructed-invalid values
 fail encoding, including nested contracts and cross-field relations. No
 pending or stub adapters remain, and no golden is changed to fit Kotlin.
 
-The nine non-LLM content categories currently have 1,058 cases and 2,223
-visible files: format 21/42, grammar 22/44, render 22/44, validation 113/226,
+The nine non-LLM content categories currently have 1,061 cases and 2,229
+visible files: format 23/46, grammar 22/44, render 23/46, validation 113/226,
 canonical 19/50, paths 141/282, ranking 37/169, import 15/30 and DTOs 668/1,336
 (164 valid, 504 invalid).
 M11 L2 introduced LLM schema and decoding as the tenth category. Together
@@ -103,14 +103,14 @@ with L3's Foundation transcript-escaping golden, these kinds have 288 cases
 and 919 files. L11 adds 74 merge cases with 250 files, and L4 adds 48
 Anthropic exchange cases with 756 files and 203 ordered actions. L12 adds 65
 diff cases with 249 files, and L6 adds 27 OpenAI exchange cases with 1,169
-files and 278 ordered actions, bringing the current content corpus to 1,560
-cases and 5,566 visible files.
+files and 278 ordered actions, bringing the current content corpus to 1,563
+cases and 5,572 visible files.
 Case shapes are below. These are reported counts, not fixed enumeration limits.
 
 The delegated sync corpus has 87 executable variants in 24 JSON files: Y12's
 26 variants in seven files, Y13's 45 variants in twelve files and Y14's 16
 variants in five files. Together with the ten content categories, that is
-1,647 cases and 5,590 visible files, with separate semantic owners.
+1,650 cases and 5,596 visible files, with separate semantic owners.
 The root content gate reports delegated file accounting separately; the server
 owner requires every acceptance file and compares all decoded and executed IDs.
 
