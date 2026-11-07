@@ -957,6 +957,8 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(view.improvementStage, .saving)
         XCTAssertEqual(view.state.diff, diff)
         h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == false }
+        XCTAssertFalse(try h.buttonIsEnabled("library-assistant-cancel", labeled: LibraryAssistantStrings.cancel, in: window),
+                       "An executing save cannot be withdrawn")
         window.performClose(nil)
         XCTAssertTrue(window.isVisible, "An acceptance must finish before its window closes")
         h.work.drain()
@@ -993,6 +995,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         XCTAssertEqual(view.improvementStage, .saving)
         XCTAssertEqual(h.presentation.editorState.queuedActions, [.open(selection)])
         h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == false }
+        XCTAssertTrue(try h.buttonIsEnabled("library-assistant-cancel", labeled: LibraryAssistantStrings.cancel, in: window))
 
         // The window's own Cancel must withdraw only the queued acceptance.
         h.press("library-assistant-cancel", labeled: LibraryAssistantStrings.cancel, in: window)
@@ -1014,6 +1017,7 @@ final class MacLibraryAssistantTests: XCTestCase {
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
         XCTAssertTrue(controller.improvementWindow === improvement)
         XCTAssertTrue(window.isVisible)
+        h.waitUntil { window.standardWindowButton(.closeButton)?.isEnabled == true }
 
         h.presentation.editor.resolveDecision(.cancel, id: earlier.id)
         XCTAssertTrue(view.showsRefresh)
@@ -1027,6 +1031,27 @@ final class MacLibraryAssistantTests: XCTestCase {
         h.waitUntil { controller.improvementWindow == nil }
         XCTAssertEqual(try h.files.read(at: "one.md"), bytes)
         XCTAssertFalse(window.isVisible)
+    }
+
+    func testAccessibilityLookupExcludesUnrelatedWindowsButIncludesSheets() {
+        let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let unrelated = NSWindow(contentRect: parent.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        let sheet = NSWindow(contentRect: parent.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        for window in [parent, unrelated, sheet] { window.isReleasedWhenClosed = false }
+        parent.orderFrontRegardless()
+        unrelated.orderFrontRegardless()
+        parent.beginSheet(sheet)
+        defer { parent.endSheet(sheet); sheet.close(); unrelated.close(); parent.close() }
+
+        let roots = MacLibraryAssistantHarness.accessibilityRoots(in: parent)
+        XCTAssertTrue(roots.contains { $0 === parent })
+        XCTAssertTrue(roots.contains { $0 === parent.contentView })
+        XCTAssertTrue(roots.contains { $0 === sheet })
+        XCTAssertTrue(roots.contains { $0 === sheet.contentView })
+        XCTAssertFalse(roots.contains { $0 === unrelated })
+        XCTAssertFalse(roots.contains { $0 === unrelated.contentView })
+        XCTAssertTrue(MacLibraryAssistantHarness.accessibilityRoots(in: sheet).contains { $0 === parent })
     }
 
     func testOutdatedImprovementStaysOpenUntilFreshDiff() throws {
@@ -1357,11 +1382,31 @@ private final class MacLibraryAssistantHarness {
         XCTAssertTrue(performPress(control, press).boolValue, "Control did not accept the press", file: file, line: line)
     }
 
+    func buttonIsEnabled(_ identifier: String, labeled label: String, in window: NSWindow,
+                         file: StaticString = #filePath, line: UInt = #line) throws -> Bool {
+        guard activateAccessibilityTree(file: file, line: line) else { return false }
+        var control: NSObject?
+        waitUntil({
+            control = Self.accessibilityElement(identifier, in: window)
+                ?? Self.accessibilityButton(labeled: label, in: window)
+            return control != nil
+        }, file: file, line: line)
+        let button = try XCTUnwrap(control, file: file, line: line)
+        let enabled = Selector(("isAccessibilityEnabled"))
+        XCTAssertTrue(button.responds(to: enabled), file: file, line: line)
+        let implementation = try XCTUnwrap(button.method(for: enabled), file: file, line: line)
+        let isEnabled = unsafeBitCast(implementation, to: (@convention(c) (NSObject, Selector) -> ObjCBool).self)
+        return isEnabled(button, enabled).boolValue
+    }
+
     // SwiftUI nodes expose these selectors without protocol conformance.
-    private static func accessibilityRoots(in window: NSWindow) -> [NSObject] {
-        // Window chrome can expose a partial tree; the content view holds the
-        // rest, and sheet-modal state can nest controls under another window.
-        ([window] + NSApp.windows.filter { $0 !== window })
+    static func accessibilityRoots(in window: NSWindow) -> [NSObject] {
+        // Window chrome can expose a partial tree; sheets can nest controls
+        // under their parent. Unrelated windows may reuse the same identifier.
+        let related = NSApp.windows.filter {
+            $0 !== window && ($0.sheetParent === window || window.sheetParent === $0)
+        }
+        return ([window] + related)
             .flatMap { root -> [NSObject] in
                 var roots: [NSObject] = [root]
                 if let content = root.contentView { roots.append(content) }

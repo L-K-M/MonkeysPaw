@@ -1,0 +1,14 @@
+{
+  "originHash" : "1a608734b990337153f30e00102f19994d204a94d4c869a895756fe68710b5fc",
+  "pins" : [
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/BigBoyDevBox/Yams.git",
+      "state" : {
+        "revision" : "d03c783ece4eeacf132828ff569c4060b4d4f198"
+      }
+    }
+  ],
+  "version" : 3
+}
