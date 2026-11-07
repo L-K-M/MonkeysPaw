@@ -383,10 +383,12 @@ final class RootedFileWatcherTests: XCTestCase {
         try watcher.start { restartedEvents.append($0) }
         pump(for: quietWindow)
         XCTAssertTrue(restartedEvents.values.isEmpty, "A restart takes its baseline without emitting it.")
-        try store.write(Data("Changed".utf8), at: "incoming/b.md")
+        // Atomic store writes also expose staging files to this raw watcher.
+        // Write the fixture in place so this exact diff contains only its edit.
+        try Data("Changed".utf8).write(to: root.appendingPathComponent("incoming/b.md"))
         let modified = FileStoreEvent(relativePath: "incoming/b.md", kind: .modified)
         XCTAssertTrue(spin { restartedEvents.values.contains(modified) })
-        try store.write(Data("Changed while stopped".utf8), at: "while-stopped.md")
+        try Data("Changed while stopped".utf8).write(to: root.appendingPathComponent("while-stopped.md"))
         let stoppedFile = FileStoreEvent(relativePath: "while-stopped.md", kind: .modified)
         XCTAssertTrue(spin { restartedEvents.values.contains(stoppedFile) })
         pump(for: quietWindow)
@@ -420,7 +422,8 @@ final class RootedFileWatcherTests: XCTestCase {
         XCTAssertEqual(events.values, [firstEvent])
         pump(for: quietWindow)
         XCTAssertTrue(restartedEvents.values.isEmpty, "Old callback events must not enter the restarted run.")
-        try store.write(Data("Changed".utf8), at: "incoming/b.md")
+        // Keep the fixture edit separate from atomic-store staging events.
+        try Data("Changed".utf8).write(to: root.appendingPathComponent("incoming/b.md"))
         let modified = FileStoreEvent(relativePath: "incoming/b.md", kind: .modified)
         XCTAssertTrue(spin { restartedEvents.values.contains(modified) })
         try store.delete(at: "incoming/a.md")
@@ -443,9 +446,10 @@ final class RootedFileWatcherTests: XCTestCase {
         try watcher.start { events.append($0) }
 
         try manager.setAttributes([.posixPermissions: 0], ofItemAtPath: blocked.path)
-        try store.write(Data(), at: "first.md")
+        // These exact-diff assertions concern scan recovery, not atomic staging.
+        try Data().write(to: root.appendingPathComponent("first.md"))
         XCTAssertTrue(spin { !log.values.isEmpty })
-        try store.write(Data(), at: "second.md")
+        try Data().write(to: root.appendingPathComponent("second.md"))
         pump(for: quietWindow)
         let diagnosticPrefix = "library rescan failed; keeping last baseline"
         XCTAssertEqual(log.values.count, 1)
@@ -453,23 +457,23 @@ final class RootedFileWatcherTests: XCTestCase {
         XCTAssertTrue(events.values.isEmpty, "Failed scans must not emit partial diffs or invented deletions.")
 
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
-        try store.write(Data(), at: "recovered.md")
+        try Data().write(to: root.appendingPathComponent("recovered.md"))
         XCTAssertTrue(spin { events.values.contains(FileStoreEvent(relativePath: "recovered.md", kind: .created)) })
         pump(for: quietWindow)
         XCTAssertEqual(Set(events.values.map(\.relativePath)), ["first.md", "second.md", "recovered.md"])
         XCTAssertTrue(events.values.allSatisfy { $0.kind == .created })
 
         try manager.setAttributes([.posixPermissions: 0], ofItemAtPath: blocked.path)
-        try store.write(Data(), at: "third.md")
+        try Data().write(to: root.appendingPathComponent("third.md"))
         XCTAssertTrue(spin { log.values.count >= 2 })
-        try store.write(Data(), at: "fourth.md")
+        try Data().write(to: root.appendingPathComponent("fourth.md"))
         pump(for: quietWindow)
         XCTAssertEqual(log.values.count, 2, "A successful scan starts a fresh failure streak.")
         XCTAssertTrue(log.values.allSatisfy { $0.level == .warning && $0.message == diagnosticPrefix + ": ioFailure" })
         XCTAssertEqual(events.values.count, 3)
 
         try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blocked.path)
-        try store.write(Data(), at: "recovered-again.md")
+        try Data().write(to: root.appendingPathComponent("recovered-again.md"))
         XCTAssertTrue(spin { events.values.contains(FileStoreEvent(relativePath: "recovered-again.md", kind: .created)) })
         pump(for: quietWindow)
         XCTAssertEqual(Set(events.values.map(\.relativePath)),
