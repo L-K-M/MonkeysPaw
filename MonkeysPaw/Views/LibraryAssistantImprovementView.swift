@@ -170,6 +170,7 @@ struct LibraryAssistantImprovementView: View {
                 Text(presentation.resultMessage).font(.caption)
                 // Withdraw only a queued acceptance; a running save reports its real outcome.
                 Button(LibraryAssistantStrings.cancel, action: presentation.cancelPendingAcceptance)
+                    .disabled(!presentation.canCancelPendingAcceptance)
                     .accessibilityIdentifier("library-assistant-cancel")
             case .failed:
                 Button(MainMenuStrings.close, action: presentation.cancel)

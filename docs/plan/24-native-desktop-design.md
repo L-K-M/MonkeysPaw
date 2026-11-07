@@ -111,9 +111,11 @@ The example shows Source; Edit opens the properties form and body editor.
   wrapping preserves the source bytes, line numbers and newline markers.
   Cancel while generating or preparing, Reject, Close and a committed save end
   the improvement and close its window; the save outcome remains in the Library
-  status line. Cancel while saving withdraws only a queued acceptance and keeps
-  the improvement open; an executing save reports its actual outcome. Failures
-  and conflicts keep it open; Escape leaves it open. Closing the window cancels
+  status line. Cancel while saving withdraws only a pending or queued acceptance
+  guard and keeps the improvement open. The button stays visible but disabled
+  once that guard starts executing the save, which reports its actual outcome.
+  Other queued editor decisions do not re-enable it. Failures and conflicts
+  keep it open; Escape leaves it open. Closing the window cancels
   its request/draft; editor-session or library retirement closes it. An
   acceptance must finish or be cancelled through its editor guard before the
   window closes; its close button is disabled meanwhile.

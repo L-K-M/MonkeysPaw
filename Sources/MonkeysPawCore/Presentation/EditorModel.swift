@@ -177,6 +177,13 @@ public final class EditorModel: @unchecked Sendable {
     public var assistantSession: PromptEditingSession? { isActive ? session : nil }
     public var assistantAccess: AssistantAccessState { state.access.assistantAccess }
 
+    /// Only the assistant's own pending or queued guard can be withdrawn.
+    /// Other editor decisions may be queued while its save is already running.
+    public var canCancelAssistantAcceptance: Bool {
+        guard isActive, let id = assistantDecisionID else { return false }
+        return pendingRequest?.decision.id == id || requests.contains { $0.decision.id == id }
+    }
+
     /// Capture at the assistant action, before any later edit can change its
     /// baseline. Conflicts, guard decisions and editor I/O must first be resolved.
     public var assistantSnapshot: AssistantEditorSnapshot? {
