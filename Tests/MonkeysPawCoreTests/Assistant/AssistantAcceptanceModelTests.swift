@@ -457,6 +457,7 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                 h.e.ui { h.model.accept(using: h.e.model) { result = $0; replies += 1; XCTAssertTrue(h.e.h.marker.isUI) } }
                 h.e.h.main.releaseAll()
                 XCTAssertNotNil(h.e.model.state.pendingDecision)
+                XCTAssertTrue(h.e.model.canCancelAssistantAcceptance)
                 h.e.ui {
                     if changedProfile { h.model.profileChanged() }
                     else { h.model.close() }
@@ -469,6 +470,7 @@ final class AssistantAcceptanceModelTests: XCTestCase {
                 }
                 XCTAssertEqual(failure, changedProfile ? .staleContext : .cancelled)
                 XCTAssertNil(h.e.model.state.pendingDecision)
+                XCTAssertFalse(h.e.model.canCancelAssistantAcceptance)
                 XCTAssertEqual(h.e.model.state.source, "Unsaved")
                 XCTAssertEqual(try h.e.h.files.text(at: "a.md"), "Original")
                 XCTAssertNil(try h.e.h.files.stamp(at: "Candidate.md"))
@@ -578,12 +580,14 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             h.e.ui { h.e.model.revert() }
             h.e.h.main.releaseAll()
             let earlier = try XCTUnwrap(h.e.model.state.pendingDecision)
+            XCTAssertFalse(h.e.model.canCancelAssistantAcceptance, "An unrelated guard is not an acceptance")
             var outcomes: [AssistantAcceptanceOutcome] = []
             h.e.ui { h.model.accept(using: h.e.model) { outcomes.append($0); XCTAssertTrue(h.e.h.marker.isUI) } }
             h.e.h.main.releaseAll()
             XCTAssertTrue(outcomes.isEmpty)
             XCTAssertEqual(h.e.model.state.pendingDecision, earlier)
             XCTAssertEqual(h.e.model.state.queuedActions, [.open(try XCTUnwrap(h.e.model.state.prompt))])
+            XCTAssertTrue(h.e.model.canCancelAssistantAcceptance)
             var later: [EditorGuardResult] = []
             h.e.ui { h.e.model.request(.quit) { later.append($0); XCTAssertTrue(h.e.h.marker.isUI) } }
             try h.e.decide(.cancel)
@@ -591,6 +595,7 @@ final class AssistantAcceptanceModelTests: XCTestCase {
             XCTAssertEqual(h.e.model.state.status, .saving)
             XCTAssertEqual(h.e.model.assistantSnapshot?.availability, .busy)
             XCTAssertEqual(h.e.model.state.queuedActions, [.quit])
+            XCTAssertFalse(h.e.model.canCancelAssistantAcceptance, "A later guard must not make the running save cancellable")
             XCTAssertTrue(outcomes.isEmpty)
             XCTAssertTrue(later.isEmpty)
             h.e.settle()

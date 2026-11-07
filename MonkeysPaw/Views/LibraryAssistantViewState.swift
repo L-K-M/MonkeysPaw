@@ -88,6 +88,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
         canReview && (!state.instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !state.selectedFindings.isEmpty)
     }
     var canAccept: Bool { libraryAvailable && !editorIOBusy && editorState.conflict == nil && model?.canAccept == true }
+    var canCancelPendingAcceptance: Bool { state.isAccepting && editor.canCancelAssistantAcceptance }
     private var requestDisabledMessage: String? { requestKind == .write ? writeDisabledMessage : sourceDisabledMessage }
     var canRetry: Bool { requestDisabledMessage == nil && model?.canRetry == true }
     var canShowDiff: Bool { requestDisabledMessage == nil && model?.canShowDiff == true }
@@ -171,7 +172,7 @@ final class LibraryAssistantViewState: ObservableObject, CustomStringConvertible
     func reject() { model?.reject(); onHighlight?(nil) }
     func cancel() { model?.cancel(); onHighlight?(nil) }
     func close() { model?.close(); onHighlight?(nil) }
-    func cancelPendingAcceptance() { model?.cancelPendingAcceptance() }
+    func cancelPendingAcceptance() { if canCancelPendingAcceptance { model?.cancelPendingAcceptance() } }
 
     func accept() {
         guard canAccept, let model else { return }
