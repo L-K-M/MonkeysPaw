@@ -19,6 +19,44 @@ class PromptRankingTest {
     }
 
     @Test
+    fun `text relevance outranks usage and favorites`() {
+        val now = Instant.parse("2026-10-11T12:00:00Z")
+        val popular = List(40) { now }
+        val title = PromptRanking.Input("title.md", PromptCodec.parse(
+            "---\ntitle: Performance Improvements\ntags: [performance, code]\n---\n", "title.md"))
+        val tag = PromptRanking.Input("tag.md", PromptCodec.parse(
+            "---\ntitle: Improve App 2\ntags: [performance, code]\nfavorite: true\n---\n", "tag.md"), popular)
+        val description = PromptRanking.Input("description.md", PromptCodec.parse(
+            "---\ntitle: Improve App 3\ntags: [code]\ndescription: performance\nfavorite: true\n---\n", "description.md"), popular)
+        val body = PromptRanking.Input("body.md", PromptCodec.parse(
+            "---\ntitle: Improve App 1\ntags: [code]\nfavorite: true\n---\nperformance", "body.md"), popular)
+        val inputs = listOf(body, tag, description, title)
+
+        for (query in listOf("performance", "PERFORMANCE", "prfrmnc", "#code performance", "performance code")) {
+            assertEquals(listOf("title.md", "tag.md", "description.md", "body.md"),
+                PromptRanking.rank(inputs, query, now).map { it.relativePath }, query)
+        }
+        val results = PromptRanking.rank(inputs, "performance", now)
+        assertTrue(results[0].score < results[3].score, "Adaptive scores must not override stronger text matches.")
+        val adaptiveOrder = listOf("body.md", "tag.md", "description.md", "title.md")
+        assertEquals(adaptiveOrder, PromptRanking.rank(inputs, "", now).map { it.relativePath })
+        assertEquals(adaptiveOrder, PromptRanking.rank(inputs, "#code", now).map { it.relativePath })
+    }
+
+    @Test
+    fun `stronger match within one field outranks popularity`() {
+        val now = Instant.parse("2026-10-11T12:00:00Z")
+        val exact = PromptRanking.Input("exact.md", PromptCodec.parse("---\ntitle: Review\n---\n", "exact.md"))
+        val longer = PromptRanking.Input("longer.md", PromptCodec.parse(
+            "---\ntitle: Review changes\nfavorite: true\n---\n", "longer.md"), List(40) { now })
+
+        assertEquals(listOf("exact.md", "longer.md"),
+            PromptRanking.rank(listOf(longer, exact), "review", now).map { it.relativePath })
+        assertEquals(listOf("longer.md", "exact.md"),
+            PromptRanking.rank(listOf(longer, exact), "", now).map { it.relativePath })
+    }
+
+    @Test
     fun `usage snapshots preserve duplicates fractional ages and recording order`() {
         val now = Instant.parse("2026-10-11T12:00:00Z")
         val halfLife = 14 * 86_400L
