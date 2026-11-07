@@ -3,6 +3,22 @@ import XCTest
 @testable import MonkeysPawCore
 
 final class PickerModelTests: XCTestCase {
+    func testSearchingSelectsRelevantTitleInsteadOfPopularBodyMatch() throws {
+        let h = PromptFlowHarness()
+        let popular = try h.put("---\ntitle: Improve App 1\nfavorite: true\n---\nperformance", at: "popular.md")
+        _ = try h.put("---\ntitle: Performance Improvements\ntags: [performance]\n---\nRelevant prompt.",
+                      at: "relevant.md")
+        for _ in 0..<40 { try h.usage.recordUse(identity: popular.identity) }
+        try h.open()
+        XCTAssertEqual(h.picker.results.first?.relativePath, "popular.md")
+
+        h.picker.setQuery("performance")
+
+        XCTAssertEqual(h.picker.results.map(\.relativePath), ["relevant.md", "popular.md"])
+        XCTAssertEqual(h.picker.selectionIndex, 0)
+        XCTAssertEqual(h.picker.selectedPreview, .body("Relevant prompt."))
+    }
+
     func testStaleTicketAfterDeliveryOutcomeFinishesWithoutRecordingUsage() throws {
         let h = try RepeatHarness()
         let entry = try h.put("body")

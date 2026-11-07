@@ -187,6 +187,39 @@ final class PromptIndexTests: XCTestCase {
         XCTAssertEqual(paths("n").first, "favorite.md")
     }
 
+    func testTextRelevanceOutranksUsageAndFavorites() throws {
+        try put("title.md", title: "Performance Improvements", tags: ["performance", "code"])
+        try put("tag.md", title: "Improve App 2", tags: ["performance", "code"], favorite: true)
+        try put("description.md", title: "Improve App 3", tags: ["code"],
+                description: "performance", favorite: true)
+        try put("body.md", title: "Improve App 1", tags: ["code"], favorite: true, body: "performance")
+        for path in ["tag.md", "description.md", "body.md"] {
+            let identity = try service.load(at: path).identity
+            for _ in 0..<40 { try usage.recordUse(identity: identity) }
+        }
+        try index.rebuild()
+
+        for query in ["performance", "PERFORMANCE", "prfrmnc", "#code performance", "performance code"] {
+            XCTAssertEqual(paths(query), ["title.md", "tag.md", "description.md", "body.md"], query)
+        }
+        let results = index.search("performance")
+        XCTAssertLessThan(results[0].score, results[3].score,
+                          "Adaptive scores must not override stronger text matches.")
+        XCTAssertEqual(paths(""), ["body.md", "tag.md", "description.md", "title.md"])
+        XCTAssertEqual(paths("#code"), paths(""), "Tag-only searches retain adaptive ordering.")
+    }
+
+    func testStrongerMatchWithinOneFieldOutranksPopularity() throws {
+        try put("exact.md", title: "Review")
+        try put("longer.md", title: "Review changes", favorite: true)
+        let identity = try service.load(at: "longer.md").identity
+        for _ in 0..<40 { try usage.recordUse(identity: identity) }
+        try index.rebuild()
+
+        XCTAssertEqual(paths("review"), ["exact.md", "longer.md"])
+        XCTAssertEqual(paths(""), ["longer.md", "exact.md"])
+    }
+
     func testRankingCapIsAppliedBeforeFavoriteMultiplication() throws {
         try put("favorite.md", title: "n", favorite: true)
         let identity = try service.load(at: "favorite.md").identity

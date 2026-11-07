@@ -523,15 +523,18 @@ relative path; assigned ULIDs keep their own keys.
   exact tag filter after the same normalization, with no numeric bonus;
   multiple filters all must match, and a bare `#` matches nothing. Queries
   containing only matching filters use `match = 1`.
-- **Ranking.** `score = match × (1 + frecency)`, where
+- **Ranking.** Ordinary-text queries sort by `match` descending first, so
+  usage and favourites cannot promote weaker matches above stronger ones.
+  Equal matches sort by the adaptive `score = match × (1 + frecency)`, where
   `frecency = Σ 2^(−age_days / Limits.frecencyHalfLifeDays)` over retained
   uses, capped at `Limits.frecencyCap = 32`. The half-life is **14** elapsed
   24-hour days, independent of calendars/DST. Future uses have age zero
   after a backwards clock adjustment. Favourites multiply nonempty-query
   scores by `Limits.favoriteBoost = 1.5`. Empty/whitespace-only queries sort
   by frecency descending, then favourites first, then title; their result
-  score is frecency. Other queries sort by score descending. All ties sort
-  by title, then relative path, using ascending UTF-8 byte order. Search
+  score is frecency. Tag-only queries still sort by score descending because
+  their base match is always 1. All remaining ties sort by title, then relative
+  path, using ascending UTF-8 byte order. Search
   samples the injected `WallClock` once, so cached uses decay on every query.
 - **Usage.** `UsageStore` reads/writes the app-data `FileStore` at
   `usage/<identity-key>` (no extension), using the same path-hash/ULID keys
