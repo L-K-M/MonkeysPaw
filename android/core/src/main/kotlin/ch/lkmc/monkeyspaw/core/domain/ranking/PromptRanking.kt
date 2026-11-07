@@ -11,6 +11,7 @@ enum class PromptSearchField(val rawValue: String, internal val weight: Double) 
 
 data class PromptSearchResult(
     val input: PromptRanking.Input,
+    /** Adaptive score; ordinary queries sort by unboosted relevance first. */
     val score: Double,
     val matchedFields: List<PromptSearchField>,
 ) {
@@ -35,9 +36,16 @@ object PromptRanking {
             val frecency = frecency(input.useEvents, at)
             val boost = if (input.favorite) Limits.favoriteBoost else 1.0
             val score = if (parsed.isEmpty) frecency else match.score * (1 + frecency) * boost
-            PromptSearchResult(input, score, match.fields)
+            RankedResult(match.score, PromptSearchResult(input, score, match.fields))
         }
-        return results.sortedWith { left, right ->
+        return results.sortedWith { leftRanked, rightRanked ->
+            // Popularity breaks equal matches, never overrides text relevance.
+            // Empty and tag-only queries have constant relevance (1).
+            if (leftRanked.relevance != rightRanked.relevance) {
+                return@sortedWith rightRanked.relevance.compareTo(leftRanked.relevance)
+            }
+            val left = leftRanked.result
+            val right = rightRanked.result
             if (left.score != right.score) return@sortedWith right.score.compareTo(left.score)
             if (parsed.isEmpty) {
                 val leftFavorite = left.input.favorite
@@ -46,7 +54,7 @@ object PromptRanking {
             }
             val titles = Utf8Order.compare(left.input.titleBytes, right.input.titleBytes)
             if (titles != 0) titles else Utf8Order.compare(left.input.pathBytes, right.input.pathBytes)
-        }
+        }.map { it.result }
     }
 
     internal fun frecency(events: List<Instant>, at: Instant): Double {
@@ -58,6 +66,8 @@ object PromptRanking {
         }
         return minOf(Limits.frecencyCap, sum)
     }
+
+    private data class RankedResult(val relevance: Double, val result: PromptSearchResult)
 
     private const val secondsPerDay = 86_400.0
 }

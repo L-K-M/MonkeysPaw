@@ -19,6 +19,7 @@ public struct PromptSearchResult: Sendable {
     public let entry: LibraryEntry
     public var relativePath: String { entry.relativePath }
     public var identity: PromptIdentity { entry.identity }
+    /// Adaptive score; ordinary queries sort by unboosted relevance first.
     public let score: Double
     /// Best field per ordinary term, plus tags for # filters, in enum order.
     public let matchedFields: [PromptSearchField]
@@ -155,6 +156,11 @@ enum PromptRanking {
         }
     }
 
+    private struct RankedResult {
+        let relevance: Double
+        let result: PromptSearchResult
+    }
+
     private static let secondsPerDay: Double = 86_400
 
     /// Pure §5.4 search over cached entries and retained usage events. The
@@ -165,14 +171,20 @@ enum PromptRanking {
                                       useEvents: [PromptIdentity: [Date]], at now: Date) -> [PromptSearchResult]
         where Inputs.Element == Input {
         let parsed = PromptSearchQuery(query)
-        let results = prompts.compactMap { prompt -> PromptSearchResult? in
+        let results = prompts.compactMap { prompt -> RankedResult? in
             guard let match = prompt.content.match(parsed) else { return nil }
             let frecency = frecency(events: useEvents[prompt.entry.identity] ?? [], at: now)
             let boost = prompt.entry.favorite ? Limits.favoriteBoost : 1
             let score = parsed.isEmpty ? frecency : match.score * (1 + frecency) * boost
-            return PromptSearchResult(entry: prompt.entry, score: score, matchedFields: match.fields)
+            return RankedResult(relevance: match.score,
+                                result: PromptSearchResult(entry: prompt.entry, score: score, matchedFields: match.fields))
         }
-        return results.sorted { lhs, rhs in
+        return results.sorted { left, right in
+            // Popularity breaks equal matches, never overrides text relevance.
+            // Empty and tag-only queries have constant relevance (1).
+            if left.relevance != right.relevance { return left.relevance > right.relevance }
+            let lhs = left.result
+            let rhs = right.result
             if lhs.score != rhs.score { return lhs.score > rhs.score }
             if parsed.isEmpty {
                 let leftFavorite = lhs.entry.favorite
@@ -185,7 +197,7 @@ enum PromptRanking {
                 return leftTitle.utf8.lexicographicallyPrecedes(rightTitle.utf8)
             }
             return lhs.relativePath.utf8.lexicographicallyPrecedes(rhs.relativePath.utf8)
-        }
+        }.map { $0.result }
     }
 
     /// §5.4: sum 2^(-age_days/14), capped at 32. Days are elapsed 24-hour
