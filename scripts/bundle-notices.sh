@@ -15,9 +15,9 @@ TITLE="MonkeysPaw"
 NOTICES_NAME="Third-Party-Notices.txt"
 # Package.resolved files whose pins are linked into the app. Leave the array
 # empty when the app has no Swift package dependencies.
-# Xcode links the root local package, so its lockfile governs the app.
+# Xcode resolves the local package's transitive dependencies in its workspace.
 RESOLVED=(
-  "$ROOT/Package.resolved"
+  "$ROOT/MonkeysPaw.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
 )
 # Explicit overrides for swiftpm-notices.py; empty when none are needed.
 OVERRIDES="$ROOT/scripts/third-party-notices.json"

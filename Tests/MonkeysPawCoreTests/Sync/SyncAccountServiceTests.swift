@@ -738,6 +738,7 @@ final class SyncAccountServiceTests: XCTestCase {
     func testMismatchedOwnershipCannotRecoverPendingRequestOrKeepLoginCredential() async throws {
         for userID in [SyncTestValues.user, SyncTestValues.otherUser, nil] {
             let rig = try SyncAccountRig()
+            addTeardownBlock { [weak rig] in XCTAssertNil(rig, userID?.rawValue ?? "absent") }
             try await rig.login()
             await rig.sync.settle()
             let pending = try await rig.pendingCreate()
