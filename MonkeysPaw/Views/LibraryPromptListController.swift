@@ -106,7 +106,11 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
             guard let self else { return }
             self.selectionDeferral.beginMouseSelection(self.modelRow(atTableRow: row).map { self.rows[$0].relativePath })
         }
-        tableView.onMoveSelection = { [weak self] up in self?.moveSelection(up: up) }
+        tableView.onMoveSelection = { [weak self] direction in
+            guard let self, !self.groups.isEmpty else { return false }
+            self.moveSelection(direction)
+            return true
+        }
         tableView.onMouseEnded = { [weak self] in
             self?.selectionDeferral.endMouseSelection()
             self?.synchronizeSelection()
@@ -197,21 +201,15 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         return nil
     }
 
-    private func moveSelection(up: Bool) {
-        let selectable = items.indices.filter { modelRow(atTableRow: $0) != nil }
-        guard !selectable.isEmpty else { return }
+    private func moveSelection(_ direction: LibraryPromptTableView.Direction) {
         let current = tableView.selectedRow
         let next: Int?
-        if let position = selectable.firstIndex(of: current) {
-            // Compare against the selected prompt's own entry so an equal row
-            // index does not hide the rest of the list.
-            next = up
-                ? (position > 0 ? selectable[position - 1] : nil)
-                : (position + 1 < selectable.count ? selectable[position + 1] : nil)
-        } else if current < 0 {
-            next = up ? selectable.last : selectable.first
-        } else {
-            next = up ? selectable.last(where: { $0 < current }) : selectable.first(where: { $0 > current })
+        switch direction {
+        case .up:
+            let count = current < 0 ? items.count : current
+            next = items.indices.prefix(count).reversed().first { modelRow(atTableRow: $0) != nil }
+        case .down:
+            next = items.indices.dropFirst(current + 1).first { modelRow(atTableRow: $0) != nil }
         }
         guard let next else { return }
         tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
@@ -386,13 +384,14 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
 }
 
 final class LibraryPromptTableView: NSTableView {
+    enum Direction { case up, down }
     var onMouseBegan: ((Int) -> Void)?
     var onMouseEnded: (() -> Void)?
     var onDropExit: (() -> Void)?
     var onReturn: (() -> Void)?
     var onDelete: (() -> Void)?
     /// Arrow keys must skip unselectable heading rows.
-    var onMoveSelection: ((Bool) -> Void)?
+    var onMoveSelection: ((Direction) -> Bool)?
 
     override func mouseDown(with event: NSEvent) {
         onMouseBegan?(row(at: convert(event.locationInWindow, from: nil)))
@@ -415,10 +414,8 @@ final class LibraryPromptTableView: NSTableView {
             .subtracting([.capsLock, .numericPad, .function])
         if flags.isEmpty, event.keyCode == 36 || event.keyCode == 76 { onReturn?(); return }
         if flags.isEmpty || flags == .command, event.keyCode == 51 || event.keyCode == 117 { onDelete?(); return }
-        if flags.isEmpty, event.keyCode == 0x7D || event.keyCode == 0x7E {
-            onMoveSelection?(event.keyCode == 0x7E)
-            return
-        }
+        if flags.isEmpty, event.keyCode == 0x7D, onMoveSelection?(.down) == true { return }
+        if flags.isEmpty, event.keyCode == 0x7E, onMoveSelection?(.up) == true { return }
         super.keyDown(with: event)
     }
 }

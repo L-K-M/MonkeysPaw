@@ -270,14 +270,11 @@ private fun LibraryResults(
                     onSelect, onOpen, onToggleFavorite, onEdit, onResolve)
             }
         } else {
-            // Each folder is its own tonal group, so shapes and selection restart inside it.
             for (group in state.groups) {
                 item(key = libraryHeadingKey(group.key)) { LibraryFolderHeadingView(group.heading, mode) }
-                group.rows.forEachIndexed { index, row ->
-                    item(key = row.selection.relativePath) {
-                        LibraryPromptRow(state, mode, row, pawGroupedShape(index, group.rows.size), Modifier.animateItem(),
-                            onSelect, onOpen, onToggleFavorite, onEdit, onResolve)
-                    }
+                itemsIndexed(group.rows, key = { _, row -> row.selection.relativePath }) { index, row ->
+                    LibraryPromptRow(state, mode, row, pawGroupedShape(index, group.rows.size), Modifier.animateItem(),
+                        onSelect, onOpen, onToggleFavorite, onEdit, onResolve)
                 }
             }
         }
@@ -292,7 +289,7 @@ private fun LibraryPromptRow(
     onResolve: ((LibrarySelection) -> Unit)?,
 ) {
     PromptRow(row, mode, selected = state.selectedPrompt?.selection == row.selection, shape = shape,
-        showFolder = state.groups.isEmpty(), modifier = modifier,
+        showScope = state.groups.isEmpty(), modifier = modifier,
         favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && row.canFavorite,
         onOpen = { onSelect(row.selection); onOpen(row.selection) },
         onToggleFavorite = { onToggleFavorite(row.selection) },
@@ -334,7 +331,7 @@ private fun libraryHeadingKey(key: LibraryFolderKey): String = when (key) {
 @Composable
 private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, shape: Shape, favoriteEnabled: Boolean,
     onOpen: () -> Unit, onToggleFavorite: () -> Unit, onEdit: (() -> Unit)?, onClearSelection: (() -> Unit)?, onResolve: (() -> Unit)?,
-    modifier: Modifier = Modifier, showFolder: Boolean = true) {
+    modifier: Modifier = Modifier, showScope: Boolean = true) {
     if (mode == LibraryMode.IME_PICKER) {
         Surface(onClick = onOpen, modifier = modifier.fillMaxWidth()
             .padding(horizontal = PawSpacing.small, vertical = PawLayout.connectedGap).semantics { this.selected = selected },
@@ -379,8 +376,11 @@ private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, sha
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 if (mode == LibraryMode.BROWSER) {
-                    val details = listOfNotNull(row.group?.let { stringResource(R.string.library_group_role, it.name, it.role.wireValue) }
-                        ?: row.folder.takeIf { showFolder && it.isNotEmpty() },
+                    val scope = row.group?.let {
+                        if (showScope) stringResource(R.string.library_group_role, it.name, it.role.wireValue)
+                        else it.role.wireValue
+                    } ?: row.folder.takeIf { showScope && it.isNotEmpty() }
+                    val details = listOfNotNull(scope,
                         stringResource(R.string.library_read_only).takeIf { row.isReadOnly },
                         stringResource(R.string.library_private_copy).takeIf { row.syncOrigin != null })
                     val metadata = details + row.tags.map { "#$it" }
