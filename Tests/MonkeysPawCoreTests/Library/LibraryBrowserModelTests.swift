@@ -68,7 +68,47 @@ final class LibraryBrowserModelTests: XCTestCase {
         model.selectSection(.favourites)
         XCTAssertEqual(paths(model), ["work/deep/a.md"])
         model.selectSection(.tag("CoDe"))
-        XCTAssertEqual(paths(model), ["work/deep/a.md", "work/b.md"])
+        XCTAssertEqual(paths(model), ["work/b.md", "work/deep/a.md"], "Folder headings order parents first (§11.8)")
+    }
+
+    func testListsGroupUnderFolderHeadingsExceptRecent() throws {
+        let h = PromptFlowHarness()
+        let alpha = try h.put("---\ntitle: Alpha\ntags: [x]\n---\nBody", at: "work/deep/a.md")
+        _ = try h.put("---\ntitle: Beta\ntags: [x]\n---\nBody", at: "work/b.md")
+        let gamma = try h.put("---\ntitle: Gamma\n---\nBody", at: "c.md")
+        _ = try h.put("---\ntitle: Delta\n---\nBody", at: "notes/d.md")
+        _ = try h.put("---\ntitle: Apple\n---\nBody", at: "e.md")
+        try h.usage.recordUse(identity: alpha.identity, at: Date(timeIntervalSince1970: 20))
+        try h.usage.recordUse(identity: gamma.identity, at: Date(timeIntervalSince1970: 10))
+        try h.index.rebuild()
+        let model = browser(h)
+
+        XCTAssertEqual(paths(model), ["e.md", "c.md", "notes/d.md", "work/b.md", "work/deep/a.md"],
+                       "Title order stays inside each heading")
+        XCTAssertEqual(model.groups.map(\.title), ["Top level", "notes", "work", "work/deep"])
+        XCTAssertEqual(model.groups.map(\.rows), [0..<2, 2..<3, 3..<4, 4..<5])
+        XCTAssertEqual(model.groups.map(\.key), [.folder(""), .folder("notes"), .folder("work"), .folder("work/deep")])
+        XCTAssertEqual(model.state.groups, model.groups)
+
+        model.setFilter("a")
+        XCTAssertEqual(model.groups.flatMap { Array(model.rows[$0.rows]) }, model.rows,
+                       "Headings cover every filtered row exactly once")
+        model.setFilter("")
+        model.selectSection(.folder("work"))
+        XCTAssertEqual(model.groups.map(\.title), ["work", "work/deep"])
+        model.selectSection(.folder("notes"))
+        XCTAssertEqual(model.groups.map(\.title), ["notes"], "A selected folder keeps its single heading")
+        model.selectSection(.tag("x"))
+        XCTAssertEqual(paths(model), ["work/b.md", "work/deep/a.md"])
+        model.selectSection(.recent)
+        XCTAssertEqual(paths(model), ["work/deep/a.md", "c.md"])
+        XCTAssertEqual(model.groups, [], "Recent keeps newest-use order without headings")
+
+        let flat = PromptFlowHarness()
+        _ = try flat.put("Root", at: "a.md")
+        _ = try flat.put("Root", at: "b.md")
+        try flat.index.rebuild()
+        XCTAssertEqual(browser(flat).groups, [], "A flat library keeps its unheaded list")
     }
 
     func testFilterReusesPickerMatcherAcrossFieldsAndExactTagSemanticsWithoutIO() throws {

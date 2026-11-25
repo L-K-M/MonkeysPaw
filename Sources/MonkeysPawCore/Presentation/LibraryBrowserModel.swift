@@ -6,11 +6,12 @@ import Foundation
 public final class LibraryBrowserModel: @unchecked Sendable {
     public var onChange: (() -> Void)?
     public private(set) var state = LibraryBrowserState(sections: [], selectedSection: .all,
-        filter: "", rows: [], selection: nil, selectedPrompt: nil)
+        filter: "", rows: [], groups: [], selection: nil, selectedPrompt: nil)
     public var sections: [LibraryBrowserSection] { state.sections }
     public var selectedSection: LibrarySectionID { state.selectedSection }
     public var filter: String { state.filter }
     public var rows: [LibraryBrowserRow] { state.rows }
+    public var groups: [PromptFolderGroup] { state.groups }
     public var selection: LibraryPromptSelection? { state.selection }
     public var selectedEntry: LibraryEntry? {
         guard let selection else { return nil }
@@ -227,15 +228,23 @@ public final class LibraryBrowserModel: @unchecked Sendable {
             ? nil : RelativePath($0.entry.relativePath) })
         var rows = all.filter { matchingPaths.contains($0.relativePath)
             && belongs($0, to: section, recentPaths: recentPaths) }
+        var groups: [PromptFolderGroup] = []
         if section == .recent {
             rows.sort {
                 if $0.lastUsedAt != $1.lastUsedAt { return $0.lastUsedAt! > $1.lastUsedAt! }
                 return Self.rowTitleOrder($0, $1)
             }
+        } else {
+            // Title order stays inside each heading; headings follow the sidebar.
+            let grouped = PromptFolderGrouping.group(rows, order: .sidebar) {
+                PromptFolderGrouping.placement(folder: $0.folder.string, access: $0.access)
+            }
+            rows = grouped.rows
+            groups = grouped.groups
         }
         let selected = preferredSelection.flatMap { key in all.first { $0.selection == key } }
         let next = LibraryBrowserState(sections: sections, selectedSection: section, filter: filter,
-            rows: rows, selection: selected?.selection, selectedPrompt: selected)
+            rows: rows, groups: groups, selection: selected?.selection, selectedPrompt: selected)
         guard next != state else { return }
         state = next
         // Intents originate on the UI thread, but even their notifications use

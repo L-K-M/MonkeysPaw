@@ -19,6 +19,30 @@ final class PickerModelTests: XCTestCase {
         XCTAssertEqual(h.picker.selectedPreview, .body("Relevant prompt."))
     }
 
+    func testResultsGroupUnderHeadingsThatFollowTheBestRankedMatch() throws {
+        let h = PromptFlowHarness()
+        _ = try h.put("---\ntitle: Review\n---\nBody", at: "work/review.md")
+        _ = try h.put("---\ntitle: Review notes\n---\nBody", at: "review-notes.md")
+        _ = try h.put("---\ntitle: Review the release plan carefully\n---\nPlan body", at: "work/plan.md")
+        try h.open()
+
+        h.picker.setQuery("review")
+        let ranked = h.index.search("review").map(\.entry.folder)
+        XCTAssertEqual(ranked, ["work", "", "work"], "Precondition: ranking interleaves folders")
+        XCTAssertEqual(h.picker.results.map(\.relativePath), ["work/review.md", "work/plan.md", "review-notes.md"])
+        XCTAssertEqual(h.picker.resultGroups.map(\.title), ["work", "Top level"])
+        XCTAssertEqual(h.picker.resultGroups.map(\.rows), [0..<2, 2..<3])
+        XCTAssertEqual(h.picker.selectionIndex, 0, "The best match stays first and selected")
+        h.picker.moveSelection(.down)
+        XCTAssertEqual(h.picker.results[h.picker.selectionIndex!].relativePath, "work/plan.md",
+                       "Arrow keys follow the grouped order")
+        XCTAssertEqual(h.picker.selectedPreview, .body("Plan body"), "Selection resolves the grouped row's prompt")
+
+        h.picker.setQuery("notes")
+        XCTAssertEqual(h.picker.results.map(\.relativePath), ["review-notes.md"])
+        XCTAssertEqual(h.picker.resultGroups, [], "Top-level results have no headings")
+    }
+
     func testStaleTicketAfterDeliveryOutcomeFinishesWithoutRecordingUsage() throws {
         let h = try RepeatHarness()
         let entry = try h.put("body")
