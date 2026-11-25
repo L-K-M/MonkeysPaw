@@ -76,8 +76,8 @@ The example shows Source; Edit opens the properties form and body editor.
   Prompts, Favourites, Recent, Conflicts), Groups, Folders (a collapsible
   folder tree), Tags. Sync status sits at the sidebar's foot.
 - **List.** A native table: title, one secondary line (description, or
-  tags; Recent rows add their folder), a favourite star, and symbols for
-  read-only, invalid and group prompts. Folder headings (§11.8) are
+  tags), a favourite star, and symbols for read-only, invalid and group
+  prompts. Folder headings (§11.8) are
   floating group rows that are never selected. It supports type-select, arrow keys, Return to edit,
   Delete to delete, a context menu and dragging a prompt onto a sidebar
   folder or group. Opening a prompt follows the click's release, so a drag

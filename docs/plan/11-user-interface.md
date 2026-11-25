@@ -601,8 +601,8 @@ without headings.
 - **Rows.** Headings are never selected. Arrow keys, type-select, Return,
   context menus and drags act on prompt rows only, and selection keeps its
   identity rules. Rows under a heading omit the folder and group name from
-  their secondary line; Recent rows keep them, and Android rows keep their
-  group role. Assistive technology reads headings as headings.
+  their secondary line, while Android rows keep their group role. Recent rows
+  are unchanged. Assistive technology reads headings as headings.
 - **Shared rules.** Core's `PromptFolderGrouping` computes headings for both
   desktops. `LibraryBrowserState.groups` and `PickerModel.resultGroups`
   publish them as row ranges over the flat row arrays the views already use.
