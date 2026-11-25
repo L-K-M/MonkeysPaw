@@ -76,8 +76,9 @@ The example shows Source; Edit opens the properties form and body editor.
   Prompts, Favourites, Recent, Conflicts), Groups, Folders (a collapsible
   folder tree), Tags. Sync status sits at the sidebar's foot.
 - **List.** A native table: title, one secondary line (description, or
-  folder and tags), a favourite star, and symbols for read-only, invalid
-  and group prompts. It supports type-select, arrow keys, Return to edit,
+  tags; Recent rows add their folder), a favourite star, and symbols for
+  read-only, invalid and group prompts. Folder headings (§11.8) are
+  floating group rows that are never selected. It supports type-select, arrow keys, Return to edit,
   Delete to delete, a context menu and dragging a prompt onto a sidebar
   folder or group. Opening a prompt follows the click's release, so a drag
   never raises the unsaved-edits alert first.
@@ -185,8 +186,8 @@ use the full-color paw app icon for contrast on light and dark menus.
   frame and remembers the last pane. Panes are grouped forms with labelled
   rows and section footers for explanations.
 - **Picker.** A rounded panel with the system popover material, a large
-  borderless search field with a magnifying-glass symbol, result rows with
-  a symbol, title and folder/tags, the preview, and a footer bar with the
+  borderless search field with a magnifying-glass symbol, result rows under
+  folder headings (§11.8) with a symbol, title and tags, the preview, and a footer bar with the
   paste target, sync state and key caps for Return, ⌥Return, ⌘Return and
   ⌘L. The picker and fill form use the Wish Card (§24.7), with a default
   Deliver button.
@@ -217,6 +218,8 @@ libadwaita dependency):
   panes; each pane is a clamped column of `boxed-list` rows.
 - **Picker.** An undecorated rounded window with a search entry, result
   rows with icons, the preview and a footer of key hints; no button row.
+  The picker and Library lists show folder headings (§11.8) as `GtkListBox`
+  row headers, which keep row positions and keyboard navigation unchanged.
 
 ### 24.7 Wish Card (macOS and Linux)
 

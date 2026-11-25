@@ -233,9 +233,11 @@ follow in M3.
 ```
 ┌ Monkey's Paw ─────────────────────────────────────────────────┐
 │ [ rev                                                     ]   │
-│ ★ Review a diff            code   │ Correctness-first review  │
-│ ▸ Revise for tone          team   │ of a pasted diff.         │
-│   Reverse-engineer a spec  code   │ Fields: language, diff    │
+│ code                              │ Correctness-first review  │
+│ ★ Review a diff                   │ of a pasted diff.         │
+│   Reverse-engineer a spec         │ Fields: language, diff    │
+│ team                              │                           │
+│ ▸ Revise for tone                 │                           │
 │───────────────────────────────────┴───────────────────────────│
 │ ⏎ use · ⌘⏎ edit · ⌘L library · esc close   → Firefox · ✓ sync │
 └───────────────────────────────────────────────────────────────┘
@@ -257,7 +259,8 @@ Footers differ per OS:
 - Linux adds `Ctrl+Shift+⏎ terminal paste`.
 - The paste target is the remembered app name on macOS and the session type
   on Linux.
-- Group prompts show the group name in the list (`team` above).
+- Results sit under folder headings (§11.8); group prompts sit under
+  their group's name (`team` above).
 
 ### 11.3 Keyboard map
 
@@ -417,9 +420,10 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   these sections, counts, selection and text filter. Folder counts include
   descendants; tags and the filter use the picker's matching rules. Counts
   are independent of the text filter. Lists order by title and exact path
-  bytes; Recent instead orders by the newest retained delivery or copy
-  timestamp in the app-data usage store (§5.4), with the same tie-breaks and
-  at most `Limits.libraryRecentCap = 100` entries before filtering. Using a
+  bytes under folder headings (§11.8); Recent instead orders by the newest
+  retained delivery or copy timestamp in the app-data usage store (§5.4),
+  with the same tie-breaks, no headings and at most
+  `Limits.libraryRecentCap = 100` entries before filtering. Using a
   prompt never writes its file. Selection follows assigned identity across
   renames, with exact path bytes disambiguating duplicate ids; an ambiguous
   identity clears the selection key. External deletion hides the row but keeps
@@ -570,3 +574,36 @@ These defaults resolve §17 Q14–Q20; the owner may override them.
   pending with the typed settings error, and a restart resumes it. Read-only
   settings skip the tour. Library recovery suppresses it for the session,
   without consuming a pending flag.
+
+### 11.8 Folder headings in prompt lists
+
+The desktop picker results, the desktop Library list, and Android's Library
+and picker keyboard list group prompts under folder headings. Grouping is
+always on (owner decision 2026-11-25); Recent keeps its newest-use order
+without headings.
+
+- **Headings.** Top-level prompts sit under **Top level**. Other private
+  prompts sit under their folder path, such as `work/reviews`. Group prompts
+  sit under the group's committed name, followed by any subfolder inside the
+  group (`team/reviews`). Group headings are keyed by group ID, so two groups
+  with the same name stay separate. Prompts under `Groups/` without group
+  access use their folder path. Folder keys compare exact path bytes, like
+  folder sections.
+- **When they show.** A list whose rows are all top-level shows no headings,
+  so a flat library looks as before. Otherwise every row sits under a heading,
+  including the single heading of a selected folder without subfolders.
+- **Order.** Rows keep their list's order inside each heading. Ranked lists
+  (the desktop picker, and Android's Library and picker keyboard) order
+  headings by their best-ranked prompt, so the best match stays first and is
+  still selected when the query changes. The desktop Library's title-ordered
+  list orders headings like the sidebar: Top level, then groups by name and
+  ID, then folders as a tree with each parent before its subfolders.
+- **Rows.** Headings are never selected. Arrow keys, type-select, Return,
+  context menus and drags act on prompt rows only, and selection keeps its
+  identity rules. Rows under a heading omit the folder and group name from
+  their secondary line; Recent rows keep them, and Android rows keep their
+  group role. Assistive technology reads headings as headings.
+- **Shared rules.** Core's `PromptFolderGrouping` computes headings for both
+  desktops. `LibraryBrowserState.groups` and `PickerModel.resultGroups`
+  publish them as row ranges over the flat row arrays the views already use.
+  Android's library projection applies the same rules in Kotlin.

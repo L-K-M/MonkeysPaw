@@ -9,6 +9,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- Folder headings in prompt lists: the picker and Library list on macOS and
+  Linux, and Android's Library and picker keyboard, group prompts by folder.
+  Recent keeps its newest-first order without headings.
 - Creepy toggle in macOS and Linux General settings, on by default. Turn it
   off to skip the paw take and deliver immediately while keeping the Wish Card.
 - macOS Wish Card: inline paper blanks, native choice tumblers, clipboard
