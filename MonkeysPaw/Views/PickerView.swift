@@ -115,6 +115,14 @@ private struct PickerResultsView: View {
         var id: Int { position }
     }
 
+    /// One scroll target. A folder heading travels with its group's first
+    /// row, so scrolling to that row brings both into view.
+    private struct Entry: Identifiable {
+        let heading: (index: Int, group: PromptFolderGroup)?
+        let result: IndexedResult
+        var id: Int { result.position }
+    }
+
     @ObservedObject var presentation: PickerViewState
 
     var body: some View {
@@ -124,8 +132,16 @@ private struct PickerResultsView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(indexedResults) { result in
-                            row(result)
+                        ForEach(entries) { entry in
+                            if let heading = entry.heading {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    self.heading(heading.group, index: heading.index)
+                                    row(entry.result)
+                                }
+                                .id(entry.id)
+                            } else {
+                                row(entry.result).id(entry.id)
+                            }
                         }
                     }
                     .padding(.vertical, 2)
@@ -140,10 +156,24 @@ private struct PickerResultsView: View {
         }
     }
 
+    private func heading(_ group: PromptFolderGroup, index: Int) -> some View {
+        let title: String
+        if case .folder(let path) = group.key, path.string.isEmpty { title = LibraryStrings.topLevel }
+        else { title = group.title }
+        return Text(title)
+            .font(.caption)
+            .foregroundStyle(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+                ? Color.secondary : WishCardStyle.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("picker-heading-\(index)")
+    }
+
     private func row(_ result: IndexedResult) -> some View {
         let selected = result.position == presentation.model.selectionIndex
         return PickerResultView(row: result.row, isSelected: selected)
-            .id(result.position)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { activate(result) }
             .onTapGesture { presentation.model.selectResult(at: result.position) }
@@ -157,8 +187,14 @@ private struct PickerResultsView: View {
         presentation.use(mode: presentation.model.preferredMode)
     }
 
-    private var indexedResults: [IndexedResult] {
-        presentation.model.results.enumerated().map { IndexedResult(position: $0.offset, row: $0.element) }
+    private var entries: [Entry] {
+        var headings: [Int: (index: Int, group: PromptFolderGroup)] = [:]
+        for (index, group) in presentation.model.resultGroups.enumerated() {
+            headings[group.rows.lowerBound] = (index, group)
+        }
+        return presentation.model.results.enumerated().map { position, row in
+            Entry(heading: headings[position], result: IndexedResult(position: position, row: row))
+        }
     }
 }
 
@@ -197,10 +233,9 @@ private struct PickerResultView: View {
         return WishCardStyle.secondary
     }
 
+    /// Rows under a heading omit the folder and group name (§11.8).
     private var detail: String {
-        var parts = [row.folder] + row.tags.map { "#" + $0 }
-        if case .group(let group) = row.access { parts.append(group.name) }
-        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+        row.tags.map { "#" + $0 }.joined(separator: " · ")
     }
 }
 

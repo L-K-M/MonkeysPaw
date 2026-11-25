@@ -130,6 +130,66 @@ final class MacPickerViewTests: XCTestCase {
         XCTAssertTrue(spin { clipboard.writes.last == "Accessible delivery" && !self.controller.isVisible })
     }
 
+    func testFolderHeadingsLeadTheirFirstResults() throws {
+        try files.write(Data("---\ntitle: Alpha\n---\nBody".utf8), at: "alpha.md")
+        try files.write(Data("---\ntitle: Beta\n---\nBody".utf8), at: "work/beta.md")
+        try files.write(Data("---\ntitle: Gamma\n---\nBody".utf8), at: "work/deep/gamma.md")
+        let picker = try open()
+        let groups = picker.resultGroups
+        XCTAssertEqual(groups.count, 3)
+        let panel = try currentPanel()
+        let content = try XCTUnwrap(panel.contentView)
+        content.layoutSubtreeIfNeeded()
+        let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+        for (index, group) in groups.enumerated() {
+            let identifier = "picker-heading-\(index)"
+            _ = spin { Self.accessibilityElement(identifier, in: application) != nil }
+            let element = try XCTUnwrap(Self.accessibilityElement(identifier, in: application), "Missing \(identifier)")
+            XCTAssertEqual(Self.axValue(of: element, kAXRoleAttribute as CFString) as? String, "AXHeading",
+                           "Heading must announce its heading role")
+            let label = try XCTUnwrap(Self.axLabel(of: element), "Heading lacks a title: \(identifier)")
+            if case .folder(let path) = group.key, path.string.isEmpty {
+                XCTAssertEqual(label, LibraryStrings.topLevel)
+            } else {
+                XCTAssertEqual(label, group.title)
+            }
+            let first = try XCTUnwrap(Self.accessibilityElement("picker-result-\(group.rows.lowerBound)", in: application))
+            let headingFrame = try XCTUnwrap(Self.axFrame(of: element))
+            let rowFrame = try XCTUnwrap(Self.axFrame(of: first))
+            XCTAssertLessThanOrEqual(headingFrame.maxY, rowFrame.minY, "\(identifier) must sit above its first row")
+        }
+        for position in picker.results.indices {
+            let identifier = "picker-result-\(position)"
+            _ = spin { Self.accessibilityElement(identifier, in: application) != nil }
+            XCTAssertNotNil(Self.accessibilityElement(identifier, in: application), "Missing \(identifier)")
+        }
+    }
+
+    func testMovingIntoAFolderScrollsItsHeadingAndFirstRowIntoView() throws {
+        for index in 0..<30 {
+            try files.write(Data("---\ntitle: Alpha \(index)\n---\nBody".utf8), at: String(format: "alpha/%02d.md", index))
+        }
+        try files.write(Data("---\ntitle: Omega\n---\nBody".utf8), at: "omega/last.md")
+        let picker = try open()
+        XCTAssertEqual(picker.resultGroups.map(\.rows.count), [30, 1])
+        let first = try XCTUnwrap(picker.resultGroups.last).rows.lowerBound
+        picker.selectResult(at: first - 1)
+        pump(for: 0.2)
+        picker.moveSelection(.down)
+        XCTAssertEqual(picker.selectionIndex, first)
+
+        let application = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+        var placement = "not found"
+        XCTAssertTrue(spin {
+            guard let heading = Self.accessibilityElement("picker-heading-1", in: application),
+                  let row = Self.accessibilityElement("picker-result-\(first)", in: application),
+                  let headingFrame = Self.axFrame(of: heading), let rowFrame = Self.axFrame(of: row),
+                  let area = Self.enclosingScrollArea(of: row).flatMap(Self.axFrame(of:)) else { return false }
+            placement = "heading \(headingFrame), row \(rowFrame), list \(area)"
+            return area.contains(headingFrame) && area.contains(rowFrame)
+        }, "The heading and its first row must both be visible: " + placement)
+    }
+
     func testFooterPasteAndCopyDeliverThroughExistingClipboardPath() throws {
         try files.write(Data("Footer delivery".utf8), at: "footer.md")
         let clipboard = MacRepeatClipboard()
@@ -1111,6 +1171,39 @@ final class MacPickerViewTests: XCTestCase {
         var action = try XCTUnwrap(actions[identifier], "Unknown footer action " + identifier)
         if action == .copy, presentation.model.fillModel != nil { action = .copyFilled }
         presentation.perform(action)
+    }
+
+    private static func axLabel(of element: AXUIElement) -> String? {
+        for attribute in [kAXTitleAttribute, kAXDescriptionAttribute] {
+            if let value = axValue(of: element, attribute as CFString) as? String { return value }
+        }
+        return nil
+    }
+
+    private static func axFrame(of element: AXUIElement) -> CGRect? {
+        guard let position = axValue(of: element, kAXPositionAttribute as CFString),
+              let size = axValue(of: element, kAXSizeAttribute as CFString) else { return nil }
+        var origin = CGPoint.zero
+        var extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+              AXValueGetValue(size as! AXValue, .cgSize, &extent) else { return nil }
+        return CGRect(origin: origin, size: extent)
+    }
+
+    private static func enclosingScrollArea(of element: AXUIElement) -> AXUIElement? {
+        var current = element
+        for _ in 0..<maxAccessibilityDepth {
+            guard let parent = axValue(of: current, kAXParentAttribute as CFString) else { return nil }
+            current = parent as! AXUIElement
+            if axValue(of: current, kAXRoleAttribute as CFString) as? String == kAXScrollAreaRole { return current }
+        }
+        return nil
+    }
+
+    private static func axValue(of element: AXUIElement, _ attribute: CFString) -> CFTypeRef? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+        return value
     }
 
     private static func accessibilityElement(_ identifier: String, in element: AXUIElement) -> AXUIElement? {

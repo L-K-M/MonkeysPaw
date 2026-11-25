@@ -29,12 +29,29 @@ final class LibrarySelectionDeferral {
     }
 }
 
+/// One rendered table row. Model positions are separate from table rows so
+/// headings can sit between prompts without shifting identity-based indexes.
+private enum LibraryListItem {
+    case heading(PromptFolderGroup)
+    case prompt(Int)
+
+    func isPrompt(at index: Int) -> Bool {
+        if case .prompt(let row) = self { return row == index }
+        return false
+    }
+}
+
 final class LibraryPromptListController: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
                                          NSMenuDelegate, NSMenuItemValidation {
+    private static let promptRowHeight: CGFloat = 46
+    private static let headingRowHeight: CGFloat = 24
+
     let tableView = LibraryPromptTableView()
     private let presentation: LibraryViewState
     private let mainThread: MainThread
     private var rows: [LibraryBrowserRow] = []
+    private var groups: [PromptFolderGroup] = []
+    private var items: [LibraryListItem] = []
     private var showsLastUse = false
     private var subscriptions: [AnyCancellable] = []
     private var synchronizing = false
@@ -71,7 +88,10 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         tableView.addTableColumn(NSTableColumn(identifier: .init("Prompt")))
         tableView.headerView = nil
         tableView.style = .inset
-        tableView.rowHeight = 46
+        tableView.rowHeight = Self.promptRowHeight
+        // Headings scroll with their rows, as on Linux and Android, so a
+        // floating heading never covers the first prompt of its folder.
+        tableView.floatsGroupRows = false
         tableView.allowsTypeSelect = true
         tableView.allowsEmptySelection = true
         tableView.allowsMultipleSelection = false
@@ -84,8 +104,9 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         tableView.onDelete = { [weak self] in self?.requestDelete() }
         tableView.onMouseBegan = { [weak self] row in
             guard let self else { return }
-            self.selectionDeferral.beginMouseSelection(self.rows.indices.contains(row) ? self.rows[row].relativePath : nil)
+            self.selectionDeferral.beginMouseSelection(self.modelRow(atTableRow: row).map { self.rows[$0].relativePath })
         }
+        tableView.onMoveSelection = { [weak self] up in self?.moveSelection(up: up) }
         tableView.onMouseEnded = { [weak self] in
             self?.selectionDeferral.endMouseSelection()
             self?.synchronizeSelection()
@@ -129,14 +150,17 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         defer { synchronizing = false }
         let recentChanged = showsLastUse != (state.selectedSection == .recent)
         showsLastUse = state.selectedSection == .recent
-        if rows != state.rows {
+        if rows != state.rows || groups != state.groups {
             rows = state.rows
+            groups = state.groups
+            rebuildItems()
             tableView.reloadData()
         } else if recentChanged {
             // A one-row All/Recent switch can keep identical data. Reconfigure
             // existing cells without rebuilding the table or its selection.
-            for index in rows.indices {
-                (tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? LibraryPromptCell)?
+            for (row, item) in items.enumerated() {
+                guard case .prompt(let index) = item else { continue }
+                (tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? LibraryPromptCell)?
                     .configure(rows[index], showsLastUse: showsLastUse)
             }
         }
@@ -148,35 +172,112 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
         emptyLabel.setAccessibilityElement(rows.isEmpty)
     }
 
+    /// Builds the display order from model rows and their folder ranges.
+    private func rebuildItems() {
+        guard !groups.isEmpty else {
+            items = rows.indices.map { .prompt($0) }
+            return
+        }
+        var rebuilt: [LibraryListItem] = []
+        rebuilt.reserveCapacity(rows.count + groups.count)
+        for group in groups {
+            rebuilt.append(.heading(group))
+            rebuilt.append(contentsOf: group.rows.map { .prompt($0) })
+        }
+        items = rebuilt
+    }
+
+    private func modelRow(atTableRow row: Int) -> Int? {
+        guard items.indices.contains(row), case .prompt(let index) = items[row] else { return nil }
+        return index
+    }
+
+    private func tableRow(forModelRow index: Int) -> Int? {
+        for (row, item) in items.enumerated() where item.isPrompt(at: index) { return row }
+        return nil
+    }
+
+    private func moveSelection(up: Bool) {
+        let selectable = items.indices.filter { modelRow(atTableRow: $0) != nil }
+        guard !selectable.isEmpty else { return }
+        let current = tableView.selectedRow
+        let next: Int?
+        if let position = selectable.firstIndex(of: current) {
+            // Compare against the selected prompt's own entry so an equal row
+            // index does not hide the rest of the list.
+            next = up
+                ? (position > 0 ? selectable[position - 1] : nil)
+                : (position + 1 < selectable.count ? selectable[position + 1] : nil)
+        } else if current < 0 {
+            next = up ? selectable.last : selectable.first
+        } else {
+            next = up ? selectable.last(where: { $0 < current }) : selectable.first(where: { $0 > current })
+        }
+        guard let next else { return }
+        tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+        tableView.scrollRowToVisible(next)
+    }
+
     func synchronizeSelection() { synchronizeSelection(presentation.snapshot.selection) }
 
     private func synchronizeSelection(_ selection: LibraryPromptSelection?) {
         let wasSynchronizing = synchronizing
         synchronizing = true
         defer { synchronizing = wasSynchronizing }
-        if let index = rows.firstIndex(where: { $0.selection == selection }) {
-            if tableView.selectedRow != index { tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
+        if let index = rows.firstIndex(where: { $0.selection == selection }), let row = tableRow(forModelRow: index) {
+            if tableView.selectedRow != row { tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
         } else { tableView.deselectAll(nil) }
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row index: Int) -> NSView? {
-        guard rows.indices.contains(index) else { return nil }
-        let identifier = NSUserInterfaceItemIdentifier("LibraryPromptCell")
-        let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? LibraryPromptCell) ?? LibraryPromptCell(frame: .zero)
-        cell.identifier = identifier
-        cell.configure(rows[index], showsLastUse: showsLastUse)
-        return cell
+        guard items.indices.contains(index) else { return nil }
+        switch items[index] {
+        case .heading(let group):
+            let identifier = NSUserInterfaceItemIdentifier("LibraryPromptHeadingCell")
+            let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? LibraryPromptHeadingCell)
+                ?? LibraryPromptHeadingCell(frame: .zero)
+            cell.identifier = identifier
+            cell.configure(Self.headingTitle(group))
+            return cell
+        case .prompt(let modelRow):
+            let identifier = NSUserInterfaceItemIdentifier("LibraryPromptCell")
+            let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? LibraryPromptCell)
+                ?? LibraryPromptCell(frame: .zero)
+            cell.identifier = identifier
+            cell.configure(rows[modelRow], showsLastUse: showsLastUse)
+            return cell
+        }
+    }
+
+    private static func headingTitle(_ group: PromptFolderGroup) -> String {
+        if case .folder(let path) = group.key, path.string.isEmpty { return LibraryStrings.topLevel }
+        return group.title
+    }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        guard items.indices.contains(row), case .heading = items[row] else { return false }
+        return true
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        modelRow(atTableRow: row) != nil
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard items.indices.contains(row), case .heading = items[row] else { return Self.promptRowHeight }
+        return Self.headingRowHeight
     }
 
     func tableView(_ tableView: NSTableView, typeSelectStringFor tableColumn: NSTableColumn?, row: Int) -> String? {
-        rows.indices.contains(row) ? rows[row].title : nil
+        guard let index = modelRow(atTableRow: row) else { return nil }
+        return rows[index].title
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard !synchronizing, rows.indices.contains(tableView.selectedRow) else { return }
-        selectionDeferral.select(rows[tableView.selectedRow].relativePath)
+        guard !synchronizing, let index = modelRow(atTableRow: tableView.selectedRow) else { return }
+        selectionDeferral.select(rows[index].relativePath)
     }
 
     @objc func focusEditor(_ sender: Any?) { presentation.focusEditor() }
@@ -189,8 +290,9 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        guard rows.indices.contains(row), let data = presentation.scopeDragData(for: rows[row].selection,
-            epoch: presentation.scopeDragEpoch) else { return nil }
+        guard let index = modelRow(atTableRow: row),
+              let data = presentation.scopeDragData(for: rows[index].selection,
+                  epoch: presentation.scopeDragEpoch) else { return nil }
         let item = NSPasteboardItem()
         item.setData(data, forType: .init(LibraryViewState.scopeDragTypeIdentifier))
         return item
@@ -220,8 +322,8 @@ final class LibraryPromptListController: NSViewController, NSTableViewDataSource
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let index = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
-        guard rows.indices.contains(index) else { contextPath = nil; return }
-        let row = rows[index]
+        guard let modelRow = modelRow(atTableRow: index) else { contextPath = nil; return }
+        let row = rows[modelRow]
         contextPath = row.relativePath
         if row.relativePath != presentation.editorState.prompt?.relativePath {
             add(LibraryStrings.open, action: #selector(openContextRow(_:)), to: menu)
@@ -289,6 +391,8 @@ final class LibraryPromptTableView: NSTableView {
     var onDropExit: (() -> Void)?
     var onReturn: (() -> Void)?
     var onDelete: (() -> Void)?
+    /// Arrow keys must skip unselectable heading rows.
+    var onMoveSelection: ((Bool) -> Void)?
 
     override func mouseDown(with event: NSEvent) {
         onMouseBegan?(row(at: convert(event.locationInWindow, from: nil)))
@@ -311,6 +415,10 @@ final class LibraryPromptTableView: NSTableView {
             .subtracting([.capsLock, .numericPad, .function])
         if flags.isEmpty, event.keyCode == 36 || event.keyCode == 76 { onReturn?(); return }
         if flags.isEmpty || flags == .command, event.keyCode == 51 || event.keyCode == 117 { onDelete?(); return }
+        if flags.isEmpty, event.keyCode == 0x7D || event.keyCode == 0x7E {
+            onMoveSelection?(event.keyCode == 0x7E)
+            return
+        }
         super.keyDown(with: event)
     }
 }
@@ -354,7 +462,7 @@ final class LibraryPromptCell: NSTableCellView {
         titleField.stringValue = row.title
         if showsLastUse, let date = row.lastUsedAt { detailField.stringValue = LibraryStrings.lastUsed(date) }
         else if let description = row.previewLine, !description.isEmpty { detailField.stringValue = description }
-        else { detailField.stringValue = ([row.folder.string] + row.tags.map { "#" + $0 }).filter { !$0.isEmpty }.joined(separator: " · ") }
+        else { detailField.stringValue = row.tags.map { "#" + $0 }.joined(separator: " · ") }
         for view in symbols.arrangedSubviews { symbols.removeArrangedSubview(view); view.removeFromSuperview() }
         if row.favorite { addSymbol("star.fill", color: .systemYellow) }
         if row.isReadOnly { addSymbol("lock.fill", color: .secondaryLabelColor) }
@@ -372,6 +480,37 @@ final class LibraryPromptCell: NSTableCellView {
         let image = NSImageView(image: NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage())
         image.contentTintColor = color
         symbols.addArrangedSubview(image)
+    }
+}
+
+/// A folder heading row. One small label, never selectable.
+final class LibraryPromptHeadingCell: NSTableCellView {
+    let titleField = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        titleField.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        titleField.textColor = .secondaryLabelColor
+        titleField.lineBreakMode = .byTruncatingTail
+        titleField.maximumNumberOfLines = 1
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(titleField)
+        NSLayoutConstraint.activate([
+            titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            titleField.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            titleField.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func configure(_ title: String) {
+        titleField.stringValue = title
+        setAccessibilityElement(true)
+        setAccessibilityLabel(title)
+        // The SDK names this role only from macOS 26, but VoiceOver reads the
+        // same AXHeading value on every supported release.
+        setAccessibilityRole(NSAccessibility.Role(rawValue: "AXHeading"))
     }
 }
 
