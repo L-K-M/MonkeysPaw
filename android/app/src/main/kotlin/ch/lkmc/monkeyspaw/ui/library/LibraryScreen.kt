@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -263,26 +264,77 @@ private fun LibraryResults(
             }
             LibraryContent.FAILED, LibraryContent.READY -> Unit
         }
-        itemsIndexed(state.rows, key = { _, row -> row.selection.relativePath }) { index, row ->
-            PromptRow(row, mode, selected = state.selectedPrompt?.selection == row.selection,
-                shape = pawGroupedShape(index, state.rows.size),
-                modifier = Modifier.animateItem(),
-                favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && row.canFavorite,
-                onOpen = { onSelect(row.selection); onOpen(row.selection) },
-                onToggleFavorite = { onToggleFavorite(row.selection) },
-                onEdit = onEdit?.let { edit -> { onSelect(row.selection); edit(row.selection) } },
-                onClearSelection = { onSelect(null) }.takeIf { mode == LibraryMode.BROWSER && state.selectedPrompt?.selection == row.selection },
-                onResolve = onResolve?.takeIf { row.syncOrigin != null }?.let { resolve ->
-                    { onSelect(row.selection); resolve(row.selection) }
-                })
+        if (state.groups.isEmpty()) {
+            itemsIndexed(state.rows, key = { _, row -> row.selection.relativePath }) { index, row ->
+                LibraryPromptRow(state, mode, row, pawGroupedShape(index, state.rows.size), Modifier.animateItem(),
+                    onSelect, onOpen, onToggleFavorite, onEdit, onResolve)
+            }
+        } else {
+            // Each folder is its own tonal group, so shapes and selection restart inside it.
+            for (group in state.groups) {
+                item(key = libraryHeadingKey(group.key)) { LibraryFolderHeadingView(group.heading, mode) }
+                group.rows.forEachIndexed { index, row ->
+                    item(key = row.selection.relativePath) {
+                        LibraryPromptRow(state, mode, row, pawGroupedShape(index, group.rows.size), Modifier.animateItem(),
+                            onSelect, onOpen, onToggleFavorite, onEdit, onResolve)
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
+private fun LibraryPromptRow(
+    state: LibraryUiState, mode: LibraryMode, row: LibraryRow, shape: Shape, modifier: Modifier,
+    onSelect: (LibrarySelection?) -> Unit, onOpen: (LibrarySelection) -> Unit,
+    onToggleFavorite: (LibrarySelection) -> Unit, onEdit: ((LibrarySelection) -> Unit)?,
+    onResolve: ((LibrarySelection) -> Unit)?,
+) {
+    PromptRow(row, mode, selected = state.selectedPrompt?.selection == row.selection, shape = shape,
+        showFolder = state.groups.isEmpty(), modifier = modifier,
+        favoriteEnabled = mode == LibraryMode.BROWSER && state.favoritePending == null && row.canFavorite,
+        onOpen = { onSelect(row.selection); onOpen(row.selection) },
+        onToggleFavorite = { onToggleFavorite(row.selection) },
+        onEdit = onEdit?.let { edit -> { onSelect(row.selection); edit(row.selection) } },
+        onClearSelection = { onSelect(null) }.takeIf { mode == LibraryMode.BROWSER && state.selectedPrompt?.selection == row.selection },
+        onResolve = onResolve?.takeIf { row.syncOrigin != null }?.let { resolve ->
+            { onSelect(row.selection); resolve(row.selection) }
+        })
+}
+
+@Composable
+private fun LibraryFolderHeadingView(heading: LibraryFolderHeading, mode: LibraryMode) {
+    // Align with the row's outer gutter plus its inner start padding.
+    val inset = if (mode == LibraryMode.IME_PICKER) PawSpacing.small + PawSpacing.medium
+        else PawLayout.pageGutter + PawSpacing.large
+    Text(libraryFolderHeadingTitle(heading), style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.fillMaxWidth().padding(start = inset, end = inset, top = PawSpacing.medium, bottom = PawSpacing.xs)
+            .semantics { heading() })
+}
+
+@Composable
+private fun libraryFolderHeadingTitle(heading: LibraryFolderHeading): String = when (heading) {
+    LibraryFolderHeading.TopLevel -> stringResource(R.string.library_top_level)
+    is LibraryFolderHeading.Folder -> heading.path
+    is LibraryFolderHeading.Group -> if (heading.subfolder.isEmpty()) heading.name else heading.name + "/" + heading.subfolder
+}
+
+// Row keys are relative paths, which never contain NUL, so the prefix keeps
+// heading keys apart from them. Keys stay strings because Compose saves them
+// in a Bundle.
+private const val HEADING_KEY_PREFIX = "\u0000heading:"
+
+private fun libraryHeadingKey(key: LibraryFolderKey): String = when (key) {
+    is LibraryFolderKey.Folder -> HEADING_KEY_PREFIX + "folder:" + key.path
+    is LibraryFolderKey.Group -> HEADING_KEY_PREFIX + "group:" + key.id.rawValue + ":" + key.subfolder
+}
+
+@Composable
 private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, shape: Shape, favoriteEnabled: Boolean,
     onOpen: () -> Unit, onToggleFavorite: () -> Unit, onEdit: (() -> Unit)?, onClearSelection: (() -> Unit)?, onResolve: (() -> Unit)?,
-    modifier: Modifier = Modifier) {
+    modifier: Modifier = Modifier, showFolder: Boolean = true) {
     if (mode == LibraryMode.IME_PICKER) {
         Surface(onClick = onOpen, modifier = modifier.fillMaxWidth()
             .padding(horizontal = PawSpacing.small, vertical = PawLayout.connectedGap).semantics { this.selected = selected },
@@ -328,7 +380,7 @@ private fun PromptRow(row: LibraryRow, mode: LibraryMode, selected: Boolean, sha
                 }
                 if (mode == LibraryMode.BROWSER) {
                     val details = listOfNotNull(row.group?.let { stringResource(R.string.library_group_role, it.name, it.role.wireValue) }
-                        ?: row.folder.takeIf { it.isNotEmpty() },
+                        ?: row.folder.takeIf { showFolder && it.isNotEmpty() },
                         stringResource(R.string.library_read_only).takeIf { row.isReadOnly },
                         stringResource(R.string.library_private_copy).takeIf { row.syncOrigin != null })
                     val metadata = details + row.tags.map { "#$it" }

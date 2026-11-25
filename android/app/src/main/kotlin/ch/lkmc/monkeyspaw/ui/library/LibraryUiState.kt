@@ -57,6 +57,25 @@ internal data class LibraryRow(
     val group: GroupAccessGroup? get() = (access as? PromptAccessState.Group)?.group
 }
 
+/** Heading identity. Folder keys compare exact bytes; group keys stay separate per group ID. */
+internal sealed interface LibraryFolderKey {
+    data class Folder(val path: String) : LibraryFolderKey
+    data class Group(val id: ULID, val subfolder: String) : LibraryFolderKey
+}
+
+/** Display form of one heading; groups use their committed name, not their folder. */
+internal sealed interface LibraryFolderHeading {
+    data object TopLevel : LibraryFolderHeading
+    data class Folder(val path: String) : LibraryFolderHeading
+    data class Group(val name: String, val subfolder: String) : LibraryFolderHeading
+}
+
+internal data class LibraryRowGroup(
+    val key: LibraryFolderKey,
+    val heading: LibraryFolderHeading,
+    val rows: List<LibraryRow>,
+)
+
 internal enum class LibraryContent { LOADING, READY, EMPTY, NO_MATCH, FAILED }
 internal enum class LibraryFailure { DATA, FAVOURITE, CHANGED }
 
@@ -65,6 +84,7 @@ internal data class LibraryUiState(
     val filter: LibraryFilter = LibraryFilter.All,
     val sections: List<LibrarySection> = emptyList(),
     val rows: List<LibraryRow> = emptyList(),
+    val groups: List<LibraryRowGroup> = emptyList(),
     // Selection survives filters hiding its row; opening a later destination must use this key.
     val selectedPrompt: LibraryRow? = null,
     val content: LibraryContent = LibraryContent.LOADING,
@@ -79,6 +99,7 @@ internal data class LibraryProjection(
     val sections: List<LibrarySection>,
     val filter: LibraryFilter,
     val rows: List<LibraryRow>,
+    val groups: List<LibraryRowGroup>,
     val content: LibraryContent,
 )
 
@@ -134,13 +155,51 @@ internal fun projectLibrary(loaded: LibrarySearchSnapshot, requested: LibraryFil
         val time = right.lastUsedAt!!.compareTo(left.lastUsedAt!!)
         if (time != 0) time else titleOrder(left, right)
     }
+    // Recent keeps newest-use order without headings; other ranked lists regroup by first appearance.
+    val groups = if (filter == LibraryFilter.Recent) emptyList() else libraryRowGroups(rows)
+    if (groups.isNotEmpty()) rows = groups.flatMap { it.rows }
     val content = when {
         loaded.state.snapshot.version == 0L -> if (loaded.state.error == null) LibraryContent.LOADING else LibraryContent.FAILED
         all.isEmpty() -> LibraryContent.EMPTY
         rows.isEmpty() -> LibraryContent.NO_MATCH
         else -> LibraryContent.READY
     }
-    return LibraryProjection(all, sections, filter, rows, content)
+    return LibraryProjection(all, sections, filter, rows, groups, content)
+}
+
+/** One heading and the rows below it, in list order. A flat library gets no headings. */
+internal fun libraryRowGroups(rows: List<LibraryRow>): List<LibraryRowGroup> {
+    if (rows.isEmpty()) return emptyList()
+    val headings = LinkedHashMap<LibraryFolderKey, LibraryFolderHeading>()
+    val buckets = LinkedHashMap<LibraryFolderKey, MutableList<LibraryRow>>()
+    for (row in rows) {
+        val (key, heading) = libraryRowPlacement(row)
+        headings.getOrPut(key) { heading }
+        buckets.getOrPut(key) { mutableListOf() }.add(row)
+    }
+    if (headings.keys.all { it is LibraryFolderKey.Folder && it.path.isEmpty() }) return emptyList()
+    return headings.keys.map { key -> LibraryRowGroup(key, headings.getValue(key), buckets.getValue(key).toList()) }
+}
+
+private fun libraryRowPlacement(row: LibraryRow): Pair<LibraryFolderKey, LibraryFolderHeading> {
+    val group = (row.access as? PromptAccessState.Group)?.group
+    if (group != null) {
+        val root = "Groups/${group.folder}"
+        val subfolder = when {
+            row.folder == root -> ""
+            row.folder.length > root.length && row.folder.startsWith(root) && row.folder[root.length] == '/' ->
+                row.folder.substring(root.length + 1)
+            else -> null
+        }
+        if (subfolder != null) {
+            return LibraryFolderKey.Group(group.id, subfolder) to LibraryFolderHeading.Group(group.name, subfolder)
+        }
+    }
+    return if (row.folder.isEmpty()) {
+        LibraryFolderKey.Folder("") to LibraryFolderHeading.TopLevel
+    } else {
+        LibraryFolderKey.Folder(row.folder) to LibraryFolderHeading.Folder(row.folder)
+    }
 }
 
 private fun libraryRow(indexed: IndexedPrompt): LibraryRow {

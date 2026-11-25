@@ -44,7 +44,7 @@ internal class LibraryViewModelTest : TemporaryFiles() {
             model.setQuery(query)
             runCurrent()
             val expected = repository.withLibrary { library, _ -> library.index.search(query).map { it.entry.relativePath } }
-            assertEquals(expected, paths(model), query)
+            assertEquals(regrouped(expected), paths(model), query)
         }
         model.setQuery("rvw changes")
         runCurrent()
@@ -456,6 +456,71 @@ internal class LibraryViewModelTest : TemporaryFiles() {
         assertEquals("New/a.md", model.state.value.selectedPrompt?.selection?.relativePath)
     }
 
+    @Test
+    fun `headings follow first appearance while ranked rows keep their order inside each folder`() = runTest {
+        put(libraryDir.resolve("f1/a.md"), "---\ntitle: A\n---\nbody".encodeToByteArray())
+        put(libraryDir.resolve("f2/b.md"), "---\ntitle: B\n---\nbody".encodeToByteArray())
+        put(libraryDir.resolve("f1/c.md"), "---\ntitle: C\n---\nbody".encodeToByteArray())
+        put(libraryDir.resolve("f3/d.md"), "---\ntitle: D\n---\nbody".encodeToByteArray())
+        val model = loadedModel()
+        assertEquals(listOf("f1/a.md", "f1/c.md", "f2/b.md", "f3/d.md"), paths(model))
+        assertEquals(listOf(LibraryFolderKey.Folder("f1"), LibraryFolderKey.Folder("f2"), LibraryFolderKey.Folder("f3")),
+            model.state.value.groups.map { it.key })
+        assertEquals(
+            listOf(listOf("f1/a.md", "f1/c.md"), listOf("f2/b.md"), listOf("f3/d.md")),
+            model.state.value.groups.map { group -> group.rows.map { it.selection.relativePath } },
+        )
+    }
+
+    @Test
+    fun `all top-level prompts show no headings`() = runTest {
+        put(libraryDir.resolve("b.md"), "---\ntitle: B\n---\nbody".encodeToByteArray())
+        put(libraryDir.resolve("a.md"), "---\ntitle: A\n---\nbody".encodeToByteArray())
+        val model = loadedModel()
+        assertTrue(model.state.value.groups.isEmpty())
+        assertEquals(listOf("a.md", "b.md"), paths(model))
+    }
+
+    @Test
+    fun `Recent keeps newest-use order and shows no headings`() = runTest {
+        put(libraryDir.resolve("work/older.md"), "---\ntitle: Older\n---\nbody".encodeToByteArray())
+        put(libraryDir.resolve("latest.md"), "---\ntitle: Latest\n---\nbody".encodeToByteArray())
+        val model = loadedModel()
+        repository.withLibrary { library, _ ->
+            library.usage.recordUse(library.load("latest.md").identity, Instant.parse("2026-10-14T00:00:00Z"))
+            library.usage.recordUse(library.load("work/older.md").identity, Instant.parse("2026-10-13T00:00:00Z"))
+        }
+        runCurrent()
+        model.setFilter(LibraryFilter.Recent)
+        runCurrent()
+        assertTrue(model.state.value.groups.isEmpty())
+        assertEquals(listOf("latest.md", "work/older.md"), paths(model))
+    }
+
+    @Test
+    fun `selected folder filter keeps its single heading`() = runTest {
+        fixtures()
+        val model = loadedModel()
+        model.setFilter(LibraryFilter.Folder("Work/code"))
+        runCurrent()
+        val groups = model.state.value.groups
+        assertEquals(listOf(LibraryFolderKey.Folder("Work/code")), groups.map { it.key })
+        assertEquals(listOf(LibraryFolderHeading.Folder("Work/code")), groups.map { it.heading })
+        assertEquals(listOf("Work/code/review.md"), paths(model))
+    }
+
+    @Test
+    fun `grouped rows still cover every row exactly once`() = runTest {
+        fixtures()
+        val model = loadedModel()
+        val rows = model.state.value.rows
+        val groups = model.state.value.groups
+        assertTrue(groups.isNotEmpty())
+        assertEquals(rows.size, groups.sumOf { it.rows.size })
+        assertEquals(rows.map { it.selection.relativePath }.sorted(), groups.flatMap { group -> group.rows }.map { it.selection.relativePath }.sorted())
+        assertEquals(paths(model), groups.flatMap { group -> group.rows }.map { it.selection.relativePath })
+    }
+
     private fun fixtures() {
         put(libraryDir.resolve("Work/code/review.md"), "---\ntitle: Review a diff\ndescription: Inspect changes\ntags: [Code, CODE, '']\nfavorite: true\n---\nShow the diff".encodeToByteArray())
         put(libraryDir.resolve("Work/notes.md"), "---\ntitle: Zulu notes\ntags: [code]\n---\nnotes".encodeToByteArray())
@@ -475,6 +540,14 @@ internal class LibraryViewModelTest : TemporaryFiles() {
         model(wrap = wrap).also { it.refresh(); runCurrent() }
 
     private fun paths(model: LibraryViewModel) = model.state.value.rows.map { it.selection.relativePath }
+
+    /** Regroups Core's ranked paths by first folder appearance, independently of the production grouping. */
+    private suspend fun regrouped(ranked: List<String>): List<String> {
+        val folders = repository.withLibrary { library, _ -> library.entries().associate { it.relativePath to it.folder } }
+        val buckets = linkedMapOf<String, MutableList<String>>()
+        for (path in ranked) buckets.getOrPut(folders.getValue(path)) { mutableListOf() }.add(path)
+        return buckets.values.flatten()
+    }
 
     private class QueuedDispatcher : CoroutineDispatcher() {
         private val tasks = mutableListOf<Runnable>()
