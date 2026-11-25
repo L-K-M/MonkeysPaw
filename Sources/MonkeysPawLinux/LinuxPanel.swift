@@ -569,7 +569,7 @@ final class LinuxPanel: PanelWindow {
                 let text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2)!
                 let title = GTK.label(result.title)
                 gtk_box_append(mp_box(text), title)
-                let subtitle = GTK.label(resultSubtitle(result))
+                let subtitle = GTK.label(picker.resultDetail(for: result))
                 for css in ["dim-label", "caption"] { gtk_widget_add_css_class(subtitle, css) }
                 // One line each: the fixed results column must not grow rows.
                 for label in [title, subtitle] {
@@ -593,12 +593,6 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_visible(assistantButton, noMatches == nil ? 0 : 1)
         gtk_widget_set_visible(assistantHint, noMatches == nil ? 0 : 1)
         gtk_button_set_label(mp_button(folderButton), LinuxStrings.library)
-    }
-
-    /// #tags only: headings already name the folder, so a row never repeats
-    /// it (§11.8).
-    private func resultSubtitle(_ result: PickerResultRow) -> String {
-        result.tags.map { "#" + $0 }.joined(separator: " · ")
     }
 
     /// Menu items are real buttons so tests can find and activate them by name.

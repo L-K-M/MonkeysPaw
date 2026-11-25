@@ -151,6 +151,16 @@ public final class PickerModel: @unchecked Sendable {
         onChange?()
     }
 
+    public func resultDetail(for row: PickerResultRow) -> String {
+        var details = row.tags.map { "#" + $0 }
+        // An externally moved group prompt can be at the top level while
+        // retaining group access. Keep its group name in an unheaded list.
+        if resultGroups.isEmpty, case .group(let group) = row.access {
+            details.append(group.name)
+        }
+        return details.joined(separator: " · ")
+    }
+
     public func moveSelection(_ direction: SelectionDirection) {
         guard state == .picker, let selectionIndex, !results.isEmpty else { return }
         let offset = direction == .up ? -1 : 1

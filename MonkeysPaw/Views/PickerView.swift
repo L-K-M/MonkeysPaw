@@ -124,6 +124,7 @@ private struct PickerResultsView: View {
     }
 
     @ObservedObject var presentation: PickerViewState
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     var body: some View {
         if presentation.model.results.isEmpty {
@@ -162,8 +163,7 @@ private struct PickerResultsView: View {
         else { title = group.title }
         return Text(title)
             .font(.caption)
-            .foregroundStyle(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-                ? Color.secondary : WishCardStyle.secondary)
+            .foregroundStyle(colorSchemeContrast == .increased ? Color.secondary : WishCardStyle.secondary)
             .lineLimit(1)
             .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -173,7 +173,8 @@ private struct PickerResultsView: View {
 
     private func row(_ result: IndexedResult) -> some View {
         let selected = result.position == presentation.model.selectionIndex
-        return PickerResultView(row: result.row, isSelected: selected)
+        return PickerResultView(row: result.row, detail: presentation.model.resultDetail(for: result.row),
+            isSelected: selected)
             .contentShape(Rectangle())
             .onTapGesture(count: 2) { activate(result) }
             .onTapGesture { presentation.model.selectResult(at: result.position) }
@@ -200,6 +201,7 @@ private struct PickerResultsView: View {
 
 private struct PickerResultView: View {
     let row: PickerResultRow
+    let detail: String
     let isSelected: Bool
 
     var body: some View {
@@ -231,11 +233,6 @@ private struct PickerResultView: View {
         if NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast { return .primary }
         if isSelected || row.favorite { return WishCardStyle.amber }
         return WishCardStyle.secondary
-    }
-
-    /// Rows under a heading omit the folder and group name (§11.8).
-    private var detail: String {
-        row.tags.map { "#" + $0 }.joined(separator: " · ")
     }
 }
 

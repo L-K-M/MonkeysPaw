@@ -587,8 +587,9 @@ without headings.
   sit under the group's committed name, followed by any subfolder inside the
   group (`team/reviews`). Group headings are keyed by group ID, so two groups
   with the same name stay separate. Prompts under `Groups/` without group
-  access use their folder path. Folder keys compare exact path bytes, like
-  folder sections.
+  access and group prompts moved outside their group's folder use their
+  current folder path. Folder keys compare exact path bytes, like folder
+  sections.
 - **When they show.** A list whose rows are all top-level shows no headings,
   so a flat library looks as before. Otherwise every row sits under a heading,
   including the single heading of a selected folder without subfolders.
