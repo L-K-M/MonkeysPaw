@@ -41,7 +41,9 @@ authorize a new plaintext save. See [credential tiers](SECURITY.md#credentials).
 ## Library
 
 The header bar provides New, Edit/Preview/Source, Favourite, Search and Inspector.
-The sidebar groups folders, tags, favourites and recent prompts. The inspector
+The sidebar groups folders, tags, favourites and recent prompts. The prompt
+list and the picker group prompts under folder headings; Recent keeps its
+newest-first order. The inspector
 contains Fields, History and Assistant; opening it keeps the window's width.
 
 - **Ctrl+N** creates a prompt; **Ctrl+S** saves; **Ctrl+Shift+S** duplicates.

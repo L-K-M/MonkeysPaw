@@ -45,6 +45,9 @@ the picker and add the tile; you can skip steps and reopen setup later.
 | Text-selection action, where the target offers it | Use selected text in a prompt. Writable selection can return replacement text; read-only selection offers Copy. The target app controls whether it accepts a replacement. |
 | Share text/plain to Monkey's Paw | Choose Fill a prompt or start an unsaved New prompt from the shared text. Fill ends in Copy; New prompt requires explicit Save. |
 
+The Library and the picker keyboard group prompts under folder headings;
+Recent keeps its newest-first order.
+
 The picker keyboard is not a typing keyboard and does not read surrounding
 target text. It uses editor metadata and connection readiness. The app tries
 to return to your previous keyboard after insertion; if switching is
