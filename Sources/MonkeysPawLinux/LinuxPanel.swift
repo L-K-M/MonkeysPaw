@@ -18,6 +18,7 @@ final class LinuxPanel: PanelWindow {
     private var activationToken: String?
     private var isRendering = false
     private var renderedResults: [PickerResultRow] = []
+    private var renderedGroups: [PromptFolderGroup] = []
     private var renderedFocus: Int?
     private let sounds: LinuxFeedbackSounds
     private let creepy: () -> Bool
@@ -177,6 +178,7 @@ final class LinuxPanel: PanelWindow {
         boundFill = nil
         initialFocus = nil
         renderedResults = []
+        renderedGroups = []
         renderedFocus = nil
         transientStatus = nil
         queryPreedit = nil
@@ -220,6 +222,9 @@ final class LinuxPanel: PanelWindow {
         gtk_widget_set_name(resultsList, "picker-results")
         gtk_list_box_set_selection_mode(mp_list_box(resultsList), GTK_SELECTION_SINGLE)
         gtk_list_box_set_activate_on_single_click(mp_list_box(resultsList), 0)
+        GTK.listHeaders(resultsList, heading: { [weak self] index, _ in
+            self?.renderedGroups.first { $0.rows.lowerBound == index }?.title
+        }, label: LinuxFolderHeading.label)
         let listScroll = scrolled(resultsList)
         gtk_box_append(mp_box(pickerPage), listScroll)
         GTK.onRow(resultsList, "row-selected") { [weak self, weak picker] position in
@@ -549,9 +554,11 @@ final class LinuxPanel: PanelWindow {
     }
 
     private func renderResults(_ picker: PickerModel) {
-        if renderedResults != picker.results {
+        if renderedResults != picker.results || renderedGroups != picker.resultGroups {
             while let child = gtk_widget_get_first_child(resultsList) { gtk_list_box_remove(mp_list_box(resultsList), child) }
             renderedResults = picker.results
+            // Set before appending: the header func reads it for each new row.
+            renderedGroups = picker.resultGroups
             for result in picker.results {
                 let row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
                 let icon = gtk_image_new_from_icon_name(
@@ -588,12 +595,10 @@ final class LinuxPanel: PanelWindow {
         gtk_button_set_label(mp_button(folderButton), LinuxStrings.library)
     }
 
-    /// folder · #tags · group — the last component names the sync group when
-    /// the prompt is group-owned (§24.5).
+    /// #tags only: headings already name the folder, so a row never repeats
+    /// it (§11.8).
     private func resultSubtitle(_ result: PickerResultRow) -> String {
-        var parts = [result.folder] + result.tags.map { "#" + $0 }
-        if case .group(let group) = result.access { parts.append(group.name) }
-        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+        result.tags.map { "#" + $0 }.joined(separator: " · ")
     }
 
     /// Menu items are real buttons so tests can find and activate them by name.
@@ -907,6 +912,24 @@ final class LinuxPanel: PanelWindow {
             + " active=\(gtk_window_is_active(mp_window(window)) != 0)"
             + " state=\(LinuxPickerTrace.pickerState(picker?.state)) blur=\(blurRevision)"
             + " timer=\(revision.map(String.init) ?? "none")")
+    }
+}
+
+/// Folder heading shown as the header of a group's first row. A header is
+/// drawn above its row rather than being a row, so indices, selection and
+/// keyboard navigation keep addressing prompt rows (§11.8).
+enum LinuxFolderHeading {
+    static func label(_ title: String) -> GTK.Widget {
+        let label = mp_heading_label(title)!
+        gtk_widget_add_css_class(label, "heading")
+        gtk_widget_add_css_class(label, "dim-label")
+        gtk_widget_set_halign(label, GTK_ALIGN_START)
+        gtk_widget_set_margin_top(label, 6)
+        gtk_widget_set_margin_bottom(label, 2)
+        gtk_widget_set_margin_start(label, 8)
+        gtk_label_set_wrap(mp_label(label), 0)
+        gtk_label_set_ellipsize(mp_label(label), PANGO_ELLIPSIZE_END)
+        return label
     }
 }
 #endif

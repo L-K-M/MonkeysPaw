@@ -140,28 +140,37 @@ enum GTK {
 
     private final class HeaderBox {
         let heading: (Int, Int?) -> String?
-        init(_ heading: @escaping (Int, Int?) -> String?) { self.heading = heading }
+        let label: (String) -> Widget
+        init(_ heading: @escaping (Int, Int?) -> String?, label: @escaping (String) -> Widget) {
+            self.heading = heading
+            self.label = label
+        }
     }
 
-    static func listHeaders(_ list: Widget, heading: @escaping (Int, Int?) -> String?) {
-        let data = Unmanaged.passRetained(HeaderBox(heading)).toOpaque()
+    /// Installs a header func. GTK parents and shows a row header only from
+    /// this func, so a header set on a row directly is never drawn.
+    static func listHeaders(_ list: Widget, heading: @escaping (Int, Int?) -> String?,
+                            label: ((String) -> Widget)? = nil) {
+        let data = Unmanaged.passRetained(HeaderBox(heading, label: label ?? sectionHeading)).toOpaque()
         gtk_list_box_set_header_func(mp_list_box(list), { row, before, data in
             guard let row, let data else { return }
-            let heading = Unmanaged<HeaderBox>.fromOpaque(data).takeUnretainedValue().heading(
+            let box = Unmanaged<HeaderBox>.fromOpaque(data).takeUnretainedValue()
+            let heading = box.heading(
                 Int(gtk_list_box_row_get_index(row)), before.map { Int(gtk_list_box_row_get_index($0)) })
-            let label = heading.map { text -> Widget in
-                let label = GTK.label(text)
-                gtk_widget_add_css_class(label, "heading")
-                gtk_widget_add_css_class(label, "dim-label")
-                gtk_widget_set_margin_top(label, 16)
-                gtk_widget_set_margin_bottom(label, 6)
-                gtk_widget_set_margin_start(label, 12)
-                return label
-            }
-            gtk_list_box_row_set_header(row, label)
+            gtk_list_box_row_set_header(row, heading.map(box.label))
         }, data, { data in
             if let data { Unmanaged<HeaderBox>.fromOpaque(data).release() }
         })
+    }
+
+    private static func sectionHeading(_ text: String) -> Widget {
+        let label = GTK.label(text)
+        gtk_widget_add_css_class(label, "heading")
+        gtk_widget_add_css_class(label, "dim-label")
+        gtk_widget_set_margin_top(label, 16)
+        gtk_widget_set_margin_bottom(label, 6)
+        gtk_widget_set_margin_start(label, 12)
+        return label
     }
 
     private final class ClickBox {

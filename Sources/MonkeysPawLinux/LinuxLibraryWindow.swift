@@ -51,6 +51,7 @@ final class LinuxLibraryWindow {
     private var filterPreedit = false
     private var renderedSections: [LibraryBrowserSection] = []
     private var renderedRows: [LibraryBrowserRow] = []
+    private var renderedGroups: [PromptFolderGroup] = []
     private var renderedSection: LibrarySectionID?
     private var renderedRowsSection: LibrarySectionID?
     private var messageSelection: LibraryPromptSelection?
@@ -230,6 +231,9 @@ final class LinuxLibraryWindow {
         configureSectionHeaders()
         configureList(list, name: "library-list", label: LinuxStrings.libraryPrompts)
         gtk_widget_add_css_class(list, "rich-list")
+        GTK.listHeaders(list, heading: { [weak self] index, _ in
+            self?.renderedGroups.first { $0.rows.lowerBound == index }?.title
+        }, label: LinuxFolderHeading.label)
         GTK.onRow(sidebar, "row-selected") { [weak self] position in
             guard let self, !self.isDestroyed, !self.isRendering, let position,
                   self.renderedSections.indices.contains(position) else { return }
@@ -654,6 +658,7 @@ final class LinuxLibraryWindow {
         commands.bind(editor: editor, browser: browser)
         renderedSections = []
         renderedRowsSection = nil
+        renderedGroups = []
         historyPrompt = nil
         historyReloadPending = false
         if let imports { importView?.bind(imports) }
@@ -1553,17 +1558,20 @@ final class LinuxLibraryWindow {
 
     private func renderRows(_ state: LibraryBrowserState) {
         let hadFocus = containsFocus(list)
-        if renderedRowsSection == nil || renderedRows != state.rows
+        if renderedRowsSection == nil || renderedRows != state.rows || renderedGroups != state.groups
             || (renderedRowsSection == .recent) != (state.selectedSection == .recent) {
             clear(list)
             renderedRows = state.rows
+            // Set before appending: the header func reads it for each new row.
+            renderedGroups = state.groups
             for row in state.rows {
                 let content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8)!
                 for edge in [gtk_widget_set_margin_top, gtk_widget_set_margin_bottom] { edge(content, 6) }
                 let text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3)!
                 gtk_widget_set_hexpand(text, 1)
                 gtk_box_append(mp_box(text), rowLabel(row.title))
-                let metadata = ([row.folder.string] + row.tags.map { "#" + $0 }).filter { !$0.isEmpty }.joined(separator: " · ")
+                let metadataParts = state.groups.isEmpty ? [row.folder.string] : []
+                let metadata = (metadataParts + row.tags.map { "#" + $0 }).filter { !$0.isEmpty }.joined(separator: " · ")
                 var detail = row.previewLine.flatMap { $0.isEmpty ? nil : $0 } ?? metadata
                 if state.selectedSection == .recent, let lastUsed = row.lastUsedAt {
                     detail = LinuxStrings.lastUsed(lastUsed) + (detail.isEmpty ? "" : " · " + detail)
