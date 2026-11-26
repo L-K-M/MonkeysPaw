@@ -87,20 +87,21 @@ container health plus `/api/health` status 200 using a throwaway admin
 password file mounted read-only at `/run/secrets/`.
 
 Only smoke-tested OCI archives and digests are uploaded as
-`MonkeysPaw-server-image-{amd64,arm64}` workflow artifacts. They stay outside
-the `MonkeysPaw-release-*` asset glob and are retained for three days as
-validation artifacts, separate from GitHub Release downloads. Both native
-image builds and smoke tests remain release gates. The owner removed GHCR
+`MonkeysPaw-server-image-{amd64,arm64}` workflow artifacts. They are retained
+for three days as validation artifacts, separate from GitHub Release downloads.
+Both native image builds and smoke tests remain release gates. The owner removed GHCR
 publication on 2026-10-19: no image is pushed to GHCR or any other registry,
 and no multiarch registry manifest is assembled. Registry distribution is
 not provided yet. Build a versioned local image with
 `scripts/build.sh server-image`; `update.sh` also builds the repo-owned image
 locally for Compose deployment.
 
-Each packager uploads a workflow artifact, downloads it, and byte-compares
-every file against its build outputs. Ordinary CI also round-trips its
-release APK/checksum and Flatpak bundle/checksum. The assembly job requires
-exactly seven desktop assets (deb/checksum, Flatpak/checksum and dmg/zip/manifest)
+Each packager downloads its workflow artifact by the ID returned by upload
+and byte-compares every file against its build outputs. The download retries
+once to allow the upload to become visible. Ordinary CI also round-trips its
+release APK/checksum and Flatpak bundle/checksum. Release assembly and
+publishing fetch the IDs from the verified packaging jobs. The assembly job
+requires exactly seven desktop assets (deb/checksum, Flatpak/checksum and dmg/zip/manifest)
 plus the two Android assets (APK/checksum), nine nonempty files in total.
 It rejects extra files, including hidden entries, and requires each checksum manifest to name
 every corresponding payload exactly once before checking all four manifests.
