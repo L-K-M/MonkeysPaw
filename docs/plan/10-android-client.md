@@ -239,7 +239,7 @@ Both can return later as opt-in extras.
 
 | Screen | Content |
 |---|---|
-| Library | search; filters for All, Favourites, Recent, Conflicts, folders, groups, tags; sync status |
+| Library | search; filters for All, Favourites, Recent, Conflicts, folders, groups, tags; rows under folder headings (§11.8); sync status |
 | Fill | one control per field (text, multi-line, choice), live preview, capture field chooser/ignore when applicable; Copy in activities and activity handoff, Insert and explicit Copy in the IME or editable selection action. IME text values are displayed without software text input; editing opens the Copy activity. |
 | Editor | front matter fields + body, live validation; read-only for `viewer` groups; history and restore |
 | Assistant | write, review, improve with diff and accept (M11) |

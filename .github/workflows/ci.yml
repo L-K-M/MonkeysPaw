@@ -196,6 +196,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container: swift:6.4-noble
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     defaults:
       run:
         shell: bash
@@ -289,6 +291,7 @@ jobs:
           test "$version" = 'monkeyspaw 0.1.0-beta.1'
           (cd dist && sha256sum -c 'monkeyspaw_0.1.0~beta.1_amd64.deb.sha256')
       - name: Upload the tested amd64 deb and checksum
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-tested-deb
@@ -320,9 +323,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Fetch this run's tested Debian package
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-tested-deb
+          artifact-id: ${{ needs.deb.outputs.artifact_id }}
           path: ${{ runner.temp }}/monkeyspaw-tested-deb
       - name: Install Flatpak and sandbox verification tools
         run: |
@@ -494,6 +497,7 @@ jobs:
           timeout --kill-after=5s 180s xvfb-run -a --server-args='-screen 0 1280x2400x24' \
             dbus-run-session -- /usr/bin/python3 scripts/flatpak-smoke.py
       - name: Upload the verified bundle and checksum
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-flatpak-artifacts
@@ -503,9 +507,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded Flatpak artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-flatpak-artifacts
+          artifact-id: ${{ steps.upload.outputs.artifact-id }}
           path: ${{ runner.temp }}/flatpak-ci-roundtrip
       - name: Byte-compare against original Flatpak outputs
         run: |
@@ -579,6 +583,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Upload verified release APK and checksum
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-android-release
@@ -588,9 +593,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded release APK artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-android-release
+          artifact-id: ${{ steps.upload.outputs.artifact-id }}
           path: ${{ runner.temp }}/android-ci-roundtrip
       - name: Byte-compare against original release APK outputs
         env:

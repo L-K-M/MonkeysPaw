@@ -70,7 +70,11 @@ public final class PickerModel: @unchecked Sendable {
 
     public var onChange: (() -> Void)?
     public private(set) var query = ""
+    /// Ranked matches, grouped so each folder heading's rows are adjacent.
     public private(set) var results: [PickerResultRow] = []
+    /// Folder headings as ranges over `results` (§11.8); empty when every
+    /// result is top-level.
+    public private(set) var resultGroups: [PromptFolderGroup] = []
     public private(set) var selectionIndex: Int?
     public private(set) var selectedPreview = PickerPreview.none
     /// Card projection of the selected renderable prompt; built from document
@@ -145,6 +149,16 @@ public final class PickerModel: @unchecked Sendable {
         self.query = query
         refresh(resetSelection: true)
         onChange?()
+    }
+
+    public func resultDetail(for row: PickerResultRow) -> String {
+        var details = row.tags.map { "#" + $0 }
+        // An externally moved group prompt can be at the top level while
+        // retaining group access. Keep its group name in an unheaded list.
+        if resultGroups.isEmpty, case .group(let group) = row.access {
+            details.append(group.name)
+        }
+        return details.joined(separator: " · ")
     }
 
     public func moveSelection(_ direction: SelectionDirection) {
@@ -420,7 +434,12 @@ public final class PickerModel: @unchecked Sendable {
 
     private func refresh(resetSelection: Bool) {
         let previous = resetSelection ? nil : selectedEntry?.relativePath
-        matches = index.search(query)
+        // Headings follow their best-ranked match, so the best match stays first.
+        let grouped = PromptFolderGrouping.group(index.search(query), order: .firstAppearance) {
+            PromptFolderGrouping.placement(folder: $0.entry.folder, access: $0.entry.access)
+        }
+        matches = grouped.rows
+        resultGroups = grouped.groups
         results = matches.map { result in
             let entry = result.entry
             let front = entry.document.frontMatter

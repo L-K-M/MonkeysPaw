@@ -33,7 +33,7 @@ class FlatpakWorkflowTests(unittest.TestCase):
         job = JOBS["flatpak"]
         self.assertIn("needs: [tests, verify, linux]", job)
         self.assertIn("DEB_FILE: ${{ needs.linux.outputs.deb_file }}", job)
-        self.assertIn("name: MonkeysPaw-release-deb", job)
+        self.assertIn("artifact-id: ${{ needs.linux.outputs.artifact_id }}", job)
         self.assertIn('"$RUNNER_TEMP/monkeyspaw-tested-deb/$DEB_FILE" "$VERSION"', job)
         self.assertIn('apt-get install -y --no-install-recommends "./dist/$deb_file"', JOBS["linux"])
         self.assertIn('$(/usr/bin/monkeyspaw --version)', JOBS["linux"])
@@ -57,6 +57,8 @@ class FlatpakWorkflowTests(unittest.TestCase):
                 self.assertIn('kernel.apparmor_restrict_unprivileged_userns=$(cat ', job)
                 self.assertNotRegex(job, r"\b(?:swift|swift64) (?:build|test)\b|container:|secrets\.")
                 for action in re.findall(r"uses: (.+)", job):
+                    if action == "./.github/actions/download-uploaded-artifact":
+                        continue
                     self.assertRegex(action, r"^[\w/-]+@[0-9a-f]{40}(?: #.*)?$")
 
     def test_ordinary_ci_uses_installed_exports_and_requires_display_accessibility_and_mime(self):

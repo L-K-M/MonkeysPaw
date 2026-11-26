@@ -206,7 +206,8 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(nested.parent, .folder("work"))
         XCTAssertEqual(presentation.snapshot.sections.first { $0.id == .tag("code") }?.count, 2)
         presentation.selectSection(.folder("work"))
-        XCTAssertEqual(presentation.snapshot.rows.map(\.title), ["Alpha", "Beta"])
+        // Headings follow the sidebar: parent work before its work/deep subfolder.
+        XCTAssertEqual(presentation.snapshot.rows.map(\.title), ["Beta", "Alpha"])
         presentation.selectPath("work/deep/a.md")
         let selected = presentation.snapshot.selection
         XCTAssertEqual(presentation.preview, .rendered("Alpha body"))
@@ -223,10 +224,11 @@ final class MacLibraryWindowTests: XCTestCase {
         presentation.moveSelection(.down)
         XCTAssertEqual(presentation.snapshot.selectedPrompt?.title, "Beta")
         presentation.selectSection(.all)
+        // All rows run Top level, work, then work/deep, so Beta's upper neighbour is Root.
         presentation.moveSelection(.up)
-        XCTAssertEqual(presentation.snapshot.selectedPrompt?.title, "Alpha")
+        XCTAssertEqual(presentation.snapshot.selectedPrompt?.title, "root")
         presentation.moveSelection(.up)
-        XCTAssertEqual(presentation.snapshot.selectedPrompt?.title, "Alpha", "Arrows stop at the list boundary")
+        XCTAssertEqual(presentation.snapshot.selectedPrompt?.title, "root", "Arrows stop at the list boundary")
     }
 
     func testRecentShowsRetainedUseDateAndRefreshesWithoutAnIndexRebuild() throws {
@@ -247,6 +249,9 @@ final class MacLibraryWindowTests: XCTestCase {
         XCTAssertEqual(presentation.snapshot.rows.map(\.relativePath), ["a.md"])
         XCTAssertEqual(presentation.snapshot.rows.first?.lastUsedAt, usedAt)
         XCTAssertEqual(presentation.snapshot.sections.first { $0.id == .recent }?.count, 1)
+        let list = try XCTUnwrap(controller().promptList)
+        XCTAssertEqual(list.tableView.numberOfRows, 1, "Recent shows no headings")
+        XCTAssertFalse(list.tableView(list.tableView, isGroupRow: 0))
 
         let picker = try XCTUnwrap(delegate.pickerModel)
         picker.open()
@@ -693,28 +698,112 @@ final class MacLibraryWindowTests: XCTestCase {
         let controller = try controller()
         let list = try XCTUnwrap(controller.promptList)
         let table = list.tableView
-        XCTAssertEqual(table.numberOfRows, 2)
+        // Top Level heading, Alpha, folder heading, Beta.
+        XCTAssertEqual(table.numberOfRows, 4)
         XCTAssertNil(table.headerView)
         XCTAssertTrue(table.allowsTypeSelect)
         XCTAssertTrue(table.allowsEmptySelection)
         XCTAssertFalse(table.allowsMultipleSelection)
-        let cell = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 0) as? LibraryPromptCell)
+        let topHeading = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 0) as? LibraryPromptHeadingCell)
+        XCTAssertEqual(topHeading.titleField.stringValue, LibraryStrings.topLevel)
+        if #available(macOS 26.0, *) {
+            XCTAssertEqual(topHeading.accessibilityRole(), NSAccessibility.Role.headingRole)
+        }
+        XCTAssertTrue(list.tableView(table, isGroupRow: 0))
+        XCTAssertFalse(list.tableView(table, shouldSelectRow: 0))
+        XCTAssertNil(list.tableView(table, typeSelectStringFor: table.tableColumns.first, row: 0))
+        XCTAssertNil(list.tableView(table, pasteboardWriterForRow: 0))
+        XCTAssertLessThan(list.tableView(table, heightOfRow: 0), list.tableView(table, heightOfRow: 1))
+        let cell = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 1) as? LibraryPromptCell)
         XCTAssertEqual(cell.titleField.stringValue, "Alpha")
         XCTAssertEqual(cell.detailField.stringValue, "A description")
-        let second = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 1) as? LibraryPromptCell)
-        XCTAssertEqual(second.detailField.stringValue, "folder · #code")
-        XCTAssertEqual(list.tableView(table, typeSelectStringFor: table.tableColumns.first, row: 1), "Beta")
-        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        XCTAssertFalse(list.tableView(table, isGroupRow: 1))
+        let folderHeading = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 2) as? LibraryPromptHeadingCell)
+        XCTAssertEqual(folderHeading.titleField.stringValue, "folder")
+        XCTAssertFalse(list.tableView(table, shouldSelectRow: 2))
+        let second = try XCTUnwrap(list.tableView(table, viewFor: table.tableColumns.first, row: 3) as? LibraryPromptCell)
+        XCTAssertEqual(second.detailField.stringValue, "#code")
+        XCTAssertEqual(list.tableView(table, typeSelectStringFor: table.tableColumns.first, row: 3), "Beta")
+        table.selectRowIndexes(IndexSet(integer: 3), byExtendingSelection: false)
+        XCTAssertEqual(table.selectedRow, 3)
         XCTAssertEqual(controller.presentation.editorState.prompt?.relativePath, "folder/b.md")
         controller.presentation.setFilter("Alpha")
+        XCTAssertEqual(table.numberOfRows, 1, "A flat filtered list has no headings")
+        XCTAssertFalse(list.tableView(table, isGroupRow: 0))
         XCTAssertEqual(table.selectedRow, -1, "A hidden selection has no highlighted row")
         XCTAssertEqual(controller.presentation.editorState.prompt?.relativePath, "folder/b.md")
         controller.presentation.setFilter("")
+        XCTAssertEqual(table.selectedRow, 3, "The same prompt keeps its table row after refiltering")
         let revision = controller.presentation.editorFocusRevision
         table.keyDown(with: try key(kVK_Return, in: try window()))
         XCTAssertGreaterThan(controller.presentation.editorFocusRevision, revision)
         table.keyDown(with: try key(kVK_Delete, modifiers: .command, in: try window()))
         XCTAssertEqual(controller.presentation.fileCommandRequest?.command, .delete)
+    }
+
+    func testArrowKeysSkipFolderHeadings() throws {
+        try put("---\ntitle: Alpha\n---\nBody", at: "a.md")
+        try put("---\ntitle: Beta\n---\nBody", at: "work/b.md")
+        try put("---\ntitle: Gamma\n---\nBody", at: "work/deep/c.md")
+        try start()
+        delegate.showLibrary()
+        let list = try XCTUnwrap(controller().promptList)
+        let table = list.tableView
+        let window = try window()
+        // Sidebar order: Top level, work, then work/deep.
+        XCTAssertEqual(table.numberOfRows, 6)
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        XCTAssertEqual(table.selectedRow, 1)
+        XCTAssertTrue(window.makeFirstResponder(table))
+        let presentation = try controller().presentation
+        window.sendEvent(try key(kVK_DownArrow, characters: "", in: window))
+        XCTAssertEqual(table.selectedRow, 3, "Down skips the work heading")
+        XCTAssertEqual(presentation.snapshot.selection?.relativePath, "work/b.md")
+        window.sendEvent(try key(kVK_DownArrow, characters: "", in: window))
+        XCTAssertEqual(table.selectedRow, 5)
+        XCTAssertEqual(presentation.snapshot.selection?.relativePath, "work/deep/c.md")
+        window.sendEvent(try key(kVK_UpArrow, characters: "", in: window))
+        XCTAssertEqual(table.selectedRow, 3, "Up skips the work/deep heading")
+        XCTAssertEqual(presentation.snapshot.selection?.relativePath, "work/b.md")
+    }
+
+    func testFolderHeadingsOfferNoContextMenu() throws {
+        try put("---\ntitle: Alpha\n---\nBody", at: "a.md")
+        try put("---\ntitle: Beta\n---\nBody", at: "work/b.md")
+        try start()
+        delegate.showLibrary()
+        let list = try XCTUnwrap(controller().promptList)
+        let table = list.tableView
+        let window = try window()
+        table.layoutSubtreeIfNeeded()
+        let menu = try XCTUnwrap(table.menu)
+        XCTAssertEqual(table.numberOfRows, 4)
+
+        func rightClick(_ row: Int) throws -> [String] {
+            let center = NSPoint(x: table.rect(ofRow: row).midX, y: table.rect(ofRow: row).midY)
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown,
+                location: table.convert(center, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            _ = table.menu(for: event)
+            XCTAssertEqual(table.clickedRow, row)
+            list.menuNeedsUpdate(menu)
+            return menu.items.map(\.title)
+        }
+        XCTAssertFalse(try rightClick(1).isEmpty, "A prompt row keeps its context menu")
+        XCTAssertEqual(try rightClick(2), [], "The work heading has no context menu")
+    }
+
+    func testFlatLibraryKeepsAnUnheadedPromptList() throws {
+        try put("One", at: "one.md")
+        try put("Two", at: "two.md")
+        try start()
+        delegate.showLibrary()
+        let list = try XCTUnwrap(controller().promptList)
+        let table = list.tableView
+        XCTAssertEqual(table.numberOfRows, 2)
+        XCTAssertFalse(list.tableView(table, isGroupRow: 0))
+        XCTAssertFalse(list.tableView(table, isGroupRow: 1))
+        XCTAssertTrue(list.tableView(table, shouldSelectRow: 0))
     }
 
     func testSelectionDefersMouseUpAndCancelsDraggedClick() {

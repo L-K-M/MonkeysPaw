@@ -19,6 +19,7 @@
     <string name="library_refresh">Refresh</string>
     <string name="library_search">Search prompts</string>
     <string name="library_all">All</string>
+    <string name="library_top_level">Top level</string>
     <string name="library_favourites">Favourites</string>
     <string name="library_recent">Recent</string>
     <string name="library_conflicts">Conflicts</string>

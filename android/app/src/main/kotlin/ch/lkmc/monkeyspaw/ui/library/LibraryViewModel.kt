@@ -132,7 +132,7 @@ internal class LibraryViewModel @Inject constructor(
                 val selected = reconcileSelection()
                 mutableState.value = mutableState.value.copy(
                     filter = projection.filter, sections = projection.sections, rows = projection.rows,
-                    selectedPrompt = selected, content = projection.content,
+                    groups = projection.groups, selectedPrompt = selected, content = projection.content,
                     failure = actionFailure ?: loaded.state.error?.let { LibraryFailure.DATA },
                 )
             } catch (error: Exception) {

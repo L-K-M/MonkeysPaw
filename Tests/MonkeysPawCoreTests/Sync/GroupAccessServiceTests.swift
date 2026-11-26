@@ -82,6 +82,45 @@ final class GroupAccessServiceTests: XCTestCase {
         XCTAssertEqual(browser.rows.map(\.relativePath), ["Notes/group.md"])
     }
 
+    func testFolderHeadingsUseCommittedGroupNamesAndSubfolders() throws {
+        let rig = try GroupAccessRig(role: .editor)
+        try rig.base.files.put("---\ntitle: Nested\n---\nBody", at: "Groups/Team/reviews/n.md")
+        try rig.base.files.put("---\ntitle: Local\n---\nBody", at: "Team/local.md")
+        try rig.base.files.put("---\ntitle: Root\n---\nBody", at: "root.md")
+        try rig.index.rebuild()
+        let browser = LibraryBrowserModel(index: rig.index, usage: rig.base.usage, favorites: rig.base.library,
+            main: rig.main, editor: rig.model)
+        guard case .group(let group) = try XCTUnwrap(browser.rows.first { $0.relativePath == RelativePath(rig.path) }).access else {
+            return XCTFail("The rig prompt must have group access")
+        }
+        XCTAssertEqual(browser.groups.map(\.key), [.folder(""), .group(group.id, subfolder: ""),
+            .group(group.id, subfolder: "reviews"), .folder("Team")])
+        XCTAssertEqual(browser.groups.map(\.title), ["Top level", group.name, group.name + "/reviews", "Team"])
+        browser.selectSection(.group(group.id))
+        XCTAssertEqual(browser.groups.map(\.title), [group.name, group.name + "/reviews"])
+    }
+
+    func testPickerRetainsGroupNameWhenAnExternalMoveLeavesNoHeading() throws {
+        let rig = try GroupAccessRig(role: .editor)
+        let delivery = DeliveryHarness()
+        let fill = FillService(values: ValuesStore(files: rig.base.data), clipboard: delivery.clipboard,
+            clock: LibraryClock(), timeZone: { .gmt })
+        let picker = PickerModel(index: rig.index, fill: fill, delivery: delivery.service, main: delivery.main)
+        picker.open()
+
+        let grouped = try XCTUnwrap(picker.results.first)
+        XCTAssertEqual(picker.resultGroups.map(\.title), ["Team"])
+        XCTAssertEqual(picker.resultDetail(for: grouped), "")
+
+        try rig.base.files.move(from: rig.path, to: "group.md")
+        try rig.index.rebuild()
+
+        let ungrouped = try XCTUnwrap(picker.results.first)
+        XCTAssertEqual(ungrouped.relativePath, "group.md")
+        XCTAssertEqual(picker.resultGroups, [])
+        XCTAssertEqual(picker.resultDetail(for: ungrouped), "Team")
+    }
+
     func testBrowserMoveDestinationsUseCurrentFoldersAndRolesIncludingEmptyGroups() throws {
         let rig = try GroupAccessRig(role: .editor)
         let empty = SyncTestValues.device

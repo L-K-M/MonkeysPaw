@@ -15,6 +15,37 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = (ROOT / ".github/workflows/release.yml").read_text()
 JOBS = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)",
                        SOURCE.split("\njobs:\n", 1)[1], re.MULTILINE | re.DOTALL))
+CI_JOBS = dict(re.findall(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)",
+                          (ROOT / ".github/workflows/ci.yml").read_text().split("\njobs:\n", 1)[1],
+                          re.MULTILINE | re.DOTALL))
+
+
+class ArtifactLookupTests(unittest.TestCase):
+    def test_round_trips_use_the_upload_step_output(self):
+        for jobs, names in ((CI_JOBS, ("flatpak", "android")),
+                            (JOBS, ("linux", "flatpak", "macos", "android-build"))):
+            for name in names:
+                with self.subTest(job=name, release=jobs is JOBS):
+                    job = jobs[name]
+                    self.assertRegex(job, r"id: upload\n +uses: actions/upload-artifact@")
+                    self.assertIn("uses: ./.github/actions/download-uploaded-artifact", job)
+                    self.assertIn("artifact-id: ${{ steps.upload.outputs.artifact-id }}", job)
+
+    def test_consumers_use_the_verified_producer_ids(self):
+        self.assertIn("artifact-id: ${{ needs.deb.outputs.artifact_id }}", CI_JOBS["flatpak"])
+        self.assertIn("artifact_id: ${{ steps.upload.outputs.artifact-id }}", CI_JOBS["deb"])
+        for producer in ("linux", "flatpak", "macos", "android-build"):
+            self.assertIn("artifact_id: ${{ steps.upload.outputs.artifact-id }}", JOBS[producer])
+            for consumer in ("artifacts", "publish"):
+                self.assertIn(f"${{{{ needs.{producer}.outputs.artifact_id }}}}", JOBS[consumer])
+
+    def test_download_retries_only_the_requested_id(self):
+        action = (ROOT / ".github/actions/download-uploaded-artifact/action.yml").read_text()
+        self.assertEqual(re.findall(r"artifact-ids: (.+)", action),
+                         ["${{ inputs.artifact-id }}"] * 2)
+        self.assertEqual(action.count("if: steps.download.outcome == 'failure'"), 2)
+        self.assertEqual(action.count("continue-on-error: true"), 1)
+        self.assertNotRegex(action, r"\n\s+(?:name|pattern): MonkeysPaw-")
 
 
 def step_script(job, name, jobs=JOBS):

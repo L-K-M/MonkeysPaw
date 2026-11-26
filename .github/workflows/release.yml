@@ -13,6 +13,7 @@ on:
     paths:
       - .github/workflows/ci.yml
       - .github/workflows/release.yml
+      - .github/actions/download-uploaded-artifact/action.yml
       - server/Dockerfile
       - packaging/**
       - flatpak/**
@@ -127,6 +128,7 @@ jobs:
       RELEASE_TAG: ${{ needs.verify.outputs.tag }}
     outputs:
       deb_file: ${{ steps.package.outputs.deb_file }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -165,6 +167,7 @@ jobs:
           grep -q 'Unicode, Inc. and others' "$payload/usr/share/doc/monkeyspaw/Third-Party-Notices.txt"
           echo "deb_file=$deb_file" >> "$GITHUB_OUTPUT"
       - name: Upload deb and checksum
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-release-deb
@@ -174,9 +177,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded deb artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-release-deb
+          artifact-id: ${{ steps.upload.outputs.artifact-id }}
           path: ${{ runner.temp }}/deb-roundtrip
       - name: Byte-compare against original deb outputs
         env:
@@ -201,14 +204,15 @@ jobs:
       DEB_FILE: ${{ needs.linux.outputs.deb_file }}
     outputs:
       bundle_file: ${{ steps.package.outputs.bundle_file }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Fetch the exact release deb and checksum
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-release-deb
+          artifact-id: ${{ needs.linux.outputs.artifact_id }}
           path: ${{ runner.temp }}/monkeyspaw-tested-deb
       - name: Prepare bounded user namespaces and GNOME 50
         run: |
@@ -253,6 +257,7 @@ jobs:
           test "$(timeout 15s dbus-run-session -- flatpak run --user "$APP_ID" --version)" = "monkeyspaw $VERSION"
           echo "bundle_file=$bundle_file" >> "$GITHUB_OUTPUT"
       - name: Upload the verified bundle and checksum
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-release-flatpak
@@ -262,9 +267,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded Flatpak artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-release-flatpak
+          artifact-id: ${{ steps.upload.outputs.artifact-id }}
           path: ${{ runner.temp }}/flatpak-roundtrip
       - name: Byte-compare against original Flatpak outputs
         env:
@@ -299,6 +304,8 @@ jobs:
         shell: /bin/bash -e -o pipefail {0}
     env:
       VERSION: ${{ needs.verify.outputs.version }}
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -333,6 +340,7 @@ jobs:
           grep -q '^Yams ' <<< "$notices"
           grep -q 'Kirill Simonov' <<< "$notices"
       - name: Upload dmg, zip and checksum manifest
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-release-macos
@@ -343,9 +351,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded macOS artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-release-macos
+          artifact-id: ${{ steps.upload.outputs.artifact-id }}
           path: ${{ runner.temp }}/macos-roundtrip
       - name: Byte-compare against original macOS outputs
         run: |
@@ -369,6 +377,7 @@ jobs:
       VERSION: ${{ needs.verify.outputs.version }}
     outputs:
       apk_file: ${{ steps.package.outputs.apk_file }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -396,6 +405,7 @@ jobs:
           python3 ../scripts/verify-android-release.py "../dist/$apk_file" "$VERSION"
           echo "apk_file=$apk_file" >> "$GITHUB_OUTPUT"
       - name: Upload APK and checksum
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: MonkeysPaw-release-android
@@ -405,9 +415,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Download the uploaded APK artifact
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/download-uploaded-artifact
         with:
-          name: MonkeysPaw-release-android
+          artifact-id: ${{ steps.upload.outputs.artifact-id }}
           path: ${{ runner.temp }}/android-roundtrip
       - name: Byte-compare against original APK outputs
         env:
@@ -447,7 +457,11 @@ jobs:
       - name: Assemble verified workflow artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: MonkeysPaw-release-*
+          artifact-ids: >-
+            ${{ needs.linux.outputs.artifact_id }},
+            ${{ needs.flatpak.outputs.artifact_id }},
+            ${{ needs.macos.outputs.artifact_id }},
+            ${{ needs.android-build.outputs.artifact_id }}
           merge-multiple: true
           path: dist
       - name: Require every asset and verify checksums
@@ -602,7 +616,7 @@ jobs:
       - name: Upload smoke-tested OCI archive and digest
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          # Keep images outside the MonkeysPaw-release-* asset assembly.
+          # Keep image artifacts separate from the publishable client packages.
           name: MonkeysPaw-server-image-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/server-image/server-${{ matrix.arch }}.tar
@@ -639,7 +653,11 @@ jobs:
       - name: Fetch the verified build outputs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: MonkeysPaw-release-*
+          artifact-ids: >-
+            ${{ needs.linux.outputs.artifact_id }},
+            ${{ needs.flatpak.outputs.artifact_id }},
+            ${{ needs.macos.outputs.artifact_id }},
+            ${{ needs.android-build.outputs.artifact_id }}
           merge-multiple: true
           path: dist
       - name: Create draft and attach every asset

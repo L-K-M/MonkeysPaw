@@ -60,7 +60,13 @@ final class MacScopeDragTests: XCTestCase {
         let h = try MacScopeDragHarness()
         defer { h.close() }
         let controller = try XCTUnwrap(h.delegate.libraryWindow?.promptList)
-        let index = try XCTUnwrap(h.view.snapshot.rows.firstIndex { $0.relativePath == h.view.editorState.prompt?.relativePath })
+        let path = try XCTUnwrap(h.view.editorState.prompt?.relativePath.string)
+        // Table rows now interleave folder headings, so find the prompt's row by content.
+        let index = try XCTUnwrap((0..<controller.tableView.numberOfRows).first { row in
+            let cell = controller.tableView(controller.tableView, viewFor: controller.tableView.tableColumns[0],
+                                            row: row) as? LibraryPromptCell
+            return (cell?.accessibilityLabel() ?? "").components(separatedBy: ", ").contains(path)
+        })
         let epoch = h.view.scopeDragEpoch
         let item = try XCTUnwrap(controller.tableView(controller.tableView, pasteboardWriterForRow: index) as? NSPasteboardItem)
         let bytes = try XCTUnwrap(item.data(forType: .init(LibraryViewState.scopeDragTypeIdentifier)))

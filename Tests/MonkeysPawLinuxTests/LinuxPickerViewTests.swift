@@ -902,6 +902,91 @@ final class LinuxPickerViewTests: XCTestCase {
         try XCTUnwrap(findWidget { String(cString: gtk_widget_get_name($0)) == name }, "Missing GTK control \(name)")
     }
 
+    func testFolderHeadingsLeadEachGroupAndSubtitlesDropTheFolder() throws {
+        try files.write(Data("---\ntitle: Beta\ntags: [code]\n---\nBeta body".utf8), at: "work/b.md")
+        try files.write(Data("---\ntitle: Gamma\n---\nGamma body".utf8), at: "work/c.md")
+        try files.write(Data("---\ntitle: Root\n---\nRoot body".utf8), at: "root.md")
+        try open()
+        // Headings follow their best-ranked match, so work leads Top level.
+        XCTAssertEqual(environment.pickerModel.results.map(\.title), ["Beta", "Gamma", "Root"])
+        XCTAssertEqual(environment.pickerModel.resultGroups.map(\.title), ["work", "Top level"])
+        let list = try widget("picker-results")
+        let rows = try (0..<3).map { try row(in: list, at: $0) }
+        XCTAssertEqual(try headerText(of: rows[0]), "work")
+        let firstHeader = try XCTUnwrap(header(of: rows[0]))
+        XCTAssertEqual(gtk_widget_has_css_class(firstHeader, "heading"), 1)
+        XCTAssertEqual(gtk_widget_has_css_class(firstHeader, "dim-label"), 1)
+        XCTAssertEqual(accessibleRole(firstHeader), GTK_ACCESSIBLE_ROLE_HEADING)
+        XCTAssertNil(header(of: rows[1]), "Only the first row of a group carries its heading")
+        XCTAssertEqual(try headerText(of: rows[2]), "Top level")
+        // Rows under a heading omit the folder from the secondary line.
+        XCTAssertEqual(labels(in: rows[0]).last, "#code")
+    }
+
+    func testFlatPickerListHasNoHeadings() throws {
+        try files.write(Data("Alpha body".utf8), at: "a.md")
+        try files.write(Data("Beta body".utf8), at: "b.md")
+        try open()
+        XCTAssertTrue(environment.pickerModel.resultGroups.isEmpty)
+        let list = try widget("picker-results")
+        for index in 0..<2 { XCTAssertNil(header(of: try row(in: list, at: index))) }
+    }
+
+    func testArrowNavigationCrossesAHeadingIntoTheNextPromptRow() throws {
+        try files.write(Data("---\ntitle: Beta\ntags: [code]\n---\nBeta body".utf8), at: "work/b.md")
+        try files.write(Data("---\ntitle: Gamma\n---\nGamma body".utf8), at: "work/c.md")
+        try files.write(Data("---\ntitle: Root\n---\nRoot body".utf8), at: "root.md")
+        try open()
+        let list = try widget("picker-results")
+        // Headers are not rows: three prompts stay three rows.
+        XCTAssertNil(gtk_list_box_get_row_at_index(mp_list_box(list), 3))
+        XCTAssertEqual(environment.pickerModel.selectionIndex, 0)
+        XCTAssertTrue(sendKey(GDK_KEY_Down))
+        XCTAssertEqual(environment.pickerModel.selectionIndex, 1)
+        XCTAssertTrue(sendKey(GDK_KEY_Down))
+        XCTAssertEqual(environment.pickerModel.selectionIndex, 2)
+        let selected = gtk_list_box_get_selected_row(mp_list_box(list)).map { Int(gtk_list_box_row_get_index($0)) }
+        XCTAssertEqual(selected, 2)
+        XCTAssertEqual(try headerText(of: try row(in: list, at: 2)), "Top level")
+        XCTAssertTrue(sendKey(GDK_KEY_Up))
+        XCTAssertEqual(environment.pickerModel.selectionIndex, 1)
+    }
+
+    private func row(in list: GTK.Widget, at position: Int) throws -> GTK.Widget {
+        let row = try XCTUnwrap(gtk_list_box_get_row_at_index(mp_list_box(list), Int32(position)),
+                                "Missing picker result row \(position)")
+        return mp_row_widget(row)
+    }
+
+    private func header(of row: GTK.Widget) -> GTK.Widget? {
+        gtk_list_box_row_get_header(mp_list_box_row(row))
+    }
+
+    private func headerText(of row: GTK.Widget) throws -> String? {
+        guard let header = header(of: row) else { return nil }
+        // GTK draws a header only after the list box parents it; a stored
+        // but unparented header leaves a blank gap.
+        XCTAssertEqual(gtk_widget_get_parent(header), gtk_widget_get_parent(row), "A heading must be in the widget tree")
+        return String(cString: gtk_label_get_text(mp_label(header)))
+    }
+
+    private func labels(in widget: GTK.Widget) -> [String] {
+        var result = [String]()
+        if String(cString: g_type_name_from_instance(UnsafeMutableRawPointer(widget).assumingMemoryBound(to: GTypeInstance.self))) == "GtkLabel" {
+            result.append(String(cString: gtk_label_get_text(mp_label(widget))))
+        }
+        var child = gtk_widget_get_first_child(widget)
+        while let current = child {
+            result += labels(in: current)
+            child = gtk_widget_get_next_sibling(current)
+        }
+        return result
+    }
+
+    private func accessibleRole(_ widget: GTK.Widget) -> GtkAccessibleRole {
+        gtk_accessible_get_accessible_role(OpaquePointer(widget))
+    }
+
     private func createPrompt(query: String, expectedPath: String) throws {
         try open()
         mp_entry_set_text(try widget("picker-query"), query)

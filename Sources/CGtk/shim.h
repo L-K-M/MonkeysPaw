@@ -41,6 +41,13 @@ static inline int mp_rename_exclusive(const char *source, const char *destinatio
     return (int)syscall(SYS_renameat2, AT_FDCWD, source, AT_FDCWD, destination, RENAME_NOREPLACE);
 }
 
+/* Accessible roles are construct-only, and g_object_new is variadic, so Swift
+ * cannot build the row heading label directly. */
+static inline GtkWidget *mp_heading_label(const char *text) {
+    return g_object_new(GTK_TYPE_LABEL, "accessible-role", GTK_ACCESSIBLE_ROLE_HEADING,
+                        "label", text, NULL);
+}
+
 /* Birth time distinguishes an immediately reused inode without using mtime. */
 static inline int mp_directory_birth(const char *path, int64_t *seconds, uint32_t *nanos) {
     struct statx info;

@@ -340,6 +340,102 @@ final class LinuxLibraryWindowTests: XCTestCase {
         XCTAssertEqual(mp_test_emit_key_pressed(unavailable, UInt32(GDK_KEY_n), GDK_CONTROL_MASK), 0)
     }
 
+    func testFolderHeadingsLeadRowsAndRowsUnderThemOmitFolderMetadata() throws {
+        try files.write(Data("---\ntitle: Alpha\n---\nAlpha body".utf8), at: "a.md")
+        try files.write(Data("---\ntitle: Beta\ntags: [code]\n---\nBeta body".utf8), at: "work/b.md")
+        try files.write(Data("---\ntitle: Gamma\n---\nGamma body".utf8), at: "work/c.md")
+        try files.write(Data("---\ntitle: Delta\ntags: [design]\n---\nDelta body".utf8), at: "work/deep/d.md")
+        let window = try openLibrary()
+        let browser = environment.libraryBrowserModel
+        // Sidebar order: Top level, then work before its subfolder.
+        XCTAssertEqual(browser.state.groups.map(\.title), ["Top level", "work", "work/deep"])
+        let list = try settingsWidget("library-list", in: window)
+        let rows = try (0..<4).map { try rowWidget(in: list, at: $0) }
+        XCTAssertEqual(try headerText(of: rows[0]), "Top level")
+        XCTAssertEqual(try headerText(of: rows[1]), "work")
+        XCTAssertNil(header(of: rows[2]), "Only the first row of a group carries its heading")
+        XCTAssertEqual(try headerText(of: rows[3]), "work/deep")
+        let heading = try XCTUnwrap(header(of: rows[1]))
+        XCTAssertEqual(gtk_widget_has_css_class(heading, "heading"), 1)
+        XCTAssertEqual(gtk_widget_has_css_class(heading, "dim-label"), 1)
+        XCTAssertEqual(accessibleRole(heading), GTK_ACCESSIBLE_ROLE_HEADING)
+        // Rows under a heading omit the folder from their secondary line.
+        XCTAssertEqual(labels(in: try XCTUnwrap(gtk_list_box_row_get_child(mp_list_box_row(rows[1])))).last, "#code")
+        XCTAssertEqual(labels(in: try XCTUnwrap(gtk_list_box_row_get_child(mp_list_box_row(rows[3])))).last, "#design")
+
+        // Filtering to one prompt keeps a single heading when it is not top level.
+        let filter = try settingsWidget("library-filter", in: window)
+        mp_entry_set_text(filter, "Beta")
+        XCTAssertTrue(GTKTestSupport.spin { browser.rows.count == 1 })
+        drain()
+        XCTAssertEqual(browser.state.groups.map(\.title), ["work"])
+        let filtered = try settingsWidget("library-list", in: window)
+        XCTAssertEqual(try headerText(of: try rowWidget(in: filtered, at: 0)), "work")
+        mp_entry_set_text(filter, "Alpha")
+        XCTAssertTrue(GTKTestSupport.spin { browser.rows.count == 1 && browser.state.groups.isEmpty })
+        drain()
+        XCTAssertNil(header(of: try rowWidget(in: try settingsWidget("library-list", in: window), at: 0)))
+    }
+
+    func testFlatLibraryAndRecentSectionHaveNoHeadings() throws {
+        try files.write(Data("Used prompt".utf8), at: "used.md")
+        try files.write(Data("Other prompt".utf8), at: "other.md")
+        let window = try openLibrary()
+        let browser = environment.libraryBrowserModel
+        XCTAssertTrue(browser.state.groups.isEmpty, "A flat library keeps an unheaded list")
+        let list = try settingsWidget("library-list", in: window)
+        for index in 0..<2 { XCTAssertNil(header(of: try rowWidget(in: list, at: index))) }
+
+        environment.pickerModel.open()
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.panel.isVisible })
+        let usedIndex = try XCTUnwrap(environment.pickerModel.results.firstIndex { $0.relativePath == "used.md" })
+        environment.pickerModel.selectResult(at: usedIndex)
+        environment.pickerModel.use(mode: .copyOnly)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.pickerModel.state == .done(.copiedOnly(.requested)) })
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.sections.first { $0.id == .recent }?.count == 1 })
+        try selectSection(.recent, in: window)
+        drain()
+        XCTAssertTrue(browser.state.groups.isEmpty, "Recent shows no headings")
+        let recent = try settingsWidget("library-list", in: window)
+        XCTAssertEqual(browser.rows.count, 1)
+        XCTAssertNil(header(of: try rowWidget(in: recent, at: 0)))
+        XCTAssertTrue(labels(in: recent).contains { $0.hasPrefix("Last used:") })
+    }
+
+    func testArrowNavigationOverAHeadingSelectsTheNextPromptRow() throws {
+        try files.write(Data("---\ntitle: Alpha\n---\nAlpha body".utf8), at: "a.md")
+        try files.write(Data("---\ntitle: Beta\n---\nBeta body".utf8), at: "work/b.md")
+        try files.write(Data("---\ntitle: Gamma\n---\nGamma body".utf8), at: "work/c.md")
+        try files.write(Data("---\ntitle: Delta\n---\nDelta body".utf8), at: "work/deep/d.md")
+        let window = try openLibrary()
+        let list = try settingsWidget("library-list", in: window)
+        XCTAssertTrue(GTKTestSupport.spin { gtk_window_is_active(mp_window(window)) != 0 })
+        let first = try rowWidget(in: list, at: 0)
+        XCTAssertNotEqual(gtk_widget_grab_focus(first), 0)
+        moveCursor(in: list, by: 1)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.selection?.relativePath.string == "work/b.md" })
+        moveCursor(in: list, by: 1)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.selection?.relativePath.string == "work/c.md" })
+        moveCursor(in: list, by: 1)
+        XCTAssertTrue(GTKTestSupport.spin { self.environment.libraryBrowserModel.selection?.relativePath.string == "work/deep/d.md" })
+    }
+
+    private func header(of row: GTK.Widget) -> GTK.Widget? {
+        gtk_list_box_row_get_header(mp_list_box_row(row))
+    }
+
+    private func headerText(of row: GTK.Widget) throws -> String? {
+        guard let header = header(of: row) else { return nil }
+        // GTK draws a header only after the list box parents it; a stored
+        // but unparented header leaves a blank gap.
+        XCTAssertEqual(gtk_widget_get_parent(header), gtk_widget_get_parent(row), "A heading must be in the widget tree")
+        return String(cString: gtk_label_get_text(mp_label(header)))
+    }
+
+    private func accessibleRole(_ widget: GTK.Widget) -> GtkAccessibleRole {
+        gtk_accessible_get_accessible_role(OpaquePointer(widget))
+    }
+
     private func openLibrary() throws -> GTK.Widget {
         g_action_group_activate_action(mp_action_group(application), ActionName.library.rawValue, nil)
         XCTAssertTrue(GTKTestSupport.spin { self.libraryWindows.first.map { gtk_widget_get_visible($0) != 0 } == true })

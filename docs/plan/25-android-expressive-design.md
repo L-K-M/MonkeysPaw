@@ -33,7 +33,7 @@ browser inside half the display, leaving little space for prompts.
 
 - **Library.** A clear title, prominent search, concise primary filters and
   an organized browse surface for folders/groups/tags. Rows prioritize title
-  and description. Favourite and contextual edit/resolve actions replace dead
+  and description and form one tonal group per folder heading (§11.8). Favourite and contextual edit/resolve actions replace dead
   checkbox rows. New prompt is the primary creation action; assistant and
   settings/account entry points remain discoverable.
 - **Editor.** Stable back/save chrome, a focused source canvas, proper
@@ -57,7 +57,8 @@ browser inside half the display, leaving little space for prompts.
 The IME remains a picker, not a typing keyboard. Its compact toolbar provides
 Search in app and Switch keyboard; it does not show a software-search text
 field, app navigation, disabled favourites or full-file metadata. Compact
-prompt rows and filters leave room for actual results.
+prompt rows under folder headings (§11.8) and filters leave room for actual
+results.
 
 Inline Fill uses the same visual language, with keyboard-sized controls,
 bounded preview and reachable Insert/Copy actions. Free-text editing/search

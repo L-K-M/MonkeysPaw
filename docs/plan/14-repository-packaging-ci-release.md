@@ -231,8 +231,11 @@ Rollout by milestone:
   - macOS builds are ad-hoc signed (`codesign --sign -`) unless Q3 provides
     an identity. Signing env is exported only when the secrets are
     non-empty (Obtainintosh lesson).
-  - Each packaging job downloads its workflow artifact and byte-compares
-    every file, including checksums, against the originals. Android also
+  - Each packaging job downloads the artifact ID returned by its upload and
+    byte-compares every file, including checksums, against the originals.
+    The download retries once if the upload is still becoming visible.
+    Flatpak builds, release assembly, and publishing use the artifact IDs
+    returned by their prerequisite jobs. Android also
     validates APK ID/full version/committed code/API levels and the recorded
     public signer before upload. Ordinary CI round-trips both the signed
     R8 APK pair and the Flatpak pair. An assembly job requires seven desktop assets

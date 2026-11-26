@@ -45,8 +45,10 @@ Use [the format guide](docs/plan/05-prompt-library.md) for external edits.
 
 ## Library
 
-Use the sidebar for folders, tags, favourites and recent prompts. The toolbar
-search filters the prompt list; **Option+Cmd+F** focuses it. **Cmd+F** finds
+Use the sidebar for folders, tags, favourites and recent prompts. The prompt
+list and the picker group prompts under folder headings; Recent keeps its
+newest-first order. The toolbar search filters the prompt list;
+**Option+Cmd+F** focuses it. **Cmd+F** finds
 text in the visible editor.
 
 While searching, use **Down/Up** to select a result and **Return** to edit it.

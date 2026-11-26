@@ -83,7 +83,11 @@ public struct LibraryBrowserState: Equatable, Sendable {
     public let sections: [LibraryBrowserSection]
     public let selectedSection: LibrarySectionID
     public let filter: String
+    /// Grouped under `groups` in every section except Recent (§11.8).
     public let rows: [LibraryBrowserRow]
+    /// Folder headings as ranges over `rows`; empty for Recent and for lists
+    /// whose rows are all top-level.
+    public let groups: [PromptFolderGroup]
     public let selection: LibraryPromptSelection?
     /// Retained even when the section/filter hides its row. Browsing never
     /// silently chooses a different prompt for a future open editor.
@@ -92,7 +96,7 @@ public struct LibraryBrowserState: Equatable, Sendable {
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.sections == rhs.sections && lhs.selectedSection == rhs.selectedSection
             && lhs.filter.utf8.elementsEqual(rhs.filter.utf8) && lhs.rows == rhs.rows
-            && lhs.selection == rhs.selection && lhs.selectedPrompt == rhs.selectedPrompt
+            && lhs.groups == rhs.groups && lhs.selection == rhs.selection && lhs.selectedPrompt == rhs.selectedPrompt
     }
 }
 
